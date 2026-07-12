@@ -59,12 +59,13 @@ Run this checklist before accepting any future patch.
 
 - [ ] Two browser windows show the same pusher position and coin field.
 - [ ] A spectator can watch without joining the queue.
-- [ ] Only the first queued player can start a turn.
+- [ ] Pressing Drop Coins submits the selected count and adds exactly one queue request.
+- [ ] The server automatically starts the first queued request and each next request after the prior turn settles.
 - [ ] The server, not the browser, chooses the random chute plan.
 - [ ] Both windows show the same active chute, timer, payouts, and result.
-- [ ] The completed player rotates behind the next connected queued player.
+- [ ] The completed request leaves the queue; the player must press Drop Coins again for another turn.
 - [ ] Refreshing within twenty seconds keeps queue position.
-- [ ] Closing every browser pauses an idle ready machine without changing its coin field.
+- [ ] Closing every browser does not stop the authoritative Railway machine.
 - [ ] Closing every browser during a turn still allows that turn to finish on the server.
 - [ ] Restarting the server restores the latest confirmed completed world.
 

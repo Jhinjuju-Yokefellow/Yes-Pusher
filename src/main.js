@@ -127,8 +127,8 @@ const MAT = {
   pusher: new CANNON.Material('pusher'),
 };
 world.addContactMaterial(new CANNON.ContactMaterial(MAT.coin, MAT.coin, { friction: 0.28, restitution: 0.002 }));
-world.addContactMaterial(new CANNON.ContactMaterial(MAT.coin, MAT.board, { friction: 0.42, restitution: 0.002 }));
-world.addContactMaterial(new CANNON.ContactMaterial(MAT.coin, MAT.pusher, { friction: 0.46, restitution: 0.0 }));
+world.addContactMaterial(new CANNON.ContactMaterial(MAT.coin, MAT.board, { friction: 0.38, restitution: 0.002 }));
+world.addContactMaterial(new CANNON.ContactMaterial(MAT.coin, MAT.pusher, { friction: 0.52, restitution: 0.0 }));
 world.addContactMaterial(new CANNON.ContactMaterial(MAT.coin, MAT.peg, { friction: 0.015, restitution: 0.28 }));
 const { addLightRig, addStaticBox, neonStrip, addVisualBox } = createSceneHelpers({
   scene,
@@ -582,12 +582,14 @@ ${url}` : ''}`
   }
 }
 
-function sharedControlsReady(snapshot = sharedSnapshot) {
+function sharedDropRequestReady(snapshot = sharedSnapshot) {
+  const walletRequired = Boolean(snapshot?.auth?.requireWallet);
+  const walletAuthenticated = Boolean(snapshot?.self?.authenticated);
   return Boolean(
-    snapshot?.self?.isActive &&
-    snapshot?.turn?.state === TURN_STATES.READY &&
     sharedClient?.connected &&
-    !sharedCommandPending
+    !sharedCommandPending &&
+    !snapshot?.self?.queued &&
+    (!walletRequired || walletAuthenticated)
   );
 }
 
@@ -599,7 +601,7 @@ function renderSharedSnapshot(snapshot) {
   const turn = snapshot.turn;
   const active = snapshot.queue?.[0] ?? null;
   const self = snapshot.self;
-  const ready = sharedControlsReady(snapshot);
+  const canRequestDrop = sharedDropRequestReady(snapshot);
 
   scoreEl.textContent = String(turn?.displayedLifetimeCoinsWon ?? 0);
   turnScoreEl.textContent = String(turn?.currentTurn?.coinsWon ?? 0);
@@ -618,19 +620,21 @@ function renderSharedSnapshot(snapshot) {
   const walletRequired=Boolean(snapshot.auth?.requireWallet);
   const walletAuthenticated=Boolean(self?.authenticated);
   queueStatusEl.classList.toggle('active', Boolean(self?.isActive));
-  if(walletRequired && !walletAuthenticated) queueStatusEl.textContent='CONNECT WALLET TO JOIN';
-  else if (self?.isActive) queueStatusEl.textContent = turn?.state === TURN_STATES.READY ? 'YOU ARE UP' : 'YOUR TURN RUNNING';
-  else if (self?.queued) queueStatusEl.textContent = `QUEUE POSITION ${self.queuePosition}`;
+  if(walletRequired && !walletAuthenticated) queueStatusEl.textContent='CONNECT WALLET TO DROP';
+  else if (self?.isActive) queueStatusEl.textContent = turn?.state === TURN_STATES.READY ? 'STARTING YOUR TURN' : 'YOUR TURN RUNNING';
+  else if (self?.queued) queueStatusEl.textContent = `QUEUE POSITION ${self.queuePosition} • ${self.queuedCoins ?? 5} COINS`;
   else queueStatusEl.textContent = snapshot.queue?.length
-    ? `SPECTATING • ${snapshot.queue.length} QUEUED`
-    : 'SPECTATING';
+    ? `PRESS DROP TO JOIN • ${snapshot.queue.length} WAITING`
+    : 'PRESS DROP TO JOIN';
 
-  queueButton.textContent = self?.queued ? 'LEAVE QUEUE' : 'JOIN QUEUE';
-  queueButton.classList.toggle('leave', Boolean(self?.queued));
-  queueButton.disabled = sharedCommandPending || !sharedClient?.connected || (walletRequired && !walletAuthenticated);
-  dropButton.disabled = !ready;
-  minusButton.disabled = !ready;
-  plusButton.disabled = !ready;
+  queueButton.textContent = 'LEAVE QUEUE';
+  queueButton.classList.toggle('leave', true);
+  queueButton.hidden = !self?.queued || Boolean(self?.isActive);
+  queueButton.disabled = sharedCommandPending || !sharedClient?.connected;
+  dropButton.textContent = self?.queued ? 'QUEUED' : 'DROP COINS';
+  dropButton.disabled = !canRequestDrop;
+  minusButton.disabled = !canRequestDrop;
+  plusButton.disabled = !canRequestDrop;
   resetMachineButton.disabled = true;
   showActiveChute(Number.isInteger(snapshot.activeSlotIndex) ? snapshot.activeSlotIndex : -1);
   const transportNote = sharedClient?.connectionMode === 'polling' ? ' — FALLBACK SYNC' : '';
@@ -649,13 +653,12 @@ function renderSharedSnapshot(snapshot) {
   if (turn?.currentTurn?.id && turn.currentTurn.id !== lastSharedResultId) hideTurnResult();
 }
 
-async function toggleSharedQueue() {
-  if (!sharedMode || !sharedClient || sharedCommandPending) return;
+async function leaveSharedQueue() {
+  if (!sharedMode || !sharedClient || sharedCommandPending || !sharedSnapshot?.self?.queued) return;
   sharedCommandPending = true;
   queueButton.disabled = true;
   try {
-    if (sharedSnapshot?.self?.queued) await sharedClient.leaveQueue();
-    else await sharedClient.joinQueue();
+    await sharedClient.leaveQueue();
   } catch (error) {
     statusText.textContent = error instanceof Error ? error.message.toUpperCase() : 'QUEUE COMMAND FAILED';
   } finally {
@@ -664,15 +667,15 @@ async function toggleSharedQueue() {
   }
 }
 
-async function startSharedTurn() {
-  if (!sharedControlsReady()) return;
+async function queueSharedTurn() {
+  if (!sharedDropRequestReady()) return;
   sharedCommandPending = true;
   renderSharedSnapshot(sharedSnapshot);
   hideTurnResult();
   try {
-    await sharedClient.startTurn(selectedCount);
+    await sharedClient.joinQueue(selectedCount);
   } catch (error) {
-    statusText.textContent = error instanceof Error ? error.message.toUpperCase() : 'TURN COULD NOT START';
+    statusText.textContent = error instanceof Error ? error.message.toUpperCase() : 'DROP REQUEST COULD NOT BE QUEUED';
   } finally {
     sharedCommandPending = false;
     renderSharedSnapshot(sharedClient.snapshot ?? sharedSnapshot);
@@ -920,20 +923,20 @@ function createUI() {
   });
   minusButton.onclick=()=>{
     if(sharedMode) {
-      if(!sharedControlsReady()) return;
+      if(!sharedDropRequestReady()) return;
     } else if(turnController.getSnapshot().state!==TURN_STATES.READY) return;
     selectedCount=Math.max(1,selectedCount-1);
     dropCountEl.textContent=selectedCount;
   };
   plusButton.onclick=()=>{
     if(sharedMode) {
-      if(!sharedControlsReady()) return;
+      if(!sharedDropRequestReady()) return;
     } else if(turnController.getSnapshot().state!==TURN_STATES.READY) return;
     selectedCount=Math.min(10,selectedCount+1);
     dropCountEl.textContent=selectedCount;
   };
-  dropButton.onclick=()=>{ if(sharedMode) void startSharedTurn(); else void dropBatch(); };
-  queueButton.onclick=()=>{ void toggleSharedQueue(); };
+  dropButton.onclick=()=>{ if(sharedMode) void queueSharedTurn(); else void dropBatch(); };
+  queueButton.onclick=()=>{ void leaveSharedQueue(); };
   walletButton.onclick=()=>{ void toggleWalletConnection(); };
   document.querySelector('#resetCamera').onclick=()=>{camera.position.copy(defaultCamera.position);controls.target.copy(defaultCamera.target);controls.update();};
   resetMachineButton.onclick=()=>{ if(!sharedMode) void resetMachine(); };
@@ -1148,12 +1151,45 @@ function updatePusher(dt) {
     if(item.phase!=='board' || !item.body.world) continue;
     const b=item.body;
     if(Math.abs(b.position.x)<CONFIG.pusher.width/2+CONFIG.coin.radius &&
-       b.position.z>rearEdge-.20 && b.position.z<frontEdge+.60) {
+       b.position.z>rearEdge-.20 && b.position.z<frontEdge+1.05) {
       b.wakeUp();
     }
   }
 
   turnController.notifyPusherTime(pusherTime);
+}
+
+function assistForwardPressure(dt) {
+  if(pusher.velocity<=.05) return;
+  const frontEdge=pusher.z+CONFIG.pusher.depth/2;
+  for(const item of coinObjects) {
+    if(item.phase!=='board' || !item.body.world) continue;
+    const b=item.body;
+
+    if(!item.tower && Math.abs(b.position.x)>3.55 &&
+       b.position.y<boardTopY+.20 && b.position.y>boardTopY-.12 &&
+       b.position.z>CONFIG.board.front-1.15 &&
+       b.position.z<CONFIG.board.front+CONFIG.coin.radius) {
+      const edgeDepth=Math.max(0,Math.min(1,
+        (b.position.z-(CONFIG.board.front-1.15))/1.15,
+      ));
+      b.position.z+=(.00031+edgeDepth*.00019)*(dt/(1/60));
+      b.aabbNeedsUpdate=true;
+      if(b.position.z>CONFIG.board.front-.08) b.wakeUp();
+    }
+
+    if(Math.abs(b.position.x)>=CONFIG.pusher.width/2+CONFIG.coin.radius ||
+       b.position.y>=boardTopY+.34 || b.position.y<=boardTopY-.12 ||
+       b.position.z<=frontEdge-CONFIG.coin.radius*.85 || b.position.z>=frontEdge+1.05) continue;
+
+    const distance=Math.max(0,b.position.z-frontEdge);
+    const pressure=Math.max(.20,1-distance/1.05);
+    const targetForwardSpeed=Math.min(.44,.20+pusher.velocity*.24);
+    if(b.velocity.z<targetForwardSpeed) {
+      b.velocity.z=Math.min(targetForwardSpeed,b.velocity.z+.95*pressure*dt);
+      b.wakeUp();
+    }
+  }
 }
 
 function stabilizeBoardCoins(dt) {
@@ -1270,6 +1306,7 @@ function animate(now=performance.now()) {
   } else {
     updatePusher(dt);
     world.step(1/60,dt,2);
+    assistForwardPressure(dt);
     updatePegCoins(dt);
     stabilizeBoardCoins(dt);
     updateTurn(dt);

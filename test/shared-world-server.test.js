@@ -34,22 +34,33 @@ test('server exposes one world and allows only the active queued player to start
   const idleAfter = await fetch(`${base}/api/world`).then((response) => response.json());
   assert.ok(idleAfter.pusherTime > idleBefore.pusherTime);
 
-  await post(base, '/api/queue/join', { playerId: 'one', label: 'PLAYER ONE' });
-  await post(base, '/api/queue/join', { playerId: 'two', label: 'PLAYER TWO' });
+  const firstDrop = await post(base, '/api/queue/join', {
+    playerId: 'one',
+    label: 'PLAYER ONE',
+    coins: 4,
+  });
+  assert.equal(firstDrop.status, 200);
+  assert.equal(firstDrop.body.turn.playerId, 'one');
+  assert.equal(firstDrop.body.turn.coinsDropped, 4);
+  assert.equal(firstDrop.body.snapshot.turn.activeSecondsRemaining, 30);
+
+  const secondDrop = await post(base, '/api/queue/join', {
+    playerId: 'two',
+    label: 'PLAYER TWO',
+    coins: 7,
+  });
+  assert.equal(secondDrop.status, 200);
   const world = await fetch(`${base}/api/world?playerId=one`).then((response) => response.json());
   assert.equal(world.activePlayerId, 'one');
-  assert.deepEqual(world.queue.map((entry) => entry.id), ['one', 'two']);
+  assert.deepEqual(world.queue.map((entry) => [entry.id, entry.requestedCoins]), [
+    ['one', 4],
+    ['two', 7],
+  ]);
 
   const denied = await post(base, '/api/turn/start', { playerId: 'two', coins: 4 });
   assert.equal(denied.status, 403);
 
-  const accepted = await post(base, '/api/turn/start', { playerId: 'one', coins: 4 });
-  assert.equal(accepted.status, 200);
-  assert.equal(accepted.body.turn.playerId, 'one');
-  assert.equal(accepted.body.turn.coinsDropped, 4);
-  assert.equal(accepted.body.snapshot.turn.activeSecondsRemaining, 30);
-
-  const runningBefore = accepted.body.snapshot.pusherTime;
+  const runningBefore = firstDrop.body.snapshot.pusherTime;
   await new Promise((resolve) => setTimeout(resolve, 90));
   const runningAfter = await fetch(`${base}/api/world`).then((response) => response.json());
   assert.ok(runningAfter.pusherTime > runningBefore);

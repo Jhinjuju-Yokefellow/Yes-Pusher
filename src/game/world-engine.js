@@ -95,11 +95,11 @@ export class WorldEngine {
       restitution: 0.002,
     }));
     world.addContactMaterial(new CANNON.ContactMaterial(materials.coin, materials.board, {
-      friction: 0.42,
+      friction: 0.38,
       restitution: 0.002,
     }));
     world.addContactMaterial(new CANNON.ContactMaterial(materials.coin, materials.pusher, {
-      friction: 0.46,
+      friction: 0.52,
       restitution: 0,
     }));
     world.addContactMaterial(new CANNON.ContactMaterial(materials.coin, materials.peg, {
@@ -612,11 +612,58 @@ export class WorldEngine {
       if (
         Math.abs(coinBody.position.x) < CONFIG.pusher.width / 2 + CONFIG.coin.radius &&
         coinBody.position.z > rearEdge - 0.20 &&
-        coinBody.position.z < frontEdge + 0.60
+        coinBody.position.z < frontEdge + 1.05
       ) coinBody.wakeUp();
     }
 
     this.turnController.notifyPusherTime(this.pusherTime);
+  }
+
+  assistForwardPressure(dt) {
+    if (this.pusher.velocity <= 0.05) return;
+    const frontEdge = this.pusher.z + CONFIG.pusher.depth / 2;
+    for (const coin of this.coins) {
+      if (coin.phase !== 'board' || !coin.body.world) continue;
+      const body = coin.body;
+
+      // The loaded payout banks need to transmit a little more of each forward
+      // stroke than simplified cylinder friction provides. Move only the low,
+      // loose front-bank coins; towers and stacked coins remain fully physical.
+      if (
+        !coin.tower &&
+        Math.abs(body.position.x) > 3.55 &&
+        body.position.y < this.boardTopY + 0.20 &&
+        body.position.y > this.boardTopY - 0.12 &&
+        body.position.z > CONFIG.board.front - 1.15 &&
+        body.position.z < CONFIG.board.front + CONFIG.coin.radius
+      ) {
+        const edgeDepth = Math.max(0, Math.min(1,
+          (body.position.z - (CONFIG.board.front - 1.15)) / 1.15,
+        ));
+        body.position.z += (0.00031 + edgeDepth * 0.00019) * (dt / FIXED_STEP);
+        body.aabbNeedsUpdate = true;
+        if (body.position.z > CONFIG.board.front - 0.08) body.wakeUp();
+      }
+
+      if (
+        Math.abs(body.position.x) >= CONFIG.pusher.width / 2 + CONFIG.coin.radius ||
+        body.position.y >= this.boardTopY + 0.34 ||
+        body.position.y <= this.boardTopY - 0.12 ||
+        body.position.z <= frontEdge - CONFIG.coin.radius * 0.85 ||
+        body.position.z >= frontEdge + 1.05
+      ) continue;
+
+      const distance = Math.max(0, body.position.z - frontEdge);
+      const pressure = Math.max(0.20, 1 - distance / 1.05);
+      const targetForwardSpeed = Math.min(0.44, 0.20 + this.pusher.velocity * 0.24);
+      if (body.velocity.z < targetForwardSpeed) {
+        body.velocity.z = Math.min(
+          targetForwardSpeed,
+          body.velocity.z + 0.95 * pressure * dt,
+        );
+        body.wakeUp();
+      }
+    }
   }
 
   stabilizeBoardCoins(dt) {
@@ -669,6 +716,7 @@ export class WorldEngine {
     this.updateDropSequence(dt);
     this.updatePusher(dt);
     this.world.step(FIXED_STEP, dt, 2);
+    this.assistForwardPressure(dt);
     this.updatePegCoins(dt);
     this.stabilizeBoardCoins(dt);
     this.turnController.update(dt, {

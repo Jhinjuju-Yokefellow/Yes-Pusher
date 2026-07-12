@@ -21,7 +21,7 @@ The world server owns:
 A browser owns only:
 
 - its anonymous local player ID
-- its selected 1–10 coin count before starting a turn
+- its selected 1–10 coin count before submitting a drop request
 - camera controls
 - interpolation and rendering of server snapshots
 
@@ -34,21 +34,21 @@ The server exposes:
 - `GET /api/health` — server and machine status
 - `GET /api/world` — an initial authoritative snapshot
 - `GET /events` — live Server-Sent Event snapshots
-- `POST /api/queue/join` — join the turn queue
-- `POST /api/queue/leave` — leave now or after an active turn
-- `POST /api/turn/start` — start a turn when the caller is first in queue
+- `POST /api/queue/join` — submit a one-shot queued drop request with the selected coin count
+- `POST /api/queue/leave` — cancel a waiting request
+- `POST /api/turn/start` — backward-compatible manual start route; normal clients do not use it
 
-The server broadcasts approximately twelve snapshots per second. Browsers interpolate coin positions, coin rotations, and the pusher position between snapshots.
+The server broadcasts at the configured shared-world rate (six snapshots per second by default). Browsers interpolate coin positions, coin rotations, and the pusher position between snapshots.
 
-When nobody is connected and no turn is running, physics pauses at the exact current machine state so an unattended server cannot slowly push coins out without a player. Any turn already started continues to completion even if every browser disconnects.
+Railway continuously advances the authoritative machine even when every browser is closed. Browsers render snapshots; they do not own machine time.
 
 ## Queue rules
 
 - Watching does not require joining the queue.
-- The first queued player is the only player allowed to start a turn.
+- Pressing **Drop Coins** records the selected 1–10 coin count and adds one turn request to the queue.
+- When that request reaches the front, the server starts it automatically; the player does not press again.
 - The server creates the turn ID and random chute plan.
-- A completed, connected player moves to the back of the queue.
-- Leaving during an active turn takes effect after that turn settles.
+- A completed request leaves the queue. The player presses Drop Coins again to request another turn.
 - A disconnected active turn finishes on the server.
 - Short disconnects keep a player’s queue position for twenty seconds so a refresh can reconnect cleanly.
 
@@ -79,7 +79,7 @@ When `dist/` exists, the world server serves both the built game and the shared 
 
 ## Local fallback
 
-If the browser cannot reach the shared server during startup, it falls back to the previous local confirmed-world mode. Queue controls disappear and Reset Machine becomes available again. This fallback is for development and recovery; the intended game mode is the authoritative shared world.
+A hosted build with `VITE_WORLD_SERVER_URL` never silently creates a separate local machine. It reconnects to Railway and falls back from the live stream to authoritative `/api/world` polling when necessary. Local confirmed-world mode remains available only for explicit local development without a configured server URL.
 
 ## Wallet-owned queue control
 

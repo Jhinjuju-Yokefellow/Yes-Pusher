@@ -29,7 +29,7 @@ The loaded shared machine previously rendered every coin as a separate textured 
 
 - Approved cabinet, peg board, pusher, centered jackpot tower, and loaded side payout banks
 - One persistent shared machine for players and spectators
-- Server-owned physics and 1–10 coin turns
+- Server-owned physics and one-shot queued 1–10 coin turns
 - Two seconds between inserted coins
 - A 30-second timer beginning immediately when the turn is confirmed
 - Front-edge payouts counted once; side losses do not score
@@ -44,7 +44,7 @@ The loaded shared machine previously rendered every coin as a separate textured 
 - Optional YES bucket-credit submission through a separately configured grant endpoint
 - Record-only mode when that credit endpoint has not been added yet
 - Atomic server persistence and confirmed-world recovery
-- Local confirmed-world fallback when the shared server cannot be reached
+- Hosted reconnect and authoritative polling fallback when the live stream is interrupted
 
 The wallet signature only identifies the player. It does not submit a transaction or spend YES.
 
@@ -97,9 +97,9 @@ See [`docs/WALLET-AND-SETTLEMENT.md`](docs/WALLET-AND-SETTLEMENT.md) for the exp
 ## Controls
 
 - Connect: sign in with the browser wallet
-- Join Queue: enter the shared turn order
-- − / +: choose 1–10 coins while active
-- Drop Coins: confirm the turn
+- − / +: choose 1–10 coins before entering the turn order
+- Drop Coins: submit that coin count and enter the queue; the server starts the turn automatically when it reaches the front
+- Leave Queue: cancel a waiting drop request before it becomes active
 - Drag / wheel: limited camera inspection
 - Reset View: restore the intended camera
 - Reset Machine: local fallback only; shared resets remain operator actions

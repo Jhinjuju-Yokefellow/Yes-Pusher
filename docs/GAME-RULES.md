@@ -94,24 +94,24 @@ The last coin in the batch must be tracked by the server.
 
 A turn has two timing stages.
 
-### Input stage
+### Queue request stage
 
-The active player receives a short period to choose:
+The player chooses:
 
 * Coin count from 1 through 10.
 * Any available pre-drop power.
 
-Once confirmed, the batch releases.
+Pressing **Drop Coins** submits one queued turn request. When it reaches the front of the queue, the server starts the batch automatically; no second confirmation is required.
 
 ### Active machine stage
 
-The main turn timer begins immediately when the active player confirms the selected 1–10 coin batch.
+The main turn timer begins immediately when the server starts the queued 1–10 coin batch.
 
 Coin insertion is part of the 30-second turn. The coins continue releasing one at a time with the normal two-second spacing while the clock runs. The timer does not wait for the final coin to reach the pusher receiving area.
 
 The normal active-machine time is:
 
-> 30 seconds from confirmed turn start.
+> 30 seconds from automatic queued-turn start.
 
 During those 30 seconds:
 

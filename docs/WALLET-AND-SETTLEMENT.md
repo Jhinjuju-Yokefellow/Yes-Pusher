@@ -18,7 +18,7 @@ wallet:0x...
 
 The signed message explicitly states that it does not spend YES or submit a transaction.
 
-Unsigned visitors may still watch the shared machine. With `YES_PUSHER_REQUIRE_WALLET=true`, only a verified wallet session can join the queue, leave the queue, or start a turn. A query-string player ID beginning with `wallet:` is downgraded to a guest identity and cannot impersonate a signed wallet.
+Unsigned visitors may still watch the shared machine. With `YES_PUSHER_REQUIRE_WALLET=true`, only a verified wallet session can submit or cancel a queued drop request. The server starts that request automatically when it reaches the front. A query-string player ID beginning with `wallet:` is downgraded to a guest identity and cannot impersonate a signed wallet.
 
 Challenges are single-use and expire after five minutes. Sessions currently live in server memory, so restarting the server requires the wallet to sign in again. Machine state, player progress, and settlement records remain persisted.
 

@@ -73,18 +73,12 @@ test('wallet-required server rejects unsigned control and accepts a verified wal
   const joined = await jsonRequest(base, '/api/queue/join', {
     method: 'POST',
     cookie,
-    body: {},
+    body: { coins: 2 },
   });
   assert.equal(joined.status, 200);
   assert.equal(joined.body.snapshot.self.isActive, true);
-
-  const started = await jsonRequest(base, '/api/turn/start', {
-    method: 'POST',
-    cookie,
-    body: { coins: 2 },
-  });
-  assert.equal(started.status, 200);
-  assert.equal(started.body.turn.playerId, `wallet:${account.address.toLowerCase()}`);
+  assert.equal(joined.body.turn.playerId, `wallet:${account.address.toLowerCase()}`);
+  assert.equal(joined.body.turn.coinsDropped, 2);
 });
 
 test('unsigned wallet-prefixed query id is downgraded to a guest identity', async (t) => {
@@ -153,8 +147,9 @@ test('hosted frontend can authenticate with a bearer session and disallowed orig
     method: 'POST',
     origin: allowedOrigin,
     bearer: verified.body.sessionToken,
-    body: {},
+    body: { coins: 6 },
   });
   assert.equal(joined.status, 200);
   assert.equal(joined.body.snapshot.self.authenticated, true);
+  assert.equal(joined.body.turn.coinsDropped, 6);
 });

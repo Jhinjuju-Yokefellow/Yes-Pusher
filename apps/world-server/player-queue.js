@@ -3,6 +3,12 @@ function cleanLabel(value, fallback) {
   return label || fallback;
 }
 
+function normalizeRequestedCoins(value, fallback = 5) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  return Math.max(1, Math.min(10, Math.floor(numeric)));
+}
+
 export class PlayerQueue {
   constructor({ disconnectGraceMs = 20_000, now = () => Date.now() } = {}) {
     this.disconnectGraceMs = disconnectGraceMs;
@@ -29,6 +35,7 @@ export class PlayerQueue {
       pollSeenAt: null,
       lastSeenAt: this.now(),
       disconnectedAt: null,
+      requestedCoins: 5,
       leaveAfterTurn: false,
     };
     this.players.set(playerId, player);
@@ -66,8 +73,9 @@ export class PlayerQueue {
     return player;
   }
 
-  join(id, label = '') {
+  join(id, label = '', requestedCoins = 5) {
     const player = this.ensurePlayer(id, label);
+    player.requestedCoins = normalizeRequestedCoins(requestedCoins, player.requestedCoins);
     if (!this.queue.includes(player.id)) this.queue.push(player.id);
     player.leaveAfterTurn = false;
     return this.positionOf(player.id);
@@ -87,14 +95,30 @@ export class PlayerQueue {
     return true;
   }
 
-  rotateAfterTurn() {
+  completeTurn() {
     const completedId = this.queue.shift();
     if (!completedId) return null;
     const player = this.players.get(completedId);
-    if (player && player.connected && !player.leaveAfterTurn) this.queue.push(completedId);
-    else if (player) player.leaveAfterTurn = false;
+    if (player) player.leaveAfterTurn = false;
     this.prune({ preserveActive: false });
     return completedId;
+  }
+
+  // Kept as a compatibility alias for older callers/tests.
+  rotateAfterTurn() {
+    return this.completeTurn();
+  }
+
+  activeRequest() {
+    const id = this.activeId();
+    if (!id) return null;
+    const player = this.players.get(id);
+    if (!player) return null;
+    return {
+      id,
+      label: player.label,
+      requestedCoins: normalizeRequestedCoins(player.requestedCoins),
+    };
   }
 
   prune({ preserveActive = true } = {}) {
@@ -151,6 +175,7 @@ export class PlayerQueue {
         label: player?.label ?? `PLAYER ${id.slice(-4).toUpperCase()}`,
         connected: Boolean(player?.connected),
         position: index + 1,
+        requestedCoins: normalizeRequestedCoins(player?.requestedCoins),
       };
     });
   }

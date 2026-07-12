@@ -404,8 +404,8 @@ export class SharedWorldClient {
     }
   }
 
-  joinQueue() {
-    return this.command('/api/queue/join');
+  joinQueue(coins = 5) {
+    return this.command('/api/queue/join', { coins });
   }
 
   leaveQueue() {

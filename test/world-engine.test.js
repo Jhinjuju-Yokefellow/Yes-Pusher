@@ -27,3 +27,27 @@ test('authoritative engine owns pusher motion, random drop plan, and confirmed w
   assert.equal(restored.turnController.getSnapshot().nextTurnNumber, confirmed.turnProgress.turnNumber);
   assert.equal(restored.pusherTime, confirmed.pusherTime);
 });
+
+test('front-bank pressure pays one coin once without lifting it', () => {
+  const engine = new WorldEngine({ seed: 77 });
+  engine.clearCoins();
+  const payoutCoin = engine.createCoin({
+    x: 4.3,
+    y: engine.coinRestY,
+    z: 5.43,
+    flat: true,
+    startAsleep: false,
+  });
+  engine.startTurn({ playerId: 'player-edge', coinsDropped: 1 });
+
+  let maximumY = payoutCoin.body.position.y;
+  for (let step = 0; step < 60 * 8; step += 1) {
+    engine.advance(1 / 60);
+    if (payoutCoin.body.world) maximumY = Math.max(maximumY, payoutCoin.body.position.y);
+  }
+
+  const turn = engine.turnController.getSnapshot();
+  assert.equal(payoutCoin.scored, true);
+  assert.equal(turn.currentTurn.coinsWon, 1);
+  assert.ok(maximumY < engine.boardTopY + 0.30);
+});

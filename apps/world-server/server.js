@@ -157,7 +157,7 @@ function statusText(engineSnapshot, queue) {
     case TURN_STATES.SETTLING:
       return 'SETTLING FINAL PAYOUTS';
     default:
-      return active ? `${activeName} IS UP — CHOOSE 1–10 COINS` : 'MACHINE RUNNING — JOIN THE TURN QUEUE';
+      return active ? `STARTING ${activeName} — ${active.requestedCoins ?? 5} COINS` : 'MACHINE RUNNING — PRESS DROP TO JOIN';
   }
 }
 
@@ -227,7 +227,7 @@ export async function createWorldServer({
         lastCompletedTurnId = snapshot.lastResult.id;
         const finalizedResult = progressStore.finalizeTurn(snapshot.lastResult);
         if (finalizedResult) settlementStore.enqueue(finalizedResult);
-        queue.rotateAfterTurn();
+        queue.completeTurn();
         savePromise = savePromise
           .catch(() => {})
           .then(async () => {
@@ -328,6 +328,7 @@ export async function createWorldServer({
         queued: position !== null,
         queuePosition: position,
         isActive: activePlayerId === playerId,
+        queuedCoins: position !== null ? player?.requestedCoins ?? 5 : null,
       } : null,
       ...world,
     };
@@ -336,6 +337,19 @@ export async function createWorldServer({
   function sendEvent(response, event, payload) {
     response.write(`event: ${event}\n`);
     response.write(`data: ${JSON.stringify(payload)}\n\n`);
+  }
+
+  function startNextQueuedTurnIfReady() {
+    if (engine.turnController.getSnapshot().state !== TURN_STATES.READY) return null;
+    const request = queue.activeRequest();
+    if (!request) return null;
+    const turn = engine.startTurn({
+      playerId: request.id,
+      coinsDropped: request.requestedCoins,
+    });
+    revision += 1;
+    broadcast();
+    return turn;
   }
 
   function broadcast() {
@@ -599,10 +613,16 @@ export async function createWorldServer({
         const turnState = engine.turnController.getSnapshot().state;
 
         if (pathname === '/api/queue/join') {
-          const position = queue.join(playerId, label);
+          const position = queue.join(playerId, label, body.coins);
           revision += 1;
-          broadcast();
-          writeJson(response, 200, { ok: true, position, snapshot: publicSnapshot(playerId, identity) });
+          const turn = startNextQueuedTurnIfReady();
+          if (!turn) broadcast();
+          writeJson(response, 200, {
+            ok: true,
+            position,
+            turn,
+            snapshot: publicSnapshot(playerId, identity),
+          });
           return;
         }
 
@@ -623,7 +643,8 @@ export async function createWorldServer({
             writeJson(response, 409, { error: 'The current turn has not finished' });
             return;
           }
-          const turn = engine.startTurn({ playerId, coinsDropped: body.coins });
+          const requestedCoins = queue.getPlayer(playerId)?.requestedCoins ?? body.coins;
+          const turn = engine.startTurn({ playerId, coinsDropped: requestedCoins });
           revision += 1;
           broadcast();
           writeJson(response, 200, { ok: true, turn, snapshot: publicSnapshot(playerId, identity) });
@@ -667,6 +688,9 @@ export async function createWorldServer({
     lastTick = now;
     // The authoritative machine must continue whether or not a browser tab is
     // focused or connected. Browsers only render snapshots; Railway owns time.
+    // A drop request is a one-shot queued turn, so the server starts the next
+    // request automatically as soon as the prior turn has fully settled.
+    startNextQueuedTurnIfReady();
     engine.advance(Math.min(elapsed, 0.05));
   }, Math.max(4, Math.floor(1000 / tickRate)));
   tickInterval.unref?.();
