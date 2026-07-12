@@ -1,13 +1,12 @@
 # YES Pusher Local Fallback Persistence
 
-This document describes the browser-only fallback used when the authoritative shared server cannot be reached. Normal shared play stores the confirmed machine on the world server; see `SHARED-WORLD.md`. The fallback still saves and restores the approved local machine between browser reloads without changing the locked cabinet, peg board, pusher, towers, scoring edges, or coin physics.
+This document describes the browser-only fallback used when the authoritative shared server cannot be reached. Normal shared play stores the confirmed machine on the world server; see `SHARED-WORLD.md`. The fallback still saves and restores the approved local machine between browser reloads without changing the locked cabinet, peg board, pusher, scoring edges, or coin physics.
 
 ## What is saved
 
 A confirmed world snapshot contains:
 
 - every coin ID
-- tower membership
 - coin phase and scoring state
 - position and rotation
 - linear and angular velocity
@@ -37,4 +36,4 @@ Snapshots include a schema version and machine revision. A snapshot created for 
 
 ## Reset Machine in local fallback mode
 
-Reset Machine clears the previous confirmed save, rebuilds the centered jackpot tower and loaded side banks, resets local progression, and immediately saves that new starting world.
+Reset Machine clears the previous confirmed save, rebuilds the 135-coin flat starting field, resets local progression, and immediately saves that new starting world.

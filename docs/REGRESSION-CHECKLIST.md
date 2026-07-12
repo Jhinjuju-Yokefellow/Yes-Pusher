@@ -4,9 +4,8 @@ Run this checklist before accepting any future patch.
 
 ## Startup
 
-- [ ] The centered tower remains stable before player coins reach it.
 - [ ] No starting coin appears outside or behind the visible funnel walls.
-- [ ] Both front side banks begin densely loaded without overlapping the center tower.
+- [ ] The flat field reaches both payout sides without stacked or overlapping coins.
 - [ ] The initial loose coin field does not explode, bounce, or visibly resettle.
 - [ ] The pusher begins cycling immediately.
 - [ ] The pusher retracts fully behind the scraper wall.
@@ -40,7 +39,7 @@ Run this checklist before accepting any future patch.
 
 - [ ] Repeated 10-coin batches do not progressively slow the game.
 - [ ] The machine remains usable after at least 15 minutes of continuous play.
-- [ ] Reset Machine restores the centered tower and loaded side banks.
+- [ ] Reset Machine restores the 135-coin flat starting field.
 
 ## Local turn system
 

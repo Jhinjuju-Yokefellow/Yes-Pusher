@@ -7,7 +7,7 @@ CoinPusher 32 changes the game from one local simulation per browser into one pe
 The world server owns:
 
 - the Cannon physics world
-- all coin bodies and tower state
+- all coin bodies and physical object state
 - the continuously cycling pusher
 - the random chute plan for every turn
 - the two-second insertion schedule

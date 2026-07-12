@@ -40,9 +40,7 @@ export const CONFIG = {
   slots: [-3.54, -2.36, -1.18, 0, 1.18, 2.36, 3.54],
 };
 
-export const TOWER_LAYOUT = [
-  { x: 0, z: 3.62, height: 18 },
-];
+export const TOWER_LAYOUT = [];
 
 export const TOWER_STACK_OFFSETS = [
   [0, 0],

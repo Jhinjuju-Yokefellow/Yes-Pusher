@@ -1,5 +1,5 @@
 export const WORLD_SNAPSHOT_VERSION = 1;
-export const MACHINE_REVISION = 'coinpusher-33-center-tower-side-banks-v1';
+export const MACHINE_REVISION = 'coinpusher-47-flat-starting-field-v1';
 
 const VECTOR_LENGTHS = Object.freeze({
   position: 3,

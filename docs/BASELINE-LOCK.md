@@ -9,7 +9,7 @@ This project is the approved machine base. Future work should extend it without 
 - Seven randomized insertion lanes
 - Active-player showcase frames on the left and right
 - Large fixed payout board and narrower rear pusher area
-- One centered jackpot tower and dense side-loaded starting coin field
+- One dense, non-overlapping flat starting coin field
 - Front payout fall visible in front of the cabinet banner
 
 ## Locked machine behavior
@@ -24,7 +24,7 @@ This project is the approved machine base. Future work should extend it without 
 - Coins riding the moving shelf are left forward by the fixed scraper wall during retraction.
 - Front-edge falls count once and remain visible while falling.
 - Side-drain and rear-loss coins do not count.
-- The centered jackpot tower begins asleep and should not collapse until pressure reaches it.
+- Every starting coin begins flat and asleep; no starting coin is stacked above another.
 
 ## Change rule
 

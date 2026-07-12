@@ -83,7 +83,7 @@ export class WorldEngine {
       allowSleep: true,
     });
     world.broadphase = new CANNON.SAPBroadphase(world);
-    world.solver.iterations = 8;
+    world.solver.iterations = 6;
     world.solver.tolerance = 0.002;
     world.defaultContactMaterial.friction = 0.25;
     world.defaultContactMaterial.restitution = 0.02;

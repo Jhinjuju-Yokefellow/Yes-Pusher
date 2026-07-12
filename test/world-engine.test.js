@@ -6,7 +6,7 @@ import { TURN_STATES } from '../src/game/turn-controller.js';
 test('authoritative engine owns pusher motion, random drop plan, and confirmed world restoration', () => {
   const engine = new WorldEngine({ seed: 12345 });
   const initialCount = engine.coins.length;
-  assert.ok(initialCount > 200);
+  assert.ok(initialCount >= 130);
 
   const turn = engine.startTurn({ playerId: 'player-a', coinsDropped: 3 });
   assert.equal(turn.playerId, 'player-a');

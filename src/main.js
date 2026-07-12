@@ -120,7 +120,7 @@ controls.maxAzimuthAngle = 0.34;
 
 const world = new CANNON.World({ gravity: new CANNON.Vec3(0, -9.82, 0), allowSleep: true });
 world.broadphase = new CANNON.SAPBroadphase(world);
-world.solver.iterations = 8;
+world.solver.iterations = 6;
 world.solver.tolerance = 0.002;
 world.defaultContactMaterial.friction = 0.25;
 world.defaultContactMaterial.restitution = 0.02;

@@ -27,7 +27,7 @@ The loaded shared machine previously rendered every coin as a separate textured 
 
 ## Current build
 
-- Approved cabinet, peg board, pusher, centered jackpot tower, and loaded side payout banks
+- Approved cabinet, peg board, pusher, and loaded flat payout field
 - One persistent shared machine for players and spectators
 - Server-owned physics and one-shot queued 1–10 coin turns
 - Two seconds between inserted coins
@@ -190,3 +190,8 @@ After deployment, `/api/health` includes:
 ```
 
 The exact byte count changes as coins enter or leave the machine.
+
+
+## CoinPusher 47 flat starting field
+
+The authoritative machine now starts with 135 non-overlapping coins in one flat layer. There are no starting towers or stacked side banks. This reduces physics load and lets pusher pressure travel through the bed more directly.

@@ -30,7 +30,7 @@ It:
 * Holds the large persistent pile of coins and toys.
 * Contains the front scoring edge.
 * Contains the side-loss areas.
-* Supports the starting towers and future stacks.
+* Supports the persistent flat starting field and later player-created objects.
 
 The pusher does not occupy the entire machine floor.
 
@@ -193,7 +193,6 @@ Coins can include:
 
 * Coins dropped during the current turn.
 * Coins dropped during earlier turns.
-* Coins released from a starting tower.
 * Coins released from later player-built piles.
 * Coins moved by a valid toy power.
 
@@ -206,7 +205,7 @@ coins won during turn
 lifetime coins won
 YES credit value for the turn
 world objects removed
-tower or stack events
+large payout or object events
 ```
 
 Physical coin score and YES value remain separate values.
@@ -246,7 +245,7 @@ Example:
 
 ```text
 Player starts at 40 lifetime coins.
-Player wins 125 coins during one large tower collapse.
+Player wins 125 coins during one large payout wave.
 New total: 165.
 Milestones crossed: 50, 100, and 150.
 Skin drops earned this turn: 1.
@@ -255,7 +254,7 @@ Pending skin milestones: 2.
 
 On each later completed turn, no more than one pending milestone can produce another random skin.
 
-This prevents one tower collapse from issuing several skin NFTs simultaneously without taking away the achievements the player earned.
+This prevents one unusually large payout from issuing several skin NFTs simultaneously without taking away the achievements the player earned.
 
 ### Random skin resolution
 
@@ -314,9 +313,7 @@ The player who introduced the toy cannot earn its capture trinket by later pushi
 * Fixed main board.
 * Peg board.
 * All loose coins.
-* All towers.
 * All physical toys.
-* All stack changes.
 * All previous-player effects.
 * Current pusher cycle.
 * Machine world revision.
@@ -378,7 +375,7 @@ Only one coin skin NFT may be resolved during a single turn. Additional mileston
 Example:
 
 * Player begins with 40 lifetime coins.
-* Player wins 125 coins from a tower collapse.
+* Player wins 125 coins from a large payout wave.
 * Player finishes with 165 lifetime coins.
 * The player crossed the 50, 100, and 150 milestones.
 * One random coin skin NFT is resolved.

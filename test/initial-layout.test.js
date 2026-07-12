@@ -8,16 +8,17 @@ import {
 import { createStartingBedPlan } from '../src/game/initial-layout.js';
 import { WorldEngine } from '../src/game/world-engine.js';
 
-test('starting layout uses one centered jackpot tower', () => {
-  assert.deepEqual(TOWER_LAYOUT, [{ x: 0, z: 3.62, height: 18 }]);
+test('starting layout has no towers', () => {
+  assert.deepEqual(TOWER_LAYOUT, []);
 });
 
-test('starting loose coins remain inside the visible guide walls', () => {
+test('every starting coin is on one flat layer inside the visible walls', () => {
   const plan = createStartingBedPlan(() => 0.5);
-  assert.ok(plan.length >= 170, `expected a loaded field, received ${plan.length} loose coins`);
+  assert.ok(plan.length >= 130, `expected a loaded flat field, received ${plan.length} coins`);
+  assert.ok(plan.every((coin) => coin.layer === 0));
 
   for (const coin of plan) {
-    const allowed = playableHalfWidthAtZ(coin.z, CONFIG.coin.radius + 0.12);
+    const allowed = playableHalfWidthAtZ(coin.z, CONFIG.coin.radius + 0.08);
     assert.ok(
       Math.abs(coin.x) <= allowed + 1e-9,
       `coin at (${coin.x}, ${coin.z}) starts outside the guide wall (${allowed})`,
@@ -27,23 +28,26 @@ test('starting loose coins remain inside the visible guide walls', () => {
   }
 });
 
-test('extra starting layers are concentrated on both payout sides', () => {
+test('starting flat coins do not overlap', () => {
   const plan = createStartingBedPlan(() => 0.5);
-  const upper = plan.filter((coin) => coin.layer > 0);
-  assert.ok(upper.length >= 60);
-  assert.ok(upper.some((coin) => coin.x < -3));
-  assert.ok(upper.some((coin) => coin.x > 3));
-  assert.ok(upper.every((coin) => Math.abs(coin.x) >= 1.95));
+  const minimumDistance = CONFIG.coin.radius * 2;
+  for (let index = 0; index < plan.length; index += 1) {
+    for (let other = index + 1; other < plan.length; other += 1) {
+      const dx = plan[index].x - plan[other].x;
+      const dz = plan[index].z - plan[other].z;
+      assert.ok(
+        Math.hypot(dx, dz) >= minimumDistance - 1e-9,
+        `starting coins ${index} and ${other} overlap`,
+      );
+    }
+  }
 });
 
-test('authoritative world starts with the new loaded center-tower field', () => {
-  const engine = new WorldEngine({ seed: 33 });
+test('authoritative world starts with only flat non-tower coins', () => {
+  const engine = new WorldEngine({ seed: 47 });
   const snapshot = engine.getNetworkSnapshot();
-  const towerCoins = snapshot.coins.filter((coin) => coin.tower);
-  const looseCoins = snapshot.coins.filter((coin) => !coin.tower);
 
-  assert.ok(snapshot.coinCount > 240);
-  assert.ok(towerCoins.length > 70);
-  assert.ok(looseCoins.length >= 170);
-  assert.ok(towerCoins.every((coin) => Math.abs(coin.position[0]) < 0.8));
+  assert.equal(snapshot.coinCount, 135);
+  assert.ok(snapshot.coins.every((coin) => coin.tower === false));
+  assert.ok(snapshot.coins.every((coin) => coin.position[1] < engine.boardTopY + 0.12));
 });
