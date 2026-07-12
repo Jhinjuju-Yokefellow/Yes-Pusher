@@ -1,5 +1,5 @@
 export const WORLD_SNAPSHOT_VERSION = 1;
-export const MACHINE_REVISION = 'coinpusher-51-planar-pressure-field-v1';
+export const MACHINE_REVISION = 'coinpusher-52-balanced-friction-field-v1';
 
 const VECTOR_LENGTHS = Object.freeze({
   position: 3,

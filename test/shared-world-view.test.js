@@ -99,6 +99,41 @@ test('active server updates steer local physics instead of teleporting coins', (
   assert.ok(coin.body.velocity.x > 0);
 });
 
+test('airborne peg coins are never steered or snapped by later checkpoints', () => {
+  const { view } = makeView();
+  view.applySnapshot({
+    revision: 1,
+    pusherTime: 0,
+    turn: { state: 'active' },
+    coins: [packedCoin('drop-1', 0, 8.0, CONFIG.peg.z, {
+      sleeping: false,
+      phase: 1,
+      velocity: [0.12, -0.8, 0],
+      angularVelocity: [0, 0, 0.7],
+    })],
+  });
+
+  const coin = view.coins.get('drop-1');
+  const beforePosition = coin.body.position.clone();
+  const beforeVelocity = coin.body.velocity.clone();
+  view.applySnapshot({
+    revision: 2,
+    pusherTime: 0.5,
+    turn: { state: 'active' },
+    coins: [packedCoin('drop-1', 2.2, 6.5, CONFIG.peg.z, {
+      sleeping: false,
+      phase: 1,
+      velocity: [-0.5, -1.4, 0],
+      angularVelocity: [0, 0, -1.2],
+    })],
+  });
+
+  assert.equal(coin.body.position.x, beforePosition.x);
+  assert.equal(coin.body.position.y, beforePosition.y);
+  assert.equal(coin.body.velocity.x, beforeVelocity.x);
+  assert.equal(coin.body.velocity.y, beforeVelocity.y);
+});
+
 test('local visual physics lets the flat pusher move a board coin', () => {
   const { view } = makeView();
   const restY = CONFIG.board.y + 0.42 / 2 + CONFIG.coin.thickness / 2 + 0.004;

@@ -28,7 +28,7 @@ test('authoritative engine owns pusher motion, random drop plan, and confirmed w
   assert.equal(restored.pusherTime, confirmed.pusherTime);
 });
 
-test('loaded planar bed advances under the pusher without vertical pile growth', () => {
+test('loaded guided bed advances under the pusher without skating or pile growth', () => {
   const engine = new WorldEngine({ seed: 0x59455350 });
   const initial = new Map(engine.coins.map((coin) => [coin.id, {
     z: coin.body.position.z,
@@ -52,9 +52,29 @@ test('loaded planar bed advances under the pusher without vertical pile growth',
     .filter((distance) => distance > 0.20);
   const turn = engine.turnController.getSnapshot();
 
-  assert.ok(moved.length >= 30, `expected a visible pressure wave, only ${moved.length} coins advanced`);
-  assert.ok((turn.currentTurn?.coinsWon ?? 0) >= 3, 'expected early payouts from the loaded edge');
-  assert.ok(maximumBoardRise < 0.02, `planar bed rose by ${maximumBoardRise}`);
+  assert.ok(moved.length >= 20, `expected a visible pressure wave, only ${moved.length} coins advanced`);
+  assert.ok((turn.currentTurn?.coinsWon ?? 0) >= 2, 'expected early payouts from the loaded edge');
+  assert.ok(maximumBoardRise < 0.075, `guided bed rose by ${maximumBoardRise}`);
+});
+
+test('guided board friction slows a loose coin instead of letting it skate', () => {
+  const engine = new WorldEngine({ seed: 52 });
+  engine.clearCoins();
+  const coin = engine.createCoin({
+    x: 0,
+    y: engine.coinRestY,
+    z: 2.4,
+    flat: true,
+    startAsleep: false,
+    planar: true,
+  });
+  coin.body.velocity.x = 0.9;
+  const initialSpeed = Math.abs(coin.body.velocity.x);
+
+  for (let step = 0; step < 45; step += 1) engine.advance(1 / 45);
+
+  assert.ok(Math.abs(coin.body.velocity.x) < initialSpeed * 0.58);
+  assert.ok(coin.body.position.y <= engine.coinRestY + 0.065);
 });
 
 test('front-bank pressure pays one coin once without lifting it', () => {

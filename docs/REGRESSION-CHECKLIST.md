@@ -39,7 +39,7 @@ Run this checklist before accepting any future patch.
 
 - [ ] Repeated 10-coin batches do not progressively slow the game.
 - [ ] The machine remains usable after at least 15 minutes of continuous play.
-- [ ] Reset Machine restores the 121-coin planar starting field.
+- [ ] Reset Machine restores the 121-coin balanced-friction starting field.
 
 ## Local turn system
 

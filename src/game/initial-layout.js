@@ -6,7 +6,7 @@ import {
 export const STARTING_BED_ROWS = 9;
 export const STARTING_BED_ROW_SPACING = 0.66;
 export const STARTING_BED_COLUMN_SPACING = 0.70;
-export const STARTING_BED_REAR_Z = -0.30;
+export const STARTING_BED_REAR_Z = -0.17;
 
 /**
  * Returns the starting coin field as one dense, non-overlapping flat layer.

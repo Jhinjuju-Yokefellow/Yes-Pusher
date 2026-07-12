@@ -36,4 +36,4 @@ Snapshots include a schema version and machine revision. A snapshot created for 
 
 ## Reset Machine in local fallback mode
 
-Reset Machine clears the previous confirmed save, rebuilds the 121-coin planar starting field, resets local progression, and immediately saves that new starting world.
+Reset Machine clears the previous confirmed save, rebuilds the 121-coin balanced-friction starting field, resets local progression, and immediately saves that new starting world.

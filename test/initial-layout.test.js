@@ -51,5 +51,6 @@ test('authoritative world starts with only flat non-tower coins', () => {
   assert.ok(snapshot.coins.every((coin) => coin.tower === false));
   assert.ok(snapshot.coins.every((coin) => coin.position[1] < engine.boardTopY + 0.12));
   assert.ok(engine.coins.every((coin) => coin.planar === true));
-  assert.ok(engine.coins.every((coin) => coin.body.linearFactor.y === 0));
+  assert.ok(engine.coins.every((coin) => coin.body.linearFactor.y === 1));
+  assert.ok(engine.coins.every((coin) => coin.body.linearDamping >= 0.25));
 });

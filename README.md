@@ -198,7 +198,21 @@ After deployment, `/api/health` reports the active transport and planar count:
 
 The exact coin and snapshot counts change as coins enter or leave the machine.
 
-## CoinPusher 51 planar starting field
+## CoinPusher 52 balanced board physics
 
-The authoritative machine starts with 121 non-overlapping physical coins in one flat layer. There are no towers or stacked side banks. The lower bed stays flat, receives a controlled forward pressure wave from the pusher, and releases coins back into full 3D motion only when they fall from a payout or side edge.
+The lower field uses guided physical board contacts rather than a frictionless planar surface. Coins retain real board and coin friction, can wobble slightly, and slow naturally after a push. Vertical rise is limited so the flat starting field does not turn back into a costly stack simulation.
 
+Railway checkpoints do not steer or snap a coin while it is in the peg field, transferring to the shelf, or visibly falling over an edge. The browser completes those short motions continuously and reconciles only after a coin has returned to the grounded board state.
+
+The starting machine contains 121 unstacked coins. A localized pressure aid keeps the pusher effective, and a side-weighted front-edge assist is tuned for regular small payouts instead of moving the entire bed like one sheet.
+
+`/api/health` reports:
+
+```json
+{
+  "network": {
+    "clientVisualMode": "balanced-friction-board-with-authoritative-checkpoints",
+    "guidedBoardCoins": 121
+  }
+}
+```

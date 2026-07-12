@@ -130,15 +130,15 @@ export class WorldEngine {
       pusher: new CANNON.Material('pusher'),
     };
     world.addContactMaterial(new CANNON.ContactMaterial(materials.coin, materials.coin, {
-      friction: 0.28,
+      friction: 0.36,
       restitution: 0.002,
     }));
     world.addContactMaterial(new CANNON.ContactMaterial(materials.coin, materials.board, {
-      friction: 0.38,
+      friction: 0.56,
       restitution: 0.002,
     }));
     world.addContactMaterial(new CANNON.ContactMaterial(materials.coin, materials.pusher, {
-      friction: 0.52,
+      friction: 0.64,
       restitution: 0,
     }));
     world.addContactMaterial(new CANNON.ContactMaterial(materials.coin, materials.peg, {
@@ -311,17 +311,16 @@ export class WorldEngine {
     coin.planar = true;
     body.allowSleep = true;
     body.collisionResponse = true;
-    body.collisionFilterMask = GROUP_COIN | GROUP_PUSHER | GROUP_WALL;
-    body.linearDamping = 0.16;
-    body.angularDamping = 0.34;
-    body.linearFactor.set(1, 0, 1);
-    body.angularFactor.set(0, 1, 0);
-    body.position.y = this.coinRestY;
-    body.velocity.y = 0;
-    body.force.y = 0;
+    body.collisionFilterMask = GROUP_COIN | GROUP_PUSHER | GROUP_BOARD | GROUP_WALL;
+    body.linearDamping = 0.28;
+    body.angularDamping = 0.48;
+    body.linearFactor.set(1, 1, 1);
+    body.angularFactor.set(0.10, 1, 0.10);
+    if (body.position.y < this.coinRestY - 0.04) body.position.y = this.coinRestY - 0.02;
+    body.velocity.y = Math.max(-0.10, Math.min(0.12, body.velocity.y));
     body.quaternion.setFromEuler(0, yaw, 0);
-    body.angularVelocity.x = 0;
-    body.angularVelocity.z = 0;
+    body.angularVelocity.x *= 0.18;
+    body.angularVelocity.z *= 0.18;
     body.aabbNeedsUpdate = true;
     if (!preserveSleep) body.wakeUp();
   }
@@ -331,7 +330,9 @@ export class WorldEngine {
     coin.planar = false;
     body.allowSleep = !falling;
     body.collisionResponse = true;
-    body.collisionFilterMask = GROUP_COIN | GROUP_PUSHER | GROUP_BOARD | GROUP_WALL;
+    body.collisionFilterMask = falling
+      ? GROUP_COIN | GROUP_WALL
+      : GROUP_COIN | GROUP_PUSHER | GROUP_BOARD | GROUP_WALL;
     body.linearDamping = falling ? 0.035 : 0.11;
     body.angularDamping = falling ? 0.10 : 0.25;
     body.linearFactor.set(1, 1, 1);
@@ -699,107 +700,146 @@ export class WorldEngine {
     if (this.pusher.velocity <= 0.05) return;
     const frontEdge = this.pusher.z + CONFIG.pusher.depth / 2;
     const strokeStrength = Math.max(0, Math.min(1, this.pusher.velocity / 1.10));
-    const pressureSpan = Math.max(0.01, CONFIG.board.front - frontEdge);
+    const assistReach = 2.35;
+
     for (const coin of this.coins) {
       if (coin.phase !== 'board' || !coin.body.world) continue;
       const body = coin.body;
 
-      // The loaded payout banks need to transmit a little more of each forward
-      // stroke than simplified cylinder friction provides. Move only the low,
-      // loose front-bank coins; towers and stacked coins remain fully physical.
-      if (
-        !coin.tower &&
-        Math.abs(body.position.x) > 3.55 &&
-        body.position.y < this.boardTopY + 0.20 &&
-        body.position.y > this.boardTopY - 0.12 &&
-        body.position.z > CONFIG.board.front - 1.15 &&
-        body.position.z < CONFIG.board.front + CONFIG.coin.radius
-      ) {
-        const edgeDepth = Math.max(0, Math.min(1,
-          (body.position.z - (CONFIG.board.front - 1.15)) / 1.15,
-        ));
-        body.position.z += (0.00008 + edgeDepth * 0.00006) * (dt / FIXED_STEP);
-        body.aabbNeedsUpdate = true;
-        if (body.position.z > CONFIG.board.front - 0.08) body.wakeUp();
-      }
-
       if (coin.planar) {
         if (
-          body.position.z <= frontEdge - CONFIG.coin.radius ||
-          body.position.z >= CONFIG.board.front + CONFIG.coin.radius
+          body.position.z > CONFIG.board.front - 0.95
+          && body.position.z < CONFIG.board.front + CONFIG.coin.radius
+        ) {
+          const edgeDepth = Math.max(0, Math.min(1,
+            (body.position.z - (CONFIG.board.front - 0.95)) / 0.95,
+          ));
+          const sideWeight = 0.32 + 0.68 * Math.pow(
+            Math.min(1, Math.abs(body.position.x) / 5.2),
+            1.35,
+          );
+          const pressureAdvance = (0.00066 + edgeDepth * 0.00038)
+            * sideWeight
+            * strokeStrength
+            * (dt / FIXED_STEP);
+          body.position.z += pressureAdvance;
+          body.aabbNeedsUpdate = true;
+
+          const edgeTargetSpeed = strokeStrength * (0.055 + edgeDepth * 0.075);
+          if (body.velocity.z < edgeTargetSpeed) {
+            body.velocity.z = Math.min(edgeTargetSpeed, body.velocity.z + 0.48 * dt);
+            body.wakeUp();
+          }
+        }
+
+        const distance = body.position.z - frontEdge;
+        if (
+          distance < -CONFIG.coin.radius * 0.7
+          || distance > assistReach
+          || body.position.z >= CONFIG.board.front + CONFIG.coin.radius
         ) continue;
 
-        const depth = Math.max(0, Math.min(1, (body.position.z - frontEdge) / pressureSpan));
-        const rearPressure = 1 - depth;
-        const targetForwardSpeed = strokeStrength * (0.004 + 0.080 * rearPressure * rearPressure);
-        const acceleration = 0.16 + rearPressure * 1.00;
+        const proximity = 1 - Math.max(0, Math.min(1, distance / assistReach));
+        const targetForwardSpeed = strokeStrength * (0.010 + 0.062 * proximity * proximity);
+        const acceleration = 0.18 + proximity * 0.52;
         if (body.velocity.z < targetForwardSpeed) {
           body.velocity.z = Math.min(targetForwardSpeed, body.velocity.z + acceleration * dt);
           body.wakeUp();
         }
 
-        if (Math.abs(body.position.x) > 0.55 && body.position.z > CONFIG.funnel.bayFrontZ) {
-          body.velocity.x += Math.sign(body.position.x) * 0.010 * strokeStrength * dt;
+        if (Math.abs(body.position.x) > 0.75 && body.position.z > CONFIG.funnel.bayFrontZ) {
+          body.velocity.x += Math.sign(body.position.x) * 0.0045 * proximity * strokeStrength * dt;
         }
         continue;
       }
 
       if (
-        Math.abs(body.position.x) >= CONFIG.pusher.width / 2 + CONFIG.coin.radius ||
-        body.position.y >= this.boardTopY + 0.42 ||
-        body.position.y <= this.boardTopY - 0.12 ||
-        body.position.z <= frontEdge - CONFIG.coin.radius * 0.85 ||
-        body.position.z >= frontEdge + 1.15
+        Math.abs(body.position.x) >= CONFIG.pusher.width / 2 + CONFIG.coin.radius
+        || body.position.y >= this.boardTopY + 0.42
+        || body.position.y <= this.boardTopY - 0.12
+        || body.position.z <= frontEdge - CONFIG.coin.radius * 0.85
+        || body.position.z >= frontEdge + 1.05
       ) continue;
 
       const distance = Math.max(0, body.position.z - frontEdge);
-      const pressure = Math.max(0.24, 1 - distance / 1.15);
-      const targetForwardSpeed = Math.min(0.48, 0.23 + this.pusher.velocity * 0.25);
+      const pressure = Math.max(0.20, 1 - distance / 1.05);
+      const targetForwardSpeed = Math.min(0.34, 0.16 + this.pusher.velocity * 0.18);
       if (body.velocity.z < targetForwardSpeed) {
-        body.velocity.z = Math.min(targetForwardSpeed, body.velocity.z + 1.10 * pressure * dt);
+        body.velocity.z = Math.min(targetForwardSpeed, body.velocity.z + 0.72 * pressure * dt);
         body.wakeUp();
       }
     }
   }
 
   stabilizeBoardCoins(dt) {
-    const damping = Math.exp(-5.2 * dt);
+    const tiltDamping = Math.exp(-7.0 * dt);
+    const rollingResistance = Math.exp(-0.72 * dt);
+
     for (const coin of this.coins) {
       if (coin.phase !== 'board') continue;
       const body = coin.body;
 
       if (coin.planar) {
-        body.position.y = this.coinRestY;
-        body.velocity.y = 0;
-        body.force.y = 0;
-        body.angularVelocity.x = 0;
-        body.angularVelocity.z = 0;
+        const heightError = this.coinRestY - body.position.y;
+        if (Math.abs(heightError) < 0.10) {
+          body.velocity.y += heightError * 9.0 * dt;
+          body.velocity.y *= Math.exp(-8.5 * dt);
+        }
+
+        if (body.position.y < this.coinRestY - 0.045) {
+          body.position.y = this.coinRestY - 0.02;
+          body.velocity.y = Math.max(0, body.velocity.y);
+          body.aabbNeedsUpdate = true;
+        } else if (body.position.y > this.coinRestY + 0.060) {
+          body.position.y = this.coinRestY + 0.060;
+          body.velocity.y = Math.min(0, body.velocity.y);
+          body.aabbNeedsUpdate = true;
+        }
+
+        body.velocity.x *= rollingResistance;
+        body.velocity.z *= rollingResistance;
+        body.angularVelocity.x *= tiltDamping;
+        body.angularVelocity.z *= tiltDamping;
 
         const frontReleaseZ = CONFIG.board.front - 0.025;
         const sideHalfWidth = 5.50;
         if (body.position.z >= frontReleaseZ || Math.abs(body.position.x) >= sideHalfWidth) {
           this.configureFreeBoardCoin(coin, { falling: true });
-          body.velocity.z = Math.max(body.velocity.z, 0.16);
-          body.velocity.y = -0.10;
+          body.velocity.z = Math.max(body.velocity.z, 0.13);
+          body.velocity.y = Math.min(body.velocity.y, -0.08);
         }
         continue;
       }
 
       if (
-        !coin.scored &&
-        body.position.y <= this.coinRestY + 0.035 &&
-        body.position.y >= this.coinRestY - 0.08 &&
-        body.position.z < CONFIG.board.front - 0.08 &&
-        Math.abs(body.position.x) < 5.48
+        !coin.scored
+        && body.position.y <= this.coinRestY + 0.045
+        && body.position.y >= this.coinRestY - 0.06
+        && body.position.z >= CONFIG.board.front - 0.10
+        && Math.abs(body.position.x) < 5.48
+      ) {
+        this.configureFreeBoardCoin(coin, { falling: true });
+        body.velocity.z = Math.max(body.velocity.z, 0.13);
+        body.velocity.y = Math.min(body.velocity.y, -0.08);
+        continue;
+      }
+
+      if (
+        !coin.scored
+        && body.position.y <= this.coinRestY + 0.045
+        && body.position.y >= this.coinRestY - 0.06
+        && Math.abs(body.velocity.y) < 0.22
+        && body.position.z < CONFIG.board.front - 0.10
+        && Math.abs(body.position.x) < 5.48
       ) {
         this.configurePlanarBoardCoin(coin);
         continue;
       }
 
       if (body.position.y < this.boardTopY + 0.70 && body.position.y > this.boardTopY - 0.18) {
-        if (body.velocity.y > 0.42) body.velocity.y = 0.42;
-        body.angularVelocity.x *= damping;
-        body.angularVelocity.z *= damping;
+        if (body.velocity.y > 0.36) body.velocity.y = 0.36;
+        body.angularVelocity.x *= tiltDamping;
+        body.angularVelocity.z *= tiltDamping;
       }
     }
   }

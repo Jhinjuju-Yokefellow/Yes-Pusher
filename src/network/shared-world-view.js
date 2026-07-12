@@ -5,10 +5,10 @@ import { WorldEngine } from '../game/world-engine.js';
 
 const INITIAL_CAPACITY = 256;
 const EXTREME_DRIFT_DISTANCE_SQ = 3.2 * 3.2;
-const ACTIVE_STEER_DISTANCE_SQ = 0.55 * 0.55;
-const READY_SNAP_DISTANCE_SQ = 0.12 * 0.12;
+const GROUNDED_STEER_DISTANCE_SQ = 0.48 * 0.48;
+const SETTLED_SNAP_DISTANCE_SQ = 1.35 * 1.35;
 const MISSING_SNAPSHOT_GRACE = 4;
-const MAX_STEER_SPEED = 0.16;
+const MAX_GROUNDED_STEER_SPEED = 0.055;
 
 function nextCapacity(required) {
   let capacity = INITIAL_CAPACITY;
@@ -94,6 +94,25 @@ function shouldUsePlanarBoard(engine, state) {
   return state.phase !== 'peg'
     && state.position[1] <= engine.coinRestY + 0.05
     && state.position[2] < CONFIG.board.front - 0.06;
+}
+
+function isAirborneState(engine, state) {
+  return state.phase === 'peg'
+    || state.phase === 'transfer'
+    || state.position[1] > engine.coinRestY + 0.09
+    || state.position[1] < engine.coinRestY - 0.07
+    || state.position[2] >= CONFIG.board.front - 0.04;
+}
+
+function isAirborneCoin(engine, coin) {
+  const body = coin.body;
+  return coin.phase === 'peg'
+    || coin.phase === 'transfer'
+    || (!coin.planar && (
+      body.position.y > engine.coinRestY + 0.09
+      || body.position.y < engine.coinRestY - 0.07
+      || body.position.z >= CONFIG.board.front - 0.04
+    ));
 }
 
 function configureCoinPhase(coin, requestedPhase, engine, state = null) {
@@ -215,14 +234,12 @@ export class SharedWorldView {
     else body.wakeUp();
   }
 
-  softlySteerCoin(coin, state) {
+  softlySteerGroundedCoin(coin, state) {
     const body = coin.body;
     const dx = state.position[0] - body.position.x;
-    const dy = state.position[1] - body.position.y;
     const dz = state.position[2] - body.position.z;
-    body.velocity.x += clamp(dx * 0.10, -MAX_STEER_SPEED, MAX_STEER_SPEED);
-    body.velocity.z += clamp(dz * 0.10, -MAX_STEER_SPEED, MAX_STEER_SPEED);
-    body.velocity.y += clamp(dy * 0.04, -0.05, 0.05);
+    body.velocity.x += clamp(dx * 0.035, -MAX_GROUNDED_STEER_SPEED, MAX_GROUNDED_STEER_SPEED);
+    body.velocity.z += clamp(dz * 0.035, -MAX_GROUNDED_STEER_SPEED, MAX_GROUNDED_STEER_SPEED);
     body.wakeUp();
   }
 
@@ -239,30 +256,26 @@ export class SharedWorldView {
       return;
     }
 
-    if (requestedPhase === 'peg' && coin.phase !== 'peg') {
+    // Never steer or snap a coin while it is visibly falling through the peg
+    // field, dropping to the board, or falling over an edge. Each browser lets
+    // that short motion finish continuously; Railway remains authoritative for
+    // the final settled position and payout result.
+    if (isAirborneState(this.engine, state) || isAirborneCoin(this.engine, coin)) return;
+
+    if (coin.phase !== requestedPhase) configureCoinPhase(coin, requestedPhase, this.engine, state);
+
+    const localSleeping = body.sleepState === CANNON.Body.SLEEPING;
+    if (ready && state.sleeping && localSleeping) {
+      if (distanceSq > SETTLED_SNAP_DISTANCE_SQ) this.applyStateDirectly(coin, state);
+      return;
+    }
+
+    if (distanceSq > EXTREME_DRIFT_DISTANCE_SQ && ready && state.sleeping) {
       this.applyStateDirectly(coin, state);
       return;
     }
 
-    if (ready && state.sleeping && distanceSq > READY_SNAP_DISTANCE_SQ) {
-      this.applyStateDirectly(coin, state);
-      return;
-    }
-
-    if (ready && distanceSq > 0.65 * 0.65) {
-      this.applyStateDirectly(coin, state);
-      return;
-    }
-
-    if (distanceSq > EXTREME_DRIFT_DISTANCE_SQ) {
-      // A reconnect or a locally retired payout can leave a body several machine
-      // widths away. Correct only those impossible divergences; normal motion is
-      // never position-extrapolated or snapped between network frames.
-      this.applyStateDirectly(coin, state);
-      return;
-    }
-
-    if (!ready && distanceSq > ACTIVE_STEER_DISTANCE_SQ) this.softlySteerCoin(coin, state);
+    if (distanceSq > GROUNDED_STEER_DISTANCE_SQ) this.softlySteerGroundedCoin(coin, state);
   }
 
   syncPusher(snapshot, initial = false) {
@@ -282,8 +295,8 @@ export class SharedWorldView {
     }
 
     const difference = wrappedTimeDifference(targetTime, this.engine.pusherTime, CONFIG.pusher.period);
-    if (Math.abs(difference) > 1.15) this.engine.pusherTime += difference;
-    else this.engine.pusherTime += difference * 0.16;
+    if (Math.abs(difference) > 2.4) this.engine.pusherTime += difference;
+    else this.engine.pusherTime += clamp(difference * 0.10, -0.035, 0.035);
   }
 
   applySnapshot(snapshot) {

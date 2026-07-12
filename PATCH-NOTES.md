@@ -1,41 +1,34 @@
-# CoinPusher 51 — planar pressure bed
+# CoinPusher 52 — balanced friction and smooth falling coins
 
-## What the video showed
+This patch corrects the two problems in the previous planar-pressure build: the lower bed felt like it was sliding on ice, and server checkpoints could visibly jerk coins while they were falling.
 
-The peg-board drops were moving, but the loaded board behaved like one heavy rigid carpet. The pusher reached the rear row, yet most of its force was consumed by three-dimensional floor contacts and vertical pile resolution. The field barely advanced, and the browser was still paying for a full 3D contact graph on every frame.
+## Board feel
 
-## Changed physics model
+- Lower-board coins again collide with the physical board and use real board friction.
+- Coin-to-board, coin-to-coin, and pusher contact friction were increased.
+- Board coins may wobble slightly, but their rise and tilt are limited so a 121-coin field does not rebuild the old expensive stack graph.
+- Rolling resistance now slows loose coins instead of allowing them to coast across the machine.
+- The whole bed is no longer given a broad artificial forward velocity.
+- A smaller pressure aid acts near the pusher, while a side-weighted edge assist helps a few front coins pay out during normal play.
+- The starting field remains one non-overlapping layer, shifted only enough to keep the payout edge active.
 
-- Starting lower-board coins are now constrained to the board plane.
-- Planar coins can move and rotate across the board but cannot climb, stack, or launch upward.
-- Lower-board coins no longer solve unnecessary floor contacts.
-- Coins remain fully three-dimensional while falling through the peg board, landing on the moving shelf, transferring to the lower board, and falling over an edge.
-- A coin locks into planar mode only after it reaches the lower playfield.
-- A coin automatically returns to free 3D motion at the payout or side edge so the visible fall remains physical.
+## Falling motion
 
-## Pusher correction
-
-- The flat pusher reaches 0.19 units farther than CoinPusher 50.
-- A gentle pressure wave now travels through the loaded flat field during the forward stroke.
-- Pressure is strongest near the pusher and fades toward the payout edge.
-- No upward impulse is added.
-- The front edge remains loaded enough for regular payouts without relying on towers.
-
-## Starting field
-
-- 121 flat physical coins.
-- No towers or stacked layers.
-- No starting coin behind the pusher or guide walls.
-- Nine staggered rows keep the sides visibly loaded while reducing the contact count.
+- Peg-board, transfer, and payout-fall coins are never steered or snapped by later Railway checkpoints.
+- Those visible falls run continuously in the browser from their original spawn state.
+- Reconciliation is limited to grounded board coins.
+- Grounded correction is weaker and never changes vertical velocity.
+- Large corrections are reserved for settled sleeping coins or the initial connection.
+- Pusher clock correction is also rate-limited to avoid visible jumps.
 
 ## Persistence
 
-The machine revision changed to `coinpusher-51-planar-pressure-field-v1`. Railway will reject the incompatible saved CoinPusher 50 geometry once and create the new planar starting field.
+The machine revision is now `coinpusher-52-balanced-friction-field-v1`. Railway will replace the incompatible CoinPusher 51 saved field once after deployment.
 
-## Verification
+## Validation
 
-- `npm test`: 41 tests pass.
+- `npm test`: 43 tests pass.
 - `npm run build`: passes.
-- A 20-second deterministic loaded-field test advanced more than 30 starting coins by at least 0.20 units without vertical rise.
-- The same test produced early payouts instead of leaving the bed stationary.
-- A 42-second five-coin authoritative turn simulation completed substantially faster than real time in the test environment.
+- A friction test confirms a loose board coin loses more than 42% of its speed in one second.
+- Airborne checkpoint tests confirm a falling peg coin receives no position or velocity correction.
+- Four deterministic 20-second loaded-field simulations produced 2–4 early payouts rather than dropping the entire front row at once.
