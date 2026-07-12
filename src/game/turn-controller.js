@@ -1,5 +1,6 @@
 export const TURN_STATES = Object.freeze({
   READY: 'ready',
+  PREPARING: 'preparing',
   DROPPING: 'dropping',
   WAITING: 'waiting',
   ACTIVE: 'active',

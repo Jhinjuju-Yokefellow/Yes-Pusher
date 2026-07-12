@@ -66,6 +66,7 @@ export class WorldEngine {
     this.activeSlotIndex = -1;
     this.lastFinalizedResult = null;
     this.accumulator = 0;
+    this.simulationSeconds = 0;
     this.physicsRate = PHYSICS_RATE;
     // Browser turn replays remain visually active until Railway sends the
     // confirmed turn-boundary snapshot. This is disabled on the authoritative
@@ -109,6 +110,7 @@ export class WorldEngine {
     this.dropSequence = null;
     this.activeSlotIndex = -1;
     this.lastFinalizedResult = null;
+    this.simulationSeconds = 0;
     this.turnController.reset();
 
     this.pusher.z = CONFIG.pusher.rearZ;
@@ -493,6 +495,7 @@ export class WorldEngine {
     this.dropSequence = null;
     this.activeSlotIndex = -1;
     this.lastFinalizedResult = null;
+    this.simulationSeconds = 0;
     this.turnController.reset();
 
     this.pusher.z = CONFIG.pusher.rearZ;
@@ -523,6 +526,7 @@ export class WorldEngine {
       ? seed >>> 0
       : ((Date.now() ^ Math.imul(turn.nextTurnNumber, 0x9e3779b1)) >>> 0);
     this.turnRandom = createSeededRandom(turnSeed);
+    this.simulationSeconds = 0;
     const slotPlan = Array.isArray(requestedSlotPlan) && requestedSlotPlan.length === count
       ? requestedSlotPlan.map((slot) => Math.max(0, Math.min(CONFIG.slots.length - 1, Math.floor(Number(slot) || 0))))
       : makeRandomSlotPlan(CONFIG.slots.length, count, this.turnRandom);
@@ -879,7 +883,7 @@ export class WorldEngine {
     }
   }
 
-  checkScoring() {
+  checkScoring(elapsedSeconds = this.simulationSeconds) {
     const frontReleaseZ = CONFIG.board.front - 0.025;
     const frontDropStartZ = CONFIG.board.front - CONFIG.coin.radius * 0.55;
     const frontDropY = this.coinRestY - 0.035;
@@ -897,7 +901,17 @@ export class WorldEngine {
       );
       if (!coin.scored && crossedFrontEdge) {
         coin.scored = true;
+        const turn = this.turnController.getSnapshot().currentTurn;
         this.turnController.recordPayout(1);
+        this.onEvent({
+          type: 'coin-payout',
+          reason: 'coin-payout',
+          turnId: turn?.id ?? null,
+          playerId: turn?.playerId ?? null,
+          coinId: coin.id,
+          elapsedSeconds,
+          coin: this.serializeCoin(coin, { compact: true }),
+        });
         this.configureFreeBoardCoin(coin, { falling: true });
       }
 
@@ -907,13 +921,24 @@ export class WorldEngine {
       }
 
       if ((Math.abs(position.x) > 6.2 || position.y < -3 || position.z < -9) && position.y < 0.2) {
+        const turn = this.turnController.getSnapshot().currentTurn;
         this.turnController.recordLoss(1);
+        this.onEvent({
+          type: 'coin-loss',
+          reason: 'coin-loss',
+          turnId: turn?.id ?? null,
+          playerId: turn?.playerId ?? null,
+          coinId: coin.id,
+          elapsedSeconds,
+          coin: this.serializeCoin(coin, { compact: true }),
+        });
         this.removeCoin(coin);
       }
     }
   }
 
   fixedStep(dt = FIXED_STEP) {
+    const frameEndSeconds = this.simulationSeconds + dt;
     this.updateDropSequence(dt);
     this.updatePusher(dt);
     this.world.step(FIXED_STEP, dt, 2);
@@ -922,11 +947,12 @@ export class WorldEngine {
     this.stabilizeBoardCoins(dt);
     // Score exits before the turn controller can close the final settle frame.
     // A coin crossing the front edge on that frame still belongs to the turn.
-    this.checkScoring();
+    this.checkScoring(frameEndSeconds);
     this.turnController.update(dt, {
       pusherTime: this.pusherTime,
       pusherPeriod: CONFIG.pusher.period,
     });
+    this.simulationSeconds = frameEndSeconds;
   }
 
   advance(seconds) {

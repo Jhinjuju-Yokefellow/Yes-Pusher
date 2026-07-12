@@ -1,11 +1,18 @@
 import './load-env.js';
 import http from 'node:http';
 import { createReadStream, existsSync } from 'node:fs';
-import { mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { gzipSync } from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 import { WorldEngine } from '../../src/game/world-engine.js';
 import { normalizeWorldSnapshot } from '../../src/game/world-snapshot.js';
+import {
+  isReplayPackage,
+  publicTurnSnapshotFromReplay,
+  replayFramesAt,
+  simulateRecordedTurn,
+} from '../../src/game/replay-package.js';
 import { TURN_STATES } from '../../src/game/turn-controller.js';
 import { PlayerQueue } from './player-queue.js';
 import { PlayerProgressStore } from './player-progress.js';
@@ -145,7 +152,12 @@ function statusText(engineSnapshot, queue) {
   const turn = engineSnapshot.turn;
   const active = queue.publicQueue()[0];
   const activeName = active?.label ?? 'NEXT PLAYER';
+  if (engineSnapshot.syncMode === 'preparing') {
+    return `PREPARING TURN ${turn.currentTurn?.number ?? turn.nextTurnNumber} — ${activeName}`;
+  }
   switch (turn.state) {
+    case TURN_STATES.PREPARING:
+      return `PREPARING TURN ${turn.currentTurn?.number ?? turn.nextTurnNumber} — ${activeName}`;
     case TURN_STATES.DROPPING:
       return `TURN ${turn.currentTurn?.number ?? turn.nextTurnNumber} — ${activeName} INSERTING COINS`;
     case TURN_STATES.WAITING:
@@ -187,6 +199,7 @@ export async function createWorldServer({
   autoListen = true,
   tickRate = parseRate(process.env.YES_PUSHER_TICK_RATE, 60, 30, 120),
   broadcastRate = parseRate(process.env.YES_PUSHER_BROADCAST_RATE, 2, 1, 2),
+  replayFrameRate = parseRate(process.env.YES_PUSHER_REPLAY_FRAME_RATE, 15, 5, 30),
   testMode = process.env.YES_PUSHER_TEST_MODE === 'true',
   requireWallet = process.env.YES_PUSHER_REQUIRE_WALLET !== 'false'
     && process.env.YES_PUSHER_TEST_MODE !== 'true',
@@ -198,10 +211,13 @@ export async function createWorldServer({
   const worldFile = path.join(dataDir, 'confirmed-world.json');
   const progressFile = path.join(dataDir, 'player-progress.json');
   const settlementFile = path.join(dataDir, 'settlements.json');
-  const [initialSnapshot, savedProgress, savedSettlements] = await Promise.all([
+  const replayDir = path.join(dataDir, 'replays');
+  const activeReplayFile = path.join(dataDir, 'active-replay.json');
+  const [initialSnapshot, savedProgress, savedSettlements, savedActiveReplay] = await Promise.all([
     loadSavedWorld(worldFile),
     loadJson(progressFile),
     loadJson(settlementFile),
+    loadJson(activeReplayFile),
   ]);
   const queue = new PlayerQueue();
   const progressStore = new PlayerProgressStore(savedProgress);
@@ -215,31 +231,18 @@ export async function createWorldServer({
   const recentPollClients = new Map();
   let revision = 0;
   let boundaryRevision = 1;
-  let activeTurnReplay = null;
-  let lastCompletedTurnId = null;
+  let preparingTurn = null;
+  let activeReplay = null;
+  let preparationPromise = null;
+  let lastPreparationError = null;
   let savePromise = Promise.resolve();
   let closed = false;
   let lastSavedAt = initialSnapshot ? Date.now() : null;
 
   const engine = new WorldEngine({
     initialSnapshot,
-    onEvent: ({ reason, snapshot }) => {
+    onEvent: () => {
       revision += 1;
-      if (reason === 'turn-finalized' && snapshot.lastResult?.id !== lastCompletedTurnId) {
-        lastCompletedTurnId = snapshot.lastResult.id;
-        activeTurnReplay = null;
-        boundaryRevision += 1;
-        const finalizedResult = progressStore.finalizeTurn(snapshot.lastResult);
-        if (finalizedResult) settlementStore.enqueue(finalizedResult);
-        queue.completeTurn();
-        savePromise = savePromise
-          .catch(() => {})
-          .then(async () => {
-            await persistConfirmedState();
-            const changed = await settlementStore.process();
-            if (changed) await saveWorldAtomic(settlementFile, settlementStore.serialize());
-          });
-      }
     },
   });
 
@@ -251,6 +254,31 @@ export async function createWorldServer({
       saveWorldAtomic(settlementFile, settlementStore.serialize()),
     ]);
     lastSavedAt = Date.now();
+  }
+
+  function replayFilePath(turnId) {
+    const safeId = String(turnId ?? '').replace(/[^a-zA-Z0-9._-]/g, '');
+    if (!safeId) throw new Error('Invalid replay ID');
+    return path.join(replayDir, `${safeId}.json`);
+  }
+
+  async function saveReplayPackage(replayPackage) {
+    await mkdir(replayDir, { recursive: true });
+    await saveWorldAtomic(replayFilePath(replayPackage.id), replayPackage);
+  }
+
+  async function saveActiveReplayState() {
+    if (!activeReplay) {
+      await unlink(activeReplayFile).catch(() => {});
+      return;
+    }
+    await saveWorldAtomic(activeReplayFile, {
+      kind: 'yes-pusher-active-replay',
+      version: 1,
+      turnId: activeReplay.package.id,
+      startedAt: activeReplay.startedAt,
+      boundaryId: activeReplay.boundaryId,
+    });
   }
 
   function connectionCount() {
@@ -296,32 +324,93 @@ export async function createWorldServer({
     return anonymousIdentity(fallbackId, fallbackLabel);
   }
 
+  function preparingTurnSnapshot() {
+    const base = engine.turnController.getSnapshot();
+    if (!preparingTurn) return base;
+    return {
+      ...base,
+      state: TURN_STATES.PREPARING,
+      currentTurn: {
+        id: preparingTurn.turnId,
+        playerId: preparingTurn.playerId,
+        number: preparingTurn.number,
+        coinsDropped: preparingTurn.coinsDropped,
+        coinsWon: 0,
+        coinsLost: 0,
+        slotPlan: [],
+        seed: preparingTurn.seed,
+        startedAt: preparingTurn.requestedAt,
+        activeStartedAt: null,
+        completedAt: null,
+      },
+      lastResult: null,
+      activeSecondsRemaining: 30,
+      ownsScoringWindow: false,
+    };
+  }
+
   function transportWorld() {
-    const liveTurn = engine.turnController.getSnapshot();
-    if (liveTurn.state !== TURN_STATES.READY && activeTurnReplay) {
+    const boundary = engine.getNetworkSnapshot({ packed: true });
+    const boundaryId = `boundary-${boundaryRevision}`;
+
+    if (preparingTurn) {
       return {
-        ...activeTurnReplay.startWorld,
-        syncMode: 'turn-replay',
-        boundaryId: activeTurnReplay.boundaryId,
-        replay: {
-          turnId: activeTurnReplay.turnId,
-          playerId: activeTurnReplay.playerId,
-          coinsDropped: activeTurnReplay.coinsDropped,
-          slotPlan: [...activeTurnReplay.slotPlan],
-          seed: activeTurnReplay.seed,
-          startedAt: activeTurnReplay.startedAt,
-          elapsedSeconds: Math.max(0, (Date.now() - activeTurnReplay.startedAt) / 1000),
+        ...boundary,
+        syncMode: 'preparing',
+        boundaryId,
+        prepare: {
+          turnId: preparingTurn.turnId,
+          playerId: preparingTurn.playerId,
+          coinsDropped: preparingTurn.coinsDropped,
+          requestedAt: preparingTurn.requestedAt,
+          simulatedSeconds: preparingTurn.simulatedSeconds ?? 0,
+          frameCount: preparingTurn.frameCount ?? 0,
+          coinCount: preparingTurn.coinCount ?? boundary.coinCount,
         },
-        activeSlotIndex: engine.activeSlotIndex,
-        coinCount: engine.coins.length,
-        turn: liveTurn,
+        replay: null,
+        turn: preparingTurnSnapshot(),
+      };
+    }
+
+    if (activeReplay) {
+      const elapsedSeconds = Math.max(0, (Date.now() - activeReplay.startedAt) / 1000);
+      const frame = replayFramesAt(activeReplay.package, elapsedSeconds).previous;
+      const replayTurn = publicTurnSnapshotFromReplay(
+        activeReplay.package,
+        Math.min(elapsedSeconds, Math.max(0, activeReplay.package.durationSeconds - 0.0001)),
+        boundary.turn,
+      );
+      if (replayTurn.currentTurn) {
+        replayTurn.currentTurn.startedAt = activeReplay.startedAt;
+        replayTurn.currentTurn.activeStartedAt = activeReplay.startedAt;
+      }
+      return {
+        ...activeReplay.package.startWorld,
+        syncMode: 'recorded-replay',
+        boundaryId: activeReplay.boundaryId,
+        prepare: null,
+        replay: {
+          turnId: activeReplay.package.id,
+          packageUrl: `/api/replays/${encodeURIComponent(activeReplay.package.id)}`,
+          startedAt: activeReplay.startedAt,
+          elapsedSeconds,
+          durationSeconds: activeReplay.package.durationSeconds,
+          frameRate: activeReplay.package.frameRate,
+          eventCount: activeReplay.package.events.length,
+          payoutCoinIds: activeReplay.package.events.filter((event) => event.type === 'payout').map((event) => event.coinId),
+        },
+        pusherZ: frame?.pusherZ ?? activeReplay.package.startWorld?.pusherZ ?? boundary.pusherZ,
+        activeSlotIndex: frame?.activeSlotIndex ?? -1,
+        coinCount: frame?.coins?.length ?? activeReplay.package.startWorld?.coinCount ?? boundary.coinCount,
+        turn: replayTurn,
       };
     }
 
     return {
-      ...engine.getNetworkSnapshot({ packed: true }),
+      ...boundary,
       syncMode: 'boundary',
-      boundaryId: `boundary-${boundaryRevision}`,
+      boundaryId,
+      prepare: null,
       replay: null,
     };
   }
@@ -333,7 +422,7 @@ export async function createWorldServer({
     const position = playerId ? queue.positionOf(playerId) : null;
     return {
       kind: 'yes-pusher-shared-world',
-      protocolVersion: 3,
+      protocolVersion: 4,
       revision,
       serverTime: Date.now(),
       authoritative: true,
@@ -373,36 +462,152 @@ export async function createWorldServer({
     response.write(`data: ${JSON.stringify(payload)}\n\n`);
   }
 
+  async function prepareTurn(preparation) {
+    const initialWorld = engine.exportConfirmedWorld();
+    const startBoundary = engine.getNetworkSnapshot({ packed: true });
+    const replayPackage = await simulateRecordedTurn({
+      initialWorld,
+      startBoundary,
+      playerId: preparation.playerId,
+      playerLabel: preparation.playerLabel,
+      coinsDropped: preparation.coinsDropped,
+      seed: preparation.seed,
+      turnId: preparation.turnId,
+      frameRate: replayFrameRate,
+      onProgress: (progress) => {
+        if (preparingTurn?.turnId !== preparation.turnId) return;
+        preparingTurn.simulatedSeconds = progress.elapsedSeconds;
+        preparingTurn.frameCount = progress.frameCount;
+        preparingTurn.coinCount = progress.coinCount;
+      },
+    });
+
+    if (closed || preparingTurn?.turnId !== preparation.turnId) return null;
+    await saveReplayPackage(replayPackage);
+    activeReplay = {
+      package: replayPackage,
+      startedAt: Date.now(),
+      boundaryId: preparation.boundaryId,
+    };
+    preparingTurn = null;
+    lastPreparationError = null;
+    await saveActiveReplayState();
+    revision += 1;
+    broadcast();
+    return replayPackage;
+  }
+
   function startNextQueuedTurnIfReady() {
+    if (preparingTurn || activeReplay || preparationPromise) return null;
     if (engine.turnController.getSnapshot().state !== TURN_STATES.READY) return null;
     const request = queue.activeRequest();
     if (!request) return null;
 
-    const startWorld = engine.getNetworkSnapshot({ packed: true });
+    const turnNumber = engine.turnController.getSnapshot().nextTurnNumber;
     const seed = ((Date.now() ^ Math.imul(revision + 1, 0x9e3779b1)) >>> 0);
-    const boundaryId = `boundary-${boundaryRevision}`;
-    const turn = engine.startTurn({
+    const turnId = `shared-turn-${turnNumber}-${seed.toString(36)}`;
+    preparingTurn = {
+      turnId,
+      number: turnNumber,
       playerId: request.id,
+      playerLabel: request.label,
       coinsDropped: request.requestedCoins,
       seed,
-    });
-    activeTurnReplay = {
-      turnId: turn.id,
-      playerId: request.id,
-      coinsDropped: turn.coinsDropped,
-      slotPlan: [...turn.slotPlan],
-      seed: turn.seed ?? seed,
-      startedAt: turn.startedAt,
-      boundaryId,
-      startWorld,
+      requestedAt: Date.now(),
+      boundaryId: `boundary-${boundaryRevision}`,
+      simulatedSeconds: 0,
+      frameCount: 0,
+      coinCount: engine.coins.length,
     };
     revision += 1;
     broadcast();
-    return turn;
+    preparationPromise = prepareTurn(preparingTurn)
+      .catch((error) => {
+        lastPreparationError = error instanceof Error ? error.message : String(error);
+        preparingTurn = null;
+        queue.completeTurn();
+        revision += 1;
+        broadcast();
+        return null;
+      })
+      .finally(() => {
+        preparationPromise = null;
+      });
+    return {
+      id: preparingTurn.turnId,
+      playerId: preparingTurn.playerId,
+      number: preparingTurn.number,
+      coinsDropped: preparingTurn.coinsDropped,
+      coinsWon: 0,
+      coinsLost: 0,
+      slotPlan: [],
+      seed: preparingTurn.seed,
+      startedAt: preparingTurn.requestedAt,
+      completedAt: null,
+    };
   }
 
+  function commitReplayIfFinished() {
+    if (!activeReplay) return false;
+    const elapsedSeconds = Math.max(0, (Date.now() - activeReplay.startedAt) / 1000);
+    if (elapsedSeconds + 0.0001 < activeReplay.package.durationSeconds) return false;
+
+    const completedReplay = activeReplay;
+    activeReplay = null;
+    engine.restoreConfirmedWorld(completedReplay.package.finalWorld);
+    boundaryRevision += 1;
+    const committedResult = {
+      ...completedReplay.package.result,
+      startedAt: completedReplay.startedAt,
+      activeStartedAt: completedReplay.startedAt,
+      completedAt: Date.now(),
+    };
+    const finalizedResult = progressStore.finalizeTurn(committedResult);
+    if (finalizedResult) settlementStore.enqueue(finalizedResult);
+    queue.completeTurn();
+    revision += 1;
+    savePromise = savePromise
+      .catch(() => {})
+      .then(async () => {
+        await saveActiveReplayState();
+        await persistConfirmedState();
+        const changed = await settlementStore.process();
+        if (changed) await saveWorldAtomic(settlementFile, settlementStore.serialize());
+      });
+    broadcast();
+    return true;
+  }
+
+  async function restoreActiveReplayFromDisk() {
+    if (
+      savedActiveReplay?.kind !== 'yes-pusher-active-replay'
+      || savedActiveReplay.version !== 1
+      || typeof savedActiveReplay.turnId !== 'string'
+    ) return false;
+    const replayPackage = await loadJson(replayFilePath(savedActiveReplay.turnId));
+    if (!isReplayPackage(replayPackage)) {
+      await unlink(activeReplayFile).catch(() => {});
+      return false;
+    }
+    queue.join(
+      replayPackage.turn.playerId,
+      replayPackage.turn.playerLabel || `PLAYER ${String(replayPackage.turn.playerId).slice(-4).toUpperCase()}`,
+      replayPackage.turn.coinsDropped,
+    );
+    activeReplay = {
+      package: replayPackage,
+      startedAt: Number(savedActiveReplay.startedAt) || Date.now(),
+      boundaryId: savedActiveReplay.boundaryId || `boundary-${boundaryRevision}`,
+    };
+    revision += 1;
+    return true;
+  }
+
+  await restoreActiveReplayFromDisk();
+  commitReplayIfFinished();
+
   function broadcast() {
-    queue.prune({ preserveActive: engine.turnController.getSnapshot().state !== TURN_STATES.READY });
+    queue.prune({ preserveActive: Boolean(preparingTurn || activeReplay) });
     revision += 1;
     const world = transportWorld();
     for (const [playerId, responses] of connections) {
@@ -499,7 +704,7 @@ export async function createWorldServer({
         authoritative: true,
         revision,
         coinCount: engine.coins.length,
-        turnState: engine.turnController.getSnapshot().state,
+        turnState: preparingTurn ? TURN_STATES.PREPARING : activeReplay ? 'replaying' : engine.turnController.getSnapshot().state,
         connections: activeClientCount(),
         streamConnections: connectionCount(),
         pollingClients: pollingClientCount(),
@@ -512,21 +717,29 @@ export async function createWorldServer({
           snapshotBytes: Buffer.byteLength(JSON.stringify(transportSnapshot)),
           physicsSolverIterations: engine.world.solver.iterations,
           physicsStepsPerSecond: engine.physicsRate,
+          replayFramesPerSecond: replayFrameRate,
           statusBroadcastsPerSecond: broadcastRate,
-          clientVisualMode: 'browser-physics-turn-replay-with-boundary-snapshots',
-          visibleCoinPhysicsRunsInBrowser: true,
-          hiddenAuthoritativeScoringRunsOnRailway: true,
+          clientVisualMode: 'recorded-authoritative-replay-with-interpolation',
+          visibleCoinPhysicsRunsInBrowser: false,
+          authoritativeTurnSimulationRunsOnRailway: true,
           liveCoinTransformStreaming: false,
+          replayPackageDownload: true,
+          replayCompression: 'gzip',
+          exactCoinIdEvents: true,
           guidedBoardCoins: engine.coins.filter((coin) => coin.planar).length,
         },
+        lastPreparationError,
         allowedOrigins: [...allowedOrigins],
         settlement: settlementStore.integrationStatus(),
         persistence: {
           dataDir,
           loadedFromDisk: Boolean(initialSnapshot),
           lastSavedAt: lastSavedAt ? new Date(lastSavedAt).toISOString() : null,
-          continuousPhysics: engine.turnController.getSnapshot().state !== TURN_STATES.READY,
+          continuousPhysics: false,
           boundarySnapshots: true,
+          replayDirectory: replayDir,
+          activeReplayId: activeReplay?.package?.id ?? null,
+          preparingTurnId: preparingTurn?.turnId ?? null,
         },
       });
       return;
@@ -650,6 +863,37 @@ export async function createWorldServer({
       return;
     }
 
+    if (request.method === 'GET' && pathname.startsWith('/api/replays/')) {
+      const replayId = decodeURIComponent(pathname.slice('/api/replays/'.length));
+      if (!/^[a-zA-Z0-9._-]+$/.test(replayId)) {
+        writeJson(response, 400, { ok: false, error: 'Invalid replay ID' });
+        return;
+      }
+      try {
+        const inMemory = activeReplay?.package?.id === replayId ? activeReplay.package : null;
+        const raw = inMemory
+          ? JSON.stringify(inMemory)
+          : await readFile(replayFilePath(replayId), 'utf8');
+        const replayPackage = inMemory ?? JSON.parse(raw);
+        if (!isReplayPackage(replayPackage)) {
+          writeJson(response, 404, { ok: false, error: 'Replay not found' });
+          return;
+        }
+        const acceptsGzip = /(?:^|,)\s*gzip(?:\s*;|\s*,|$)/i.test(String(request.headers['accept-encoding'] ?? ''));
+        const body = acceptsGzip ? gzipSync(raw, { level: 6 }) : Buffer.from(raw);
+        response.writeHead(200, {
+          'content-type': 'application/json; charset=utf-8',
+          'content-length': body.length,
+          'cache-control': 'public, max-age=31536000, immutable',
+          ...(acceptsGzip ? { 'content-encoding': 'gzip', vary: 'accept-encoding' } : {}),
+        });
+        response.end(body);
+      } catch {
+        writeJson(response, 404, { ok: false, error: 'Replay not found' });
+      }
+      return;
+    }
+
     if (request.method === 'GET' && pathname === '/api/settlements/self') {
       const identity = identityFromRequest(request);
       if (!identity?.authenticated) {
@@ -674,7 +918,7 @@ export async function createWorldServer({
         }
         const { playerId, label } = identity;
         queue.ensurePlayer(playerId, label);
-        const turnState = engine.turnController.getSnapshot().state;
+        const turnState = preparingTurn ? TURN_STATES.PREPARING : activeReplay ? 'replaying' : engine.turnController.getSnapshot().state;
 
         if (pathname === '/api/queue/join') {
           const position = queue.join(playerId, label, body.coins);
@@ -691,7 +935,7 @@ export async function createWorldServer({
         }
 
         if (pathname === '/api/queue/leave') {
-          queue.leave(playerId, { turnRunning: turnState !== TURN_STATES.READY });
+          queue.leave(playerId, { turnRunning: Boolean(preparingTurn || activeReplay) });
           revision += 1;
           broadcast();
           writeJson(response, 200, { ok: true, snapshot: publicSnapshot(playerId, identity) });
@@ -703,7 +947,7 @@ export async function createWorldServer({
             writeJson(response, 403, { error: 'Only the active queued player can start the turn' });
             return;
           }
-          if (turnState !== TURN_STATES.READY) {
+          if (preparingTurn || activeReplay || preparationPromise || turnState !== TURN_STATES.READY) {
             writeJson(response, 409, { error: 'The current turn has not finished' });
             return;
           }
@@ -721,17 +965,21 @@ export async function createWorldServer({
             writeJson(response, 404, { error: 'Test controls are disabled' });
             return;
           }
-          if (turnState !== TURN_STATES.READY) {
+          if (preparingTurn || activeReplay || preparationPromise || turnState !== TURN_STATES.READY) {
             writeJson(response, 409, { error: 'Wait for the current turn to finish before resetting' });
             return;
           }
           engine.resetMachine();
-          activeTurnReplay = null;
+          preparingTurn = null;
+          activeReplay = null;
           boundaryRevision += 1;
           revision += 1;
           savePromise = savePromise
             .catch(() => {})
-            .then(() => saveWorldAtomic(worldFile, engine.exportConfirmedWorld()));
+            .then(async () => {
+              await saveActiveReplayState();
+              await saveWorldAtomic(worldFile, engine.exportConfirmedWorld());
+            });
           broadcast();
           writeJson(response, 200, { ok: true, snapshot: publicSnapshot(playerId, identity) });
           return;
@@ -748,24 +996,16 @@ export async function createWorldServer({
     writeJson(response, 404, { error: 'Not found' });
   });
 
-  let lastTick = process.hrtime.bigint();
   const tickInterval = setInterval(() => {
-    const now = process.hrtime.bigint();
-    const elapsed = Number(now - lastTick) / 1e9;
-    lastTick = now;
-    // Railway owns turn timing and scoring. The machine is paused at the rear
-    // handoff position while ready, then advances only while a queued turn is
-    // resolving. Browsers replay the turn locally from the same boundary state.
-    startNextQueuedTurnIfReady();
-    engine.advance(Math.min(elapsed, 0.05));
-  }, Math.max(4, Math.floor(1000 / tickRate)));
+    if (!commitReplayIfFinished()) startNextQueuedTurnIfReady();
+  }, Math.max(10, Math.floor(1000 / tickRate)));
   tickInterval.unref?.();
 
   const broadcastInterval = setInterval(broadcast, Math.max(40, Math.floor(1000 / broadcastRate)));
   broadcastInterval.unref?.();
 
   const saveInterval = setInterval(() => {
-    if (engine.turnController.getSnapshot().state !== TURN_STATES.READY) return;
+    if (preparingTurn || activeReplay || preparationPromise || engine.turnController.getSnapshot().state !== TURN_STATES.READY) return;
     savePromise = savePromise
       .catch(() => {})
       .then(() => persistConfirmedState());
@@ -797,8 +1037,9 @@ export async function createWorldServer({
       for (const response of responses) response.end();
     }
     connectionIdentities.clear();
+    await preparationPromise?.catch(() => {});
     await savePromise.catch(() => {});
-    if (engine.turnController.getSnapshot().state === TURN_STATES.READY) {
+    if (!preparingTurn && !activeReplay && engine.turnController.getSnapshot().state === TURN_STATES.READY) {
       await persistConfirmedState().catch(() => {});
     }
     await new Promise((resolve) => server.close(() => resolve()));

@@ -1,23 +1,32 @@
-# CoinPusher 56 — Continuous visual pusher during replay
+# CoinPusher 57 — authoritative simulation and recorded replay
 
-## Fixed
+## Replaced
 
-- The browser pusher no longer stops when its local replay reaches `ready`
-  before Railway finishes the official settling window.
-- While Railway still owns an active turn, the browser keeps the pusher cycling
-  and keeps local visual physics running.
-- The pusher returns to the parked rear position only after Railway sends the
-  confirmed turn-boundary snapshot.
-- Visible falling coins remain browser-simulated. Railway does not stream or
-  steer their live transforms.
-- Railway still runs a hidden authoritative scoring simulation so payout and
-  settlement results are not trusted to browser code.
+- Removed the shared-mode browser physics simulation.
+- Removed the second, competing live Railway/browser result path.
+- Replaced seed-and-boundary reconstruction with one recorded authoritative replay.
 
-## Unchanged
+## Added
 
-- Queue behavior
-- 1–10 coin drop schedule
-- Payout counting
-- Wallet authentication
-- Persistent world storage
-- Yokefellow settlement and skin-drop event handling
+- Visible `Preparing turn…` state while Railway simulates the complete turn in fast-forward.
+- Replay packages stored under `/data/replays/<turn-id>.json`.
+- Exact permanent coin-ID payout and loss events.
+- Browser-only frame interpolation with no Cannon physics in shared mode.
+- Mid-turn replay download and seeking.
+- Final-world promotion after replay completion.
+- Active replay pointer persistence for Railway restarts.
+- `GET /api/replays/:turnId`.
+- `YES_PUSHER_REPLAY_FRAME_RATE` configuration.
+
+## Preserved
+
+- CoinPusher 56 machine geometry and physics behavior.
+- Queue and wallet identity.
+- Yokefellow YES credit and random skin triggers.
+- Player progress and scoring rules.
+- Confirmed-world persistence.
+
+## Validation
+
+- `npm test` — 48 tests pass.
+- `npm run build` — production Vite build passes.
