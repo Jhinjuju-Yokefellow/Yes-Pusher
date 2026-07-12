@@ -1,35 +1,16 @@
-# CoinPusher 54 — Event-Driven Turn Replay
+# CoinPusher 55 — Multi-Coin Turn Replay Render Fix
 
-## Architecture replacement
+## Fixed
 
-The hosted game no longer runs local physics while continuously reconciling against Railway coin checkpoints.
+The event-driven replay engine was correctly spawning every selected coin, but the shared renderer only registered the first coin created when the turn began. Later scheduled coins existed in local physics but were never added to the instanced render list, making a multi-coin turn look like a one-coin turn.
 
-Railway now sends:
+The shared-world view now detects coins added by the replay drop schedule and rebuilds the instanced membership only when a coin is added or removed.
 
-- one canonical starting boundary
-- turn ID
-- deterministic seed
-- random chute plan
-- selected coin count
-- turn start time and elapsed time
-- authoritative timer, score, queue, and settlement status
+## Preserved
 
-The browser replays the active turn continuously from that boundary and ignores all moving server coin transforms.
-
-At turn completion, Railway sends the canonical settled boundary used by every player for the next turn.
-
-## Behavior
-
-- Falling coins are never steered or snapped by network updates.
-- The lower coin bed is never pulled toward server checkpoints.
-- A browser joining mid-turn fast-forwards the replay from the starting boundary.
-- A backgrounded browser catches up by simulating missing time.
-- The pusher pauses at the rear handoff position while the machine is ready.
-- Railway remains authoritative for scoring, persistence, wallets, queue order, and Yokefellow settlement.
-- No environment-variable changes are required.
-
-## Validation
-
-- `npm test`: 45 passing tests
-- `npm run build`: production build passes
-- Focused server check confirmed active envelopes reuse an unchanged starting boundary while elapsed time advances.
+- Two-second spacing between selected coins
+- Random chute plan supplied by Railway
+- Event-driven local turn physics
+- No live transform steering or checkpoint snapping
+- Authoritative Railway scoring and turn-boundary persistence
+- Existing machine geometry, friction, payout behavior, queue, wallets, and Yokefellow integration

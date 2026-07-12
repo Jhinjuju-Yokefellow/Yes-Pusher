@@ -172,3 +172,41 @@ test('ready boundary replaces local replay only after the turn ends', () => {
   assert.equal(view.coins.get('coin-1').body.position.x, 0.4);
   assert.equal(view.coins.get('coin-1').body.position.z, 2.2);
 });
+
+test('turn replay renders every scheduled coin, not only the first drop', () => {
+  const { view } = makeView();
+  const restY = CONFIG.board.y + 0.42 / 2 + CONFIG.coin.thickness / 2 + 0.004;
+  const startCoins = [packedCoin('bed-coin', 0, restY, -2.5)];
+
+  view.applySnapshot({
+    ...replaySnapshot({ coins: startCoins, elapsedSeconds: 0 }),
+    turn: {
+      state: 'dropping',
+      currentTurn: {
+        id: 'turn-1',
+        playerId: 'player-a',
+        number: 1,
+        coinsDropped: 5,
+        coinsWon: 0,
+        slotPlan: [0, 1, 2, 3, 4],
+        startedAt: 1_000,
+      },
+    },
+    replay: {
+      turnId: 'turn-1',
+      playerId: 'player-a',
+      coinsDropped: 5,
+      slotPlan: [0, 1, 2, 3, 4],
+      seed: 12345,
+      startedAt: 1_000,
+      elapsedSeconds: 0,
+    },
+  });
+
+  // First coin is spawned immediately; the next four are scheduled every 2s.
+  for (let frame = 0; frame < 510; frame += 1) view.update(1 / 60);
+
+  const visibleDropCount = view.order.filter((coin) => coin.id !== 'bed-coin').length;
+  assert.equal(visibleDropCount, 5);
+  assert.equal(view.instanceMesh.count, 6);
+});

@@ -292,6 +292,13 @@ export class SharedWorldView {
       this.coins.delete(coin.id);
       membershipChanged = true;
     }
+
+    // Turn replay spawns each later coin inside the local engine. The initial
+    // replay rebuild includes only the first immediately spawned coin, so add
+    // newly scheduled coins to the instanced render set as they appear.
+    if (!membershipChanged && this.engine.coins.length !== this.order.length) {
+      membershipChanged = this.engine.coins.some((coin) => coin.body.world && !this.coins.has(coin.id));
+    }
     if (membershipChanged) this.rebuildOrder();
 
     for (let index = 0; index < this.order.length; index += 1) this.writeMatrix(index, this.order[index]);
