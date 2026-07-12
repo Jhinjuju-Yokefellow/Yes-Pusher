@@ -210,3 +210,33 @@ test('turn replay renders every scheduled coin, not only the first drop', () => 
   assert.equal(visibleDropCount, 5);
   assert.equal(view.instanceMesh.count, 6);
 });
+
+
+test('visual replay keeps the pusher cycling until Railway sends the final boundary', () => {
+  const { view, pusher } = makeView();
+  const restY = CONFIG.board.y + 0.42 / 2 + CONFIG.coin.thickness / 2 + 0.004;
+  const startCoins = [packedCoin('bed-coin', 0, restY, -2.5)];
+
+  view.applySnapshot(replaySnapshot({
+    coins: startCoins,
+    elapsedSeconds: 37.5,
+  }));
+
+  // The local visual controller may already have finalized by this point, but
+  // Railway still owns the active replay until it sends a boundary snapshot.
+  assert.equal(view.activeReplayId, 'turn-1');
+  const startTime = view.engine.pusherTime;
+  const startZ = pusher.position.z;
+
+  for (let frame = 0; frame < 90; frame += 1) view.update(1 / 60);
+
+  assert.ok(view.engine.pusherTime > startTime + 1.4);
+  assert.notEqual(pusher.position.z, startZ);
+
+  view.applySnapshot(boundarySnapshot({
+    boundaryId: 'boundary-2',
+    coins: startCoins,
+  }));
+  assert.equal(view.activeReplayId, null);
+  assert.equal(view.engine.visualReplayActive, false);
+});

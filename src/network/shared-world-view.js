@@ -188,6 +188,7 @@ export class SharedWorldView {
 
   loadBoundary(snapshot) {
     if (!snapshot || !Array.isArray(snapshot.coins)) return false;
+    this.engine.setVisualReplayActive(false);
     this.engine.initializeEmptyMachine();
     for (const raw of snapshot.coins) {
       const state = unpackCoinState(raw);
@@ -226,6 +227,7 @@ export class SharedWorldView {
       pusherTime: snapshot.pusherTime,
       pusherZ: snapshot.pusherZ,
     });
+    this.engine.setVisualReplayActive(true);
 
     this.engine.startTurn({
       playerId: replay.playerId ?? null,
@@ -283,6 +285,7 @@ export class SharedWorldView {
   update(dt) {
     if (!this.hasSnapshot) return;
     const safeDt = clamp(Number(dt) || 0, 0, 0.05);
+    this.engine.setVisualReplayActive(Boolean(this.activeReplayId));
     this.engine.advance(safeDt);
     if (this.activeReplayId) this.replayElapsed += safeDt;
 
@@ -313,6 +316,7 @@ export class SharedWorldView {
   }
 
   clear() {
+    this.engine.setVisualReplayActive(false);
     this.engine.clearCoins();
     this.coins.clear();
     this.order = [];

@@ -67,6 +67,10 @@ export class WorldEngine {
     this.lastFinalizedResult = null;
     this.accumulator = 0;
     this.physicsRate = PHYSICS_RATE;
+    // Browser turn replays remain visually active until Railway sends the
+    // confirmed turn-boundary snapshot. This is disabled on the authoritative
+    // server, so an idle server still parks the pusher at the rear.
+    this.visualReplayActive = false;
 
     this.boardTopY = CONFIG.board.y + 0.42 / 2;
     this.coinRestY = this.boardTopY + CONFIG.coin.thickness / 2 + 0.004;
@@ -114,6 +118,10 @@ export class WorldEngine {
     this.pusher.body.velocity.set(0, 0, 0);
     this.pusher.body.position.set(0, CONFIG.pusher.y, CONFIG.pusher.rearZ);
     this.pusher.body.aabbNeedsUpdate = true;
+  }
+
+  setVisualReplayActive(active) {
+    this.visualReplayActive = Boolean(active);
   }
 
   randomDuringTurn() {
@@ -695,7 +703,8 @@ export class WorldEngine {
 
   updatePusher(dt) {
     const turnState = this.turnController.getSnapshot().state;
-    let nextTime = turnState === TURN_STATES.READY
+    const shouldParkAtRear = turnState === TURN_STATES.READY && !this.visualReplayActive;
+    let nextTime = shouldParkAtRear
       ? this.pusherTime
       : this.pusherTime + dt;
     nextTime = this.turnController.limitPusherTime(nextTime);
@@ -921,7 +930,10 @@ export class WorldEngine {
   }
 
   advance(seconds) {
-    if (this.turnController.getSnapshot().state === TURN_STATES.READY) {
+    if (
+      this.turnController.getSnapshot().state === TURN_STATES.READY
+      && !this.visualReplayActive
+    ) {
       this.accumulator = 0;
       return;
     }

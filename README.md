@@ -213,3 +213,8 @@ CoinPusher 54 removes the hybrid checkpoint-reconciliation system. Turns now beg
 ## CoinPusher 53
 
 Front payout exits now count at the authoritative release edge across the full playable width, including exits on the last settlement frame. The timer displays whole seconds, the bottom instructional hint has been removed, and the artificial payout-edge boost has been removed while retaining pressure directly ahead of the physical pusher.
+
+
+## CoinPusher 56 — browser-visible physics
+
+During an active turn, visible coin and pusher motion is simulated in the browser from the turn boundary, seed, chute plan, and timing. Railway does not stream live coin transforms. Railway continues to run a hidden authoritative scoring simulation and sends the confirmed machine boundary after the turn. The browser pusher remains active until that confirmed boundary arrives.

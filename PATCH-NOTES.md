@@ -1,16 +1,23 @@
-# CoinPusher 55 — Multi-Coin Turn Replay Render Fix
+# CoinPusher 56 — Continuous visual pusher during replay
 
 ## Fixed
 
-The event-driven replay engine was correctly spawning every selected coin, but the shared renderer only registered the first coin created when the turn began. Later scheduled coins existed in local physics but were never added to the instanced render list, making a multi-coin turn look like a one-coin turn.
+- The browser pusher no longer stops when its local replay reaches `ready`
+  before Railway finishes the official settling window.
+- While Railway still owns an active turn, the browser keeps the pusher cycling
+  and keeps local visual physics running.
+- The pusher returns to the parked rear position only after Railway sends the
+  confirmed turn-boundary snapshot.
+- Visible falling coins remain browser-simulated. Railway does not stream or
+  steer their live transforms.
+- Railway still runs a hidden authoritative scoring simulation so payout and
+  settlement results are not trusted to browser code.
 
-The shared-world view now detects coins added by the replay drop schedule and rebuilds the instanced membership only when a coin is added or removed.
+## Unchanged
 
-## Preserved
-
-- Two-second spacing between selected coins
-- Random chute plan supplied by Railway
-- Event-driven local turn physics
-- No live transform steering or checkpoint snapping
-- Authoritative Railway scoring and turn-boundary persistence
-- Existing machine geometry, friction, payout behavior, queue, wallets, and Yokefellow integration
+- Queue behavior
+- 1–10 coin drop schedule
+- Payout counting
+- Wallet authentication
+- Persistent world storage
+- Yokefellow settlement and skin-drop event handling
