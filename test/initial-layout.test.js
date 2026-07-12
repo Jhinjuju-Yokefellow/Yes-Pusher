@@ -14,7 +14,7 @@ test('starting layout has no towers', () => {
 
 test('every starting coin is on one flat layer inside the visible walls', () => {
   const plan = createStartingBedPlan(() => 0.5);
-  assert.ok(plan.length >= 130, `expected a loaded flat field, received ${plan.length} coins`);
+  assert.ok(plan.length >= 115, `expected a loaded flat field, received ${plan.length} coins`);
   assert.ok(plan.every((coin) => coin.layer === 0));
 
   for (const coin of plan) {
@@ -47,7 +47,9 @@ test('authoritative world starts with only flat non-tower coins', () => {
   const engine = new WorldEngine({ seed: 47 });
   const snapshot = engine.getNetworkSnapshot();
 
-  assert.equal(snapshot.coinCount, 135);
+  assert.equal(snapshot.coinCount, 121);
   assert.ok(snapshot.coins.every((coin) => coin.tower === false));
   assert.ok(snapshot.coins.every((coin) => coin.position[1] < engine.boardTopY + 0.12));
+  assert.ok(engine.coins.every((coin) => coin.planar === true));
+  assert.ok(engine.coins.every((coin) => coin.body.linearFactor.y === 0));
 });

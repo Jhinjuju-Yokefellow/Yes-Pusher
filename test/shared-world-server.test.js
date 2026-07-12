@@ -27,7 +27,7 @@ test('server exposes one world and allows only the active queued player to start
   const health = await fetch(`${base}/api/health`).then((response) => response.json());
   assert.equal(health.ok, true);
   assert.equal(health.authoritative, true);
-  assert.equal(health.coinCount, 135);
+  assert.equal(health.coinCount, 121);
 
   const idleBefore = await fetch(`${base}/api/world`).then((response) => response.json());
   await new Promise((resolve) => setTimeout(resolve, 90));

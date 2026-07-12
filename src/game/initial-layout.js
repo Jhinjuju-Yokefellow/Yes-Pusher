@@ -3,8 +3,8 @@ import {
   playableHalfWidthAtZ,
 } from '../config/machine-config.js';
 
-export const STARTING_BED_ROWS = 10;
-export const STARTING_BED_ROW_SPACING = 0.60;
+export const STARTING_BED_ROWS = 9;
+export const STARTING_BED_ROW_SPACING = 0.66;
 export const STARTING_BED_COLUMN_SPACING = 0.70;
 export const STARTING_BED_REAR_Z = -0.30;
 

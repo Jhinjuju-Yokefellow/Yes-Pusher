@@ -90,7 +90,13 @@ function wrappedTimeDifference(target, current, period) {
   return difference;
 }
 
-function configureCoinPhase(coin, requestedPhase) {
+function shouldUsePlanarBoard(engine, state) {
+  return state.phase !== 'peg'
+    && state.position[1] <= engine.coinRestY + 0.05
+    && state.position[2] < CONFIG.board.front - 0.06;
+}
+
+function configureCoinPhase(coin, requestedPhase, engine, state = null) {
   const phase = requestedPhase === 'peg' ? 'peg' : 'board';
   const body = coin.body;
   coin.phase = phase;
@@ -103,13 +109,11 @@ function configureCoinPhase(coin, requestedPhase) {
     body.angularDamping = 0.035;
     body.linearFactor.set(1, 1, 0);
     body.angularFactor.set(0, 0, 1);
+    coin.planar = false;
+  } else if (state && shouldUsePlanarBoard(engine, state)) {
+    engine.configurePlanarBoardCoin(coin, { preserveSleep: true });
   } else {
-    body.allowSleep = true;
-    body.collisionResponse = true;
-    body.linearDamping = 0.12;
-    body.angularDamping = 0.26;
-    body.linearFactor.set(1, 1, 1);
-    body.angularFactor.set(0.22, 1, 0.22);
+    engine.configureFreeBoardCoin(coin, { falling: state?.position?.[2] >= CONFIG.board.front - 0.06 });
   }
 }
 
@@ -184,8 +188,9 @@ export class SharedWorldView {
       phase: requestedPhase,
       id: state.id,
       startAsleep: false,
+      planar: requestedPhase === 'board' && shouldUsePlanarBoard(this.engine, state),
     });
-    configureCoinPhase(coin, requestedPhase);
+    configureCoinPhase(coin, requestedPhase, this.engine, state);
     this.applyStateDirectly(coin, state);
     coin.missingSnapshots = 0;
     return coin;
@@ -194,11 +199,17 @@ export class SharedWorldView {
   applyStateDirectly(coin, state) {
     const body = coin.body;
     const requestedPhase = state.phase === 'peg' ? 'peg' : 'board';
-    if (coin.phase !== requestedPhase) configureCoinPhase(coin, requestedPhase);
+    if (
+      coin.phase !== requestedPhase
+      || (requestedPhase === 'board' && coin.planar !== shouldUsePlanarBoard(this.engine, state))
+    ) configureCoinPhase(coin, requestedPhase, this.engine, state);
     body.position.set(...state.position);
     body.quaternion.set(...state.quaternion);
     body.velocity.set(...state.velocity);
     body.angularVelocity.set(...state.angularVelocity);
+    if (coin.planar) {
+      this.engine.configurePlanarBoardCoin(coin, { preserveSleep: true });
+    }
     body.aabbNeedsUpdate = true;
     if (state.sleeping && requestedPhase === 'board') body.sleep();
     else body.wakeUp();

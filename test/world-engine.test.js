@@ -6,7 +6,7 @@ import { TURN_STATES } from '../src/game/turn-controller.js';
 test('authoritative engine owns pusher motion, random drop plan, and confirmed world restoration', () => {
   const engine = new WorldEngine({ seed: 12345 });
   const initialCount = engine.coins.length;
-  assert.ok(initialCount >= 130);
+  assert.ok(initialCount >= 115);
 
   const turn = engine.startTurn({ playerId: 'player-a', coinsDropped: 3 });
   assert.equal(turn.playerId, 'player-a');
@@ -26,6 +26,35 @@ test('authoritative engine owns pusher motion, random drop plan, and confirmed w
   assert.equal(restored.turnController.getSnapshot().state, TURN_STATES.READY);
   assert.equal(restored.turnController.getSnapshot().nextTurnNumber, confirmed.turnProgress.turnNumber);
   assert.equal(restored.pusherTime, confirmed.pusherTime);
+});
+
+test('loaded planar bed advances under the pusher without vertical pile growth', () => {
+  const engine = new WorldEngine({ seed: 0x59455350 });
+  const initial = new Map(engine.coins.map((coin) => [coin.id, {
+    z: coin.body.position.z,
+    y: coin.body.position.y,
+  }]));
+  engine.startTurn({ playerId: 'pressure-test', coinsDropped: 5 });
+
+  let maximumBoardRise = 0;
+  for (let step = 0; step < 45 * 20; step += 1) {
+    engine.advance(1 / 45);
+    for (const coin of engine.coins) {
+      const start = initial.get(coin.id);
+      if (!start || !coin.planar) continue;
+      maximumBoardRise = Math.max(maximumBoardRise, coin.body.position.y - start.y);
+    }
+  }
+
+  const moved = engine.coins
+    .filter((coin) => initial.has(coin.id))
+    .map((coin) => coin.body.position.z - initial.get(coin.id).z)
+    .filter((distance) => distance > 0.20);
+  const turn = engine.turnController.getSnapshot();
+
+  assert.ok(moved.length >= 30, `expected a visible pressure wave, only ${moved.length} coins advanced`);
+  assert.ok((turn.currentTurn?.coinsWon ?? 0) >= 3, 'expected early payouts from the loaded edge');
+  assert.ok(maximumBoardRise < 0.02, `planar bed rose by ${maximumBoardRise}`);
 });
 
 test('front-bank pressure pays one coin once without lifting it', () => {

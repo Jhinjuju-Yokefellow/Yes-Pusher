@@ -7,7 +7,7 @@ export const CONFIG = {
     y: 0.87,
     wallZ: -3.45,
     rearZ: -4.98,
-    frontZ: -2.05,
+    frontZ: -1.86,
     period: 6.8,
   },
   funnel: {

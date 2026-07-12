@@ -1,38 +1,41 @@
-# CoinPusher 50 — local visual physics with server authority
+# CoinPusher 51 — planar pressure bed
 
-## Why the previous build failed
+## What the video showed
 
-The predictive hosted renderer moved each coin forward from its last network velocity and then corrected it toward the next Railway snapshot. In a dense contact pile, those predictions cannot know the collisions that happened on the server. The result was jumping coins and a pusher that could visually pass through or fail to move the pile. Lowering graphics settings could not fix that architecture.
+The peg-board drops were moving, but the loaded board behaved like one heavy rigid carpet. The pusher reached the rear row, yet most of its force was consumed by three-dimensional floor contacts and vertical pile resolution. The field barely advanced, and the browser was still paying for a full 3D contact graph on every frame.
 
-## New hosted model
+## Changed physics model
 
-- Railway remains authoritative for the official machine, queue, turns, scoring, persistence, wallet identity, and Yokefellow settlement.
-- The browser creates a local Cannon visual machine from the first authoritative checkpoint.
-- The local pusher and coins use real collision physics between checkpoints.
-- No coin position or velocity is extrapolated as a rendered transform.
-- Railway checkpoints are capped at two per second instead of six movement streams per second.
-- Small active-turn drift is corrected through low-speed steering, not teleportation.
-- Exact reconciliation happens while the machine is ready/settled or after a reconnect-scale divergence.
-- New dropped coins enter the browser from their authoritative position, phase, and velocity.
-- Sleeping state and peg/board phase are included in the compact transport.
+- Starting lower-board coins are now constrained to the board plane.
+- Planar coins can move and rotate across the board but cannot climb, stack, or launch upward.
+- Lower-board coins no longer solve unnecessary floor contacts.
+- Coins remain fully three-dimensional while falling through the peg board, landing on the moving shelf, transferring to the lower board, and falling over an edge.
+- A coin locks into planar mode only after it reaches the lower playfield.
+- A coin automatically returns to free 3D motion at the payout or side edge so the visible fall remains physical.
 
-## Reverted from CoinPusher 49
+## Pusher correction
 
-- Removed predictive coin transform extrapolation.
-- Removed the forced 30 FPS render cap.
-- Restored the CoinPusher 48 visual materials and styling instead of the ultra-flat hosted downgrade.
-- Restored the 45-step authoritative physics configuration.
+- The flat pusher reaches 0.19 units farther than CoinPusher 50.
+- A gentle pressure wave now travels through the loaded flat field during the forward stroke.
+- Pressure is strongest near the pusher and fades toward the payout edge.
+- No upward impulse is added.
+- The front edge remains loaded enough for regular payouts without relying on towers.
 
-## Preserved
+## Starting field
 
-- 135 flat starting coins with no towers or stacks.
-- Drop-to-queue automatic turns.
-- Stronger forward payout pressure.
-- Persistent Railway world and volume storage.
-- Wallet authentication and Yokefellow skin-drop trigger.
+- 121 flat physical coins.
+- No towers or stacked layers.
+- No starting coin behind the pusher or guide walls.
+- Nine staggered rows keep the sides visibly loaded while reducing the contact count.
+
+## Persistence
+
+The machine revision changed to `coinpusher-51-planar-pressure-field-v1`. Railway will reject the incompatible saved CoinPusher 50 geometry once and create the new planar starting field.
 
 ## Verification
 
-- `npm test`: 40 tests pass.
+- `npm test`: 41 tests pass.
 - `npm run build`: passes.
-- Focused visual-physics test confirms the flat pusher physically moves a board coin.
+- A 20-second deterministic loaded-field test advanced more than 30 starting coins by at least 0.20 units without vertical rise.
+- The same test produced early payouts instead of leaving the bed stationary.
+- A 42-second five-coin authoritative turn simulation completed substantially faster than real time in the test environment.

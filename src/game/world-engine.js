@@ -12,6 +12,19 @@ import { createConfirmedWorldSnapshot, normalizeWorldSnapshot } from './world-sn
 const PHYSICS_RATE = 45;
 const FIXED_STEP = 1 / PHYSICS_RATE;
 const MAX_STEP = 0.05;
+const GROUP_COIN = 1;
+const GROUP_PUSHER = 2;
+const GROUP_BOARD = 4;
+const GROUP_WALL = 8;
+const GROUP_PEG = 16;
+
+function quaternionYaw(quaternion) {
+  const { x, y, z, w } = quaternion;
+  return Math.atan2(
+    2 * (w * y + x * z),
+    1 - 2 * (y * y + z * z),
+  );
+}
 
 function createSeededRandom(seed = Date.now()) {
   let state = Number(seed) >>> 0 || 0x6d2b79f5;
@@ -142,8 +155,8 @@ export class WorldEngine {
     position,
     rotation = null,
     material = this.materials.board,
-    collisionGroup = 4,
-    collisionMask = 1,
+    collisionGroup = GROUP_WALL,
+    collisionMask = GROUP_COIN,
   }) {
     const body = new CANNON.Body({
       mass: 0,
@@ -163,6 +176,7 @@ export class WorldEngine {
     this.addStaticBox({
       size: [CONFIG.board.width, 0.42, CONFIG.board.depth],
       position: [0, CONFIG.board.y, CONFIG.board.z],
+      collisionGroup: GROUP_BOARD,
     });
 
     for (const side of [-1, 1]) {
@@ -242,8 +256,8 @@ export class WorldEngine {
           mass: 0,
           type: CANNON.Body.STATIC,
           material: this.materials.peg,
-          collisionFilterGroup: 4,
-          collisionFilterMask: 1,
+          collisionFilterGroup: GROUP_PEG,
+          collisionFilterMask: GROUP_COIN,
         });
         body.addShape(new CANNON.Cylinder(CONFIG.peg.radius, CONFIG.peg.radius, 0.8, 16));
         body.position.set(x, y, CONFIG.peg.z);
@@ -256,16 +270,16 @@ export class WorldEngine {
     this.addStaticBox({
       size: [CONFIG.pusher.width + 0.46, 4.0, 0.30],
       position: [0, wallBottomY + 2.0, CONFIG.pusher.wallZ],
-      collisionGroup: 4,
-      collisionMask: 1,
+      collisionGroup: GROUP_WALL,
+      collisionMask: GROUP_COIN,
     });
 
     const pusherBody = new CANNON.Body({
       mass: 0,
       type: CANNON.Body.KINEMATIC,
       material: this.materials.pusher,
-      collisionFilterGroup: 2,
-      collisionFilterMask: 1,
+      collisionFilterGroup: GROUP_PUSHER,
+      collisionFilterMask: GROUP_COIN,
     });
     pusherBody.addShape(new CANNON.Box(new CANNON.Vec3(
       CONFIG.pusher.width / 2,
@@ -291,6 +305,41 @@ export class WorldEngine {
     spin.mult(base, body.quaternion);
   }
 
+  configurePlanarBoardCoin(coin, { preserveSleep = false } = {}) {
+    const body = coin.body;
+    const yaw = quaternionYaw(body.quaternion);
+    coin.planar = true;
+    body.allowSleep = true;
+    body.collisionResponse = true;
+    body.collisionFilterMask = GROUP_COIN | GROUP_PUSHER | GROUP_WALL;
+    body.linearDamping = 0.16;
+    body.angularDamping = 0.34;
+    body.linearFactor.set(1, 0, 1);
+    body.angularFactor.set(0, 1, 0);
+    body.position.y = this.coinRestY;
+    body.velocity.y = 0;
+    body.force.y = 0;
+    body.quaternion.setFromEuler(0, yaw, 0);
+    body.angularVelocity.x = 0;
+    body.angularVelocity.z = 0;
+    body.aabbNeedsUpdate = true;
+    if (!preserveSleep) body.wakeUp();
+  }
+
+  configureFreeBoardCoin(coin, { falling = false } = {}) {
+    const body = coin.body;
+    coin.planar = false;
+    body.allowSleep = !falling;
+    body.collisionResponse = true;
+    body.collisionFilterMask = GROUP_COIN | GROUP_PUSHER | GROUP_BOARD | GROUP_WALL;
+    body.linearDamping = falling ? 0.035 : 0.11;
+    body.angularDamping = falling ? 0.10 : 0.25;
+    body.linearFactor.set(1, 1, 1);
+    body.angularFactor.set(0.22, 1, 0.22);
+    body.aabbNeedsUpdate = true;
+    body.wakeUp();
+  }
+
   createCoin({
     x = 0,
     y = 5,
@@ -301,6 +350,7 @@ export class WorldEngine {
     startAsleep = false,
     phase = 'board',
     id = null,
+    planar = false,
   } = {}) {
     const inPegField = phase === 'peg';
     const body = new CANNON.Body({
@@ -311,8 +361,10 @@ export class WorldEngine {
       allowSleep: !inPegField,
       sleepSpeedLimit: 0.07,
       sleepTimeLimit: 0.55,
-      collisionFilterGroup: 1,
-      collisionFilterMask: 2 | 4 | 1,
+      collisionFilterGroup: GROUP_COIN,
+      collisionFilterMask: inPegField
+        ? GROUP_COIN | GROUP_WALL | GROUP_PEG
+        : GROUP_COIN | GROUP_PUSHER | GROUP_BOARD | GROUP_WALL,
     });
     body.addShape(new CANNON.Cylinder(
       CONFIG.coin.radius,
@@ -346,9 +398,11 @@ export class WorldEngine {
       transfer: null,
       scored: false,
       slotIndex: null,
+      planar: false,
     };
     this.coins.push(coin);
     this.coinById.set(coin.id, coin);
+    if (phase === 'board' && planar) this.configurePlanarBoardCoin(coin, { preserveSleep: true });
     return coin;
   }
 
@@ -376,6 +430,7 @@ export class WorldEngine {
         flat: true,
         rotationY: seed.rotationY,
         startAsleep: true,
+        planar: true,
       });
     }
   }
@@ -585,12 +640,7 @@ export class WorldEngine {
         if (raw >= 1) {
           coin.transfer = null;
           coin.phase = 'board';
-          body.collisionResponse = true;
-          body.allowSleep = true;
-          body.linearDamping = 0.11;
-          body.angularDamping = 0.25;
-          body.linearFactor.set(1, 1, 1);
-          body.angularFactor.set(0.22, 1, 0.22);
+          this.configureFreeBoardCoin(coin);
           body.position.set(transfer.targetX, transfer.targetY, transfer.targetZ);
           body.quaternion.setFromEuler(0, transfer.yaw, 0);
           body.velocity.set(0, -0.10, Math.max(0.06, this.pusher.velocity));
@@ -624,7 +674,7 @@ export class WorldEngine {
 
     const body = this.pusher.body;
     body.collisionResponse = true;
-    body.collisionFilterMask = 1;
+    body.collisionFilterMask = GROUP_COIN;
     body.velocity.set(0, 0, this.pusher.velocity);
     body.position.set(0, CONFIG.pusher.y, z);
     body.aabbNeedsUpdate = true;
@@ -648,6 +698,8 @@ export class WorldEngine {
   assistForwardPressure(dt) {
     if (this.pusher.velocity <= 0.05) return;
     const frontEdge = this.pusher.z + CONFIG.pusher.depth / 2;
+    const strokeStrength = Math.max(0, Math.min(1, this.pusher.velocity / 1.10));
+    const pressureSpan = Math.max(0.01, CONFIG.board.front - frontEdge);
     for (const coin of this.coins) {
       if (coin.phase !== 'board' || !coin.body.world) continue;
       const body = coin.body;
@@ -666,27 +718,45 @@ export class WorldEngine {
         const edgeDepth = Math.max(0, Math.min(1,
           (body.position.z - (CONFIG.board.front - 1.15)) / 1.15,
         ));
-        body.position.z += (0.00031 + edgeDepth * 0.00019) * (dt / FIXED_STEP);
+        body.position.z += (0.00008 + edgeDepth * 0.00006) * (dt / FIXED_STEP);
         body.aabbNeedsUpdate = true;
         if (body.position.z > CONFIG.board.front - 0.08) body.wakeUp();
       }
 
+      if (coin.planar) {
+        if (
+          body.position.z <= frontEdge - CONFIG.coin.radius ||
+          body.position.z >= CONFIG.board.front + CONFIG.coin.radius
+        ) continue;
+
+        const depth = Math.max(0, Math.min(1, (body.position.z - frontEdge) / pressureSpan));
+        const rearPressure = 1 - depth;
+        const targetForwardSpeed = strokeStrength * (0.004 + 0.080 * rearPressure * rearPressure);
+        const acceleration = 0.16 + rearPressure * 1.00;
+        if (body.velocity.z < targetForwardSpeed) {
+          body.velocity.z = Math.min(targetForwardSpeed, body.velocity.z + acceleration * dt);
+          body.wakeUp();
+        }
+
+        if (Math.abs(body.position.x) > 0.55 && body.position.z > CONFIG.funnel.bayFrontZ) {
+          body.velocity.x += Math.sign(body.position.x) * 0.010 * strokeStrength * dt;
+        }
+        continue;
+      }
+
       if (
         Math.abs(body.position.x) >= CONFIG.pusher.width / 2 + CONFIG.coin.radius ||
-        body.position.y >= this.boardTopY + 0.34 ||
+        body.position.y >= this.boardTopY + 0.42 ||
         body.position.y <= this.boardTopY - 0.12 ||
         body.position.z <= frontEdge - CONFIG.coin.radius * 0.85 ||
-        body.position.z >= frontEdge + 1.05
+        body.position.z >= frontEdge + 1.15
       ) continue;
 
       const distance = Math.max(0, body.position.z - frontEdge);
-      const pressure = Math.max(0.20, 1 - distance / 1.05);
-      const targetForwardSpeed = Math.min(0.44, 0.20 + this.pusher.velocity * 0.24);
+      const pressure = Math.max(0.24, 1 - distance / 1.15);
+      const targetForwardSpeed = Math.min(0.48, 0.23 + this.pusher.velocity * 0.25);
       if (body.velocity.z < targetForwardSpeed) {
-        body.velocity.z = Math.min(
-          targetForwardSpeed,
-          body.velocity.z + 0.95 * pressure * dt,
-        );
+        body.velocity.z = Math.min(targetForwardSpeed, body.velocity.z + 1.10 * pressure * dt);
         body.wakeUp();
       }
     }
@@ -697,6 +767,35 @@ export class WorldEngine {
     for (const coin of this.coins) {
       if (coin.phase !== 'board') continue;
       const body = coin.body;
+
+      if (coin.planar) {
+        body.position.y = this.coinRestY;
+        body.velocity.y = 0;
+        body.force.y = 0;
+        body.angularVelocity.x = 0;
+        body.angularVelocity.z = 0;
+
+        const frontReleaseZ = CONFIG.board.front - 0.025;
+        const sideHalfWidth = 5.50;
+        if (body.position.z >= frontReleaseZ || Math.abs(body.position.x) >= sideHalfWidth) {
+          this.configureFreeBoardCoin(coin, { falling: true });
+          body.velocity.z = Math.max(body.velocity.z, 0.16);
+          body.velocity.y = -0.10;
+        }
+        continue;
+      }
+
+      if (
+        !coin.scored &&
+        body.position.y <= this.coinRestY + 0.035 &&
+        body.position.y >= this.coinRestY - 0.08 &&
+        body.position.z < CONFIG.board.front - 0.08 &&
+        Math.abs(body.position.x) < 5.48
+      ) {
+        this.configurePlanarBoardCoin(coin);
+        continue;
+      }
+
       if (body.position.y < this.boardTopY + 0.70 && body.position.y > this.boardTopY - 0.18) {
         if (body.velocity.y > 0.42) body.velocity.y = 0.42;
         body.angularVelocity.x *= damping;
@@ -721,9 +820,7 @@ export class WorldEngine {
       ) {
         coin.scored = true;
         this.turnController.recordPayout(1);
-        coin.body.linearDamping = 0.035;
-        coin.body.angularDamping = 0.10;
-        coin.body.wakeUp();
+        this.configureFreeBoardCoin(coin, { falling: true });
       }
 
       if (coin.scored) {
@@ -857,6 +954,9 @@ export class WorldEngine {
       startAsleep: false,
       phase: saved.phase,
       id: saved.id,
+      planar: saved.phase === 'board'
+        && !saved.scored
+        && saved.position[1] <= this.coinRestY + 0.05,
     });
     const body = coin.body;
     coin.scored = saved.scored;
@@ -875,18 +975,19 @@ export class WorldEngine {
     if (saved.phase === 'peg') {
       body.allowSleep = false;
       body.collisionResponse = true;
+      body.collisionFilterMask = GROUP_COIN | GROUP_WALL | GROUP_PEG;
       body.linearFactor.set(1, 1, 0);
       body.angularFactor.set(0, 0, 1);
     } else if (saved.phase === 'transfer') {
       body.allowSleep = false;
       body.collisionResponse = false;
+      body.collisionFilterMask = GROUP_COIN | GROUP_PUSHER | GROUP_BOARD | GROUP_WALL;
       body.linearFactor.set(1, 1, 1);
       body.angularFactor.set(0.22, 1, 0.22);
+    } else if (coin.planar) {
+      this.configurePlanarBoardCoin(coin, { preserveSleep: true });
     } else {
-      body.allowSleep = true;
-      body.collisionResponse = true;
-      body.linearFactor.set(1, 1, 1);
-      body.angularFactor.set(0.22, 1, 0.22);
+      this.configureFreeBoardCoin(coin, { falling: Boolean(saved.scored) });
     }
 
     body.aabbNeedsUpdate = true;

@@ -179,23 +179,26 @@ Railway health reports `connections`, `streamConnections`, and `pollingClients` 
 
 ## Shared-world performance
 
-Hosted shared-world coins are rendered through one instanced mesh. The browser runs a real visual physics copy and Railway sends only compact authoritative checkpoints at up to two per second. Full-precision confirmed-world saves remain unchanged on the Railway volume. The renderer also adapts its pixel ratio under sustained frame pressure instead of forcing a high-resolution frame on every device.
+Hosted shared-world coins render through one instanced mesh. Railway remains authoritative, while the browser runs the same local visual physics between compact checkpoints. Lower-board coins use planar physics: they move and collide across the playfield without solving vertical floor contacts or building unstable stacks. Peg-board, shelf-transfer, and payout-fall coins remain fully three-dimensional.
 
-After deployment, `/api/health` includes:
+After deployment, `/api/health` reports the active transport and planar count:
 
 ```json
 {
   "network": {
-    "coinEncoding": "id-position-quaternion-v1",
-    "snapshotBytes": 12091,
-    "physicsSolverIterations": 8
+    "coinEncoding": "id-position-quaternion-sleep-phase-velocity-v3",
+    "physicsSolverIterations": 5,
+    "physicsStepsPerSecond": 45,
+    "checkpointBroadcastsPerSecond": 2,
+    "clientVisualMode": "planar-board-physics-with-authoritative-checkpoints",
+    "planarBoardCoins": 121
   }
 }
 ```
 
-The exact byte count changes as coins enter or leave the machine.
+The exact coin and snapshot counts change as coins enter or leave the machine.
 
+## CoinPusher 51 planar starting field
 
-## CoinPusher 47 flat starting field
+The authoritative machine starts with 121 non-overlapping physical coins in one flat layer. There are no towers or stacked side banks. The lower bed stays flat, receives a controlled forward pressure wave from the pusher, and releases coins back into full 3D motion only when they fall from a payout or side edge.
 
-The authoritative machine now starts with 135 non-overlapping coins in one flat layer. There are no starting towers or stacked side banks. This reduces physics load and lets pusher pressure travel through the bed more directly.
