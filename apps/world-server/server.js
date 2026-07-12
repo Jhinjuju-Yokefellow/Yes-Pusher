@@ -211,6 +211,8 @@ export async function createWorldServer({
   });
   const connections = new Map();
   const connectionIdentities = new Map();
+  const connectionClientIds = new Map();
+  const recentPollClients = new Map();
   let revision = 0;
   let lastCompletedTurnId = null;
   let savePromise = Promise.resolve();
@@ -253,6 +255,30 @@ export async function createWorldServer({
     return total;
   }
 
+  function markPollClient(clientId, playerId) {
+    const id = String(clientId ?? '').trim();
+    if (!id) return;
+    recentPollClients.set(id, { playerId: String(playerId ?? ''), seenAt: Date.now() });
+  }
+
+  function pollingClientCount() {
+    const cutoff = Date.now() - 15_000;
+    const streamedClientIds = new Set(connectionClientIds.values());
+    let total = 0;
+    for (const [clientId, state] of recentPollClients) {
+      if (state.seenAt < cutoff) {
+        recentPollClients.delete(clientId);
+        continue;
+      }
+      if (!streamedClientIds.has(clientId)) total += 1;
+    }
+    return total;
+  }
+
+  function activeClientCount() {
+    return connectionCount() + pollingClientCount();
+  }
+
   function identityFromRequest(request, fallbackId = null, fallbackLabel = '') {
     const session = authStore.readRequest(request);
     if (session) {
@@ -281,7 +307,7 @@ export async function createWorldServer({
       status: statusText(world, queue),
       activePlayerId,
       queue: queue.publicQueue(),
-      spectators: Math.max(0, connectionCount() - queue.publicQueue().filter((entry) => entry.connected).length),
+      spectators: Math.max(0, activeClientCount() - queue.publicQueue().filter((entry) => entry.connected).length),
       auth: {
         requireWallet,
         testMode,
@@ -328,7 +354,7 @@ export async function createWorldServer({
     }
   }
 
-  function addConnection(playerId, response, identity) {
+  function addConnection(playerId, response, identity, clientId = '') {
     let responses = connections.get(playerId);
     if (!responses) {
       responses = new Set();
@@ -341,6 +367,11 @@ export async function createWorldServer({
       wallet: identity?.authenticated ? identity.wallet : null,
       authenticated: Boolean(identity?.authenticated),
     });
+    const normalizedClientId = String(clientId ?? '').trim();
+    if (normalizedClientId) {
+      connectionClientIds.set(response, normalizedClientId);
+      recentPollClients.delete(normalizedClientId);
+    }
   }
 
   function removeConnection(playerId, response) {
@@ -348,6 +379,7 @@ export async function createWorldServer({
     if (!responses) return;
     responses.delete(response);
     connectionIdentities.delete(response);
+    connectionClientIds.delete(response);
     if (!responses.size) {
       connections.delete(playerId);
       queue.disconnect(playerId);
@@ -403,7 +435,9 @@ export async function createWorldServer({
         revision,
         coinCount: engine.coins.length,
         turnState: engine.turnController.getSnapshot().state,
-        connections: connectionCount(),
+        connections: activeClientCount(),
+        streamConnections: connectionCount(),
+        pollingClients: pollingClientCount(),
         requireWallet,
         testMode,
         tickRate,
@@ -496,8 +530,12 @@ export async function createWorldServer({
     if (request.method === 'GET' && pathname === '/api/world') {
       const fallbackId = requestUrl.searchParams.get('playerId');
       const fallbackLabel = requestUrl.searchParams.get('label') ?? '';
+      const clientId = requestUrl.searchParams.get('clientId') ?? '';
       const identity = identityFromRequest(request, fallbackId, fallbackLabel);
-      if (identity?.playerId) queue.ensurePlayer(identity.playerId, identity.label);
+      if (identity?.playerId) {
+        queue.touch(identity.playerId, identity.label);
+        markPollClient(clientId, identity.playerId);
+      }
       writeJson(response, 200, publicSnapshot(identity?.playerId ?? null, identity));
       return;
     }
@@ -511,6 +549,7 @@ export async function createWorldServer({
         return;
       }
       const { playerId } = identity;
+      const clientId = requestUrl.searchParams.get('clientId') ?? '';
       const label = identity.label || (testMode ? 'LOCAL TESTER' : '');
       queue.connect(playerId, label);
       if (testMode && !queue.activeId()) queue.join(playerId, label || 'LOCAL TESTER');
@@ -521,7 +560,7 @@ export async function createWorldServer({
         'x-accel-buffering': 'no',
       });
       response.write(': connected\n\n');
-      addConnection(playerId, response, identity);
+      addConnection(playerId, response, identity, clientId);
       sendEvent(response, 'world', publicSnapshot(playerId, identity));
       const heartbeat = setInterval(() => {
         try { response.write(': heartbeat\n\n'); } catch { /* close handler */ }

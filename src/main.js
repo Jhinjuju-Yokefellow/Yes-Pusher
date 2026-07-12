@@ -562,14 +562,23 @@ function renderWalletSession(session=walletAuth?.session ?? null) {
   walletButton.disabled=walletCommandPending || (!connected && !walletAuth?.available);
 }
 
-function setConnectionState({ connected = false, reconnecting = false } = {}) {
+function setConnectionState({ connected = false, reconnecting = false, mode = 'offline', error = null, url = '' } = {}) {
   statusDot.classList.toggle('connecting', !connected && reconnecting);
   statusDot.classList.toggle('offline', !connected && !reconnecting);
+  statusDot.dataset.transport = connected ? mode : 'offline';
+  statusText.title = error
+    ? `${error instanceof Error ? error.message : String(error)}${url ? `
+${url}` : ''}`
+    : '';
   if (!connected && sharedMode) {
     queueButton.disabled = true;
-    statusText.textContent = reconnecting
-      ? 'RECONNECTING TO SHARED MACHINE'
-      : 'SHARED MACHINE OFFLINE';
+    let failedPath = '';
+    try { failedPath = url ? new URL(url, location.href).pathname.toUpperCase() : ''; } catch { failedPath = ''; }
+    statusText.textContent = error
+      ? `SHARED SERVER ERROR${failedPath ? ` — ${failedPath}` : ''}`
+      : reconnecting
+        ? 'RECONNECTING TO SHARED MACHINE'
+        : 'SHARED MACHINE OFFLINE';
   }
 }
 
@@ -624,7 +633,8 @@ function renderSharedSnapshot(snapshot) {
   plusButton.disabled = !ready;
   resetMachineButton.disabled = true;
   showActiveChute(Number.isInteger(snapshot.activeSlotIndex) ? snapshot.activeSlotIndex : -1);
-  statusText.textContent = snapshot.status ?? 'SHARED MACHINE RUNNING';
+  const transportNote = sharedClient?.connectionMode === 'polling' ? ' — FALLBACK SYNC' : '';
+  statusText.textContent = `${snapshot.status ?? 'SHARED MACHINE RUNNING'}${transportNote}`;
 
   const result = turn?.lastResult;
   const settlementRecord=snapshot.settlement?.last?.id===result?.id ? snapshot.settlement.last : null;
@@ -737,8 +747,11 @@ async function initializeSharedWorld() {
   sharedClient = new SharedWorldClient({
     onSnapshot: renderSharedSnapshot,
     onConnection: setConnectionState,
-    onError: (error) => {
-      console.error('Shared world client error', error);
+    onError: (error, details = {}) => {
+      console.error('Shared world client error', details.url ?? '', error);
+      if (!sharedClient?.connected) {
+        setConnectionState({ connected: false, reconnecting: true, error, url: details.url ?? '' });
+      }
     },
   });
   sharedClient.useSession(restoredWalletSession);
@@ -1261,18 +1274,37 @@ function animate(now=performance.now()) {
 }
 
 addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight);renderer.setPixelRatio(Math.min(devicePixelRatio,1.5));});
-addEventListener('pagehide',()=>{
+addEventListener('pagehide',(event)=>{
+  if(event.persisted) return;
   if(sharedMode) sharedClient?.close();
   else void persistConfirmedWorld('page-hide');
   walletAuth?.destroy();
 });
+
+async function resumeSharedWorldNow() {
+  if(!sharedMode || !sharedClient) return;
+  setConnectionState({ connected: sharedClient.connected, reconnecting: !sharedClient.connected, mode: sharedClient.connectionMode });
+  try {
+    await sharedClient.resume();
+    if(sharedClient.snapshot) renderSharedSnapshot(sharedClient.snapshot);
+  } catch(error) {
+    console.error('Shared world resume failed',error);
+    setConnectionState({
+      connected:false,
+      reconnecting:true,
+      error,
+      url: sharedClient.lastFailedUrl,
+    });
+  }
+}
+
 document.addEventListener('visibilitychange',()=>{
   if(document.visibilityState==='hidden' && !sharedMode) {
     void persistConfirmedWorld('visibility-hidden');
     return;
   }
-  if(document.visibilityState==='visible' && sharedMode && sharedClient && !sharedClient.connected) {
-    scheduleInitialSharedReconnect();
-  }
+  if(document.visibilityState==='visible' && sharedMode) void resumeSharedWorldNow();
 });
+addEventListener('pageshow',()=>{ if(sharedMode) void resumeSharedWorldNow(); });
+addEventListener('online',()=>{ if(sharedMode) void resumeSharedWorldNow(); });
 init();

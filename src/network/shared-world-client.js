@@ -3,9 +3,9 @@ import { worldServerUrl } from './world-server-url.js';
 const PLAYER_ID_KEY = 'yes-pusher:shared-player-id:v1';
 const PLAYER_LABEL_KEY = 'yes-pusher:shared-player-label:v1';
 
-function randomId() {
-  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
-  return `player-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+function randomId(prefix = 'player') {
+  if (globalThis.crypto?.randomUUID) return `${prefix}-${globalThis.crypto.randomUUID()}`;
+  return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
 function loadIdentity() {
@@ -23,14 +23,53 @@ function loadIdentity() {
   return { id, label };
 }
 
-async function parseResponse(response) {
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(payload.error || `Shared-world request failed (${response.status})`);
-  return payload;
+function wait(ms, signal = null) {
+  return new Promise((resolve) => {
+    if (signal?.aborted) {
+      resolve();
+      return;
+    }
+    const timer = setTimeout(resolve, ms);
+    signal?.addEventListener?.('abort', () => {
+      clearTimeout(timer);
+      resolve();
+    }, { once: true });
+  });
 }
 
-function wait(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+function formatRequestError(label, url, error) {
+  const detail = error instanceof Error ? error.message : String(error || 'Unknown network error');
+  const timeout = error?.name === 'AbortError' || /abort|timeout/i.test(detail);
+  return new Error(`${label} ${timeout ? 'timed out' : 'failed'}: ${url} — ${detail}`);
+}
+
+async function fetchWithTimeout(url, options = {}, timeoutMs = 8_000, externalSignal = null) {
+  const controller = new AbortController();
+  let timeout = null;
+  const abortFromExternal = () => controller.abort(externalSignal?.reason);
+
+  if (externalSignal) {
+    if (externalSignal.aborted) controller.abort(externalSignal.reason);
+    else externalSignal.addEventListener('abort', abortFromExternal, { once: true });
+  }
+  if (Number.isFinite(timeoutMs) && timeoutMs > 0) {
+    timeout = setTimeout(() => controller.abort(new Error(`Request timed out after ${timeoutMs}ms`)), timeoutMs);
+  }
+
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    if (timeout) clearTimeout(timeout);
+    externalSignal?.removeEventListener?.('abort', abortFromExternal);
+  }
+}
+
+async function parseResponse(response, url) {
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(payload.error || `Shared-world request failed (${response.status}) at ${url}`);
+  }
+  return payload;
 }
 
 export class SharedWorldClient {
@@ -38,25 +77,40 @@ export class SharedWorldClient {
     onSnapshot = () => {},
     onConnection = () => {},
     onError = () => {},
+    pollIntervalMs = 1_000,
+    hiddenPollIntervalMs = 2_500,
   } = {}) {
     this.anonymousIdentity = loadIdentity();
     this.playerId = this.anonymousIdentity.id;
     this.playerLabel = this.anonymousIdentity.label;
+    this.clientId = randomId('client');
     this.sessionToken = '';
     this.onSnapshot = onSnapshot;
     this.onConnection = onConnection;
     this.onError = onError;
+    this.pollIntervalMs = pollIntervalMs;
+    this.hiddenPollIntervalMs = hiddenPollIntervalMs;
+
     this.streamAbort = null;
     this.streamLoop = null;
+    this.pollAbort = null;
+    this.pollLoop = null;
     this.closed = false;
     this.snapshot = null;
     this.connected = false;
+    this.streamConnected = false;
+    this.pollingHealthy = false;
+    this.connectionMode = 'offline';
+    this.lastError = null;
+    this.lastFailedUrl = '';
+    this.resumePromise = null;
   }
 
   query() {
     const params = new URLSearchParams({
       playerId: this.playerId,
       label: this.playerLabel,
+      clientId: this.clientId,
     });
     return params.toString();
   }
@@ -67,63 +121,182 @@ export class SharedWorldClient {
       : headers;
   }
 
+  updateConnection({ connected, reconnecting = false, mode = this.connectionMode, error = null, url = '' }) {
+    this.connected = Boolean(connected);
+    this.connectionMode = this.connected ? mode : 'offline';
+    if (error) {
+      this.lastError = error instanceof Error ? error : new Error(String(error));
+      this.lastFailedUrl = url;
+    } else if (this.connected) {
+      this.lastError = null;
+      this.lastFailedUrl = '';
+    }
+    this.onConnection({
+      connected: this.connected,
+      reconnecting,
+      mode: this.connectionMode,
+      error: this.lastError,
+      url: this.lastFailedUrl,
+    });
+  }
+
+  reportError(error, url = '') {
+    const normalized = error instanceof Error ? error : new Error(String(error));
+    this.lastError = normalized;
+    this.lastFailedUrl = url;
+    this.onError(normalized, { url });
+    return normalized;
+  }
+
+  async fetchSnapshot({ timeoutMs = 8_000, signal = null } = {}) {
+    const url = worldServerUrl(`/api/world?${this.query()}`);
+    try {
+      const response = await fetchWithTimeout(url, {
+        cache: 'no-store',
+        credentials: 'include',
+        headers: this.authHeaders({ accept: 'application/json' }),
+      }, timeoutMs, signal);
+      const snapshot = await parseResponse(response, url);
+      if (!snapshot.authoritative) throw new Error(`Shared world is not authoritative at ${url}`);
+      return snapshot;
+    } catch (error) {
+      throw formatRequestError('Shared-world snapshot request', url, error);
+    }
+  }
+
   async connect({ retries = 10, retryDelayMs = 500, timeoutMs = 8_000 } = {}) {
     this.closed = false;
     let lastError = null;
     for (let attempt = 0; attempt < retries; attempt += 1) {
       try {
-        const response = await fetch(worldServerUrl(`/api/world?${this.query()}`), {
-          cache: 'no-store',
-          credentials: 'include',
-          headers: this.authHeaders(),
-          signal: AbortSignal.timeout?.(timeoutMs),
-        });
-        const snapshot = await parseResponse(response);
-        if (!snapshot.authoritative) throw new Error('Shared world is not authoritative');
+        const snapshot = await this.fetchSnapshot({ timeoutMs });
+        this.updateConnection({ connected: true, mode: 'snapshot' });
         this.acceptSnapshot(snapshot);
         this.openEvents();
         return snapshot;
       } catch (error) {
-        lastError = error;
+        lastError = this.reportError(error, worldServerUrl('/api/world'));
         if (attempt < retries - 1) await wait(retryDelayMs);
       }
     }
+    this.updateConnection({ connected: false, reconnecting: true, error: lastError, url: worldServerUrl('/api/world') });
     throw lastError ?? new Error('Shared world server is unavailable');
   }
 
   openEvents() {
     this.streamAbort?.abort();
     this.streamAbort = new AbortController();
-    this.streamLoop = this.runEventLoop(this.streamAbort.signal);
+    const signal = this.streamAbort.signal;
+    this.streamLoop = this.runEventLoop(signal)
+      .finally(() => {
+        if (this.streamAbort?.signal === signal) {
+          this.streamLoop = null;
+          this.streamAbort = null;
+        }
+      });
   }
 
   async runEventLoop(signal) {
     let retryMs = 500;
     while (!signal.aborted && !this.closed) {
+      const url = worldServerUrl(`/events?${this.query()}`);
       try {
-        const response = await fetch(worldServerUrl(`/events?${this.query()}`), {
+        const response = await fetchWithTimeout(url, {
           cache: 'no-store',
           credentials: 'include',
           headers: this.authHeaders({ accept: 'text/event-stream' }),
-          signal,
-        });
+        }, 12_000, signal);
         if (!response.ok || !response.body) {
-          throw new Error(`Shared-world stream failed (${response.status})`);
+          throw new Error(`Shared-world stream failed (${response.status}) at ${url}`);
         }
-        this.connected = true;
+        this.streamConnected = true;
         retryMs = 500;
-        this.onConnection({ connected: true });
+        this.stopPolling();
+        this.updateConnection({ connected: true, mode: 'stream' });
         await this.consumeEventStream(response.body, signal);
-        if (!signal.aborted) throw new Error('Shared-world stream closed');
+        if (!signal.aborted) throw new Error(`Shared-world stream closed at ${url}`);
       } catch (error) {
         if (signal.aborted || this.closed) return;
-        this.connected = false;
-        this.onConnection({ connected: false, reconnecting: true });
-        this.onError(error);
-        await wait(retryMs);
+        this.streamConnected = false;
+        const normalized = this.reportError(formatRequestError('Shared-world live stream', url, error), url);
+        this.startPolling();
+        if (!this.pollingHealthy) {
+          this.updateConnection({ connected: false, reconnecting: true, error: normalized, url });
+        }
+        await wait(retryMs, signal);
         retryMs = Math.min(5_000, Math.round(retryMs * 1.6));
       }
     }
+  }
+
+  startPolling() {
+    if (this.pollLoop || this.closed) return;
+    this.pollAbort = new AbortController();
+    const signal = this.pollAbort.signal;
+    this.pollLoop = this.runPollingLoop(signal)
+      .finally(() => {
+        if (this.pollAbort?.signal === signal) {
+          this.pollLoop = null;
+          this.pollAbort = null;
+        }
+      });
+  }
+
+  stopPolling() {
+    this.pollAbort?.abort();
+    this.pollAbort = null;
+    this.pollLoop = null;
+    this.pollingHealthy = false;
+  }
+
+  async runPollingLoop(signal) {
+    while (!signal.aborted && !this.closed && !this.streamConnected) {
+      const url = worldServerUrl(`/api/world?${this.query()}`);
+      try {
+        const snapshot = await this.fetchSnapshot({ timeoutMs: 8_000, signal });
+        if (signal.aborted || this.closed || this.streamConnected) return;
+        this.pollingHealthy = true;
+        this.updateConnection({ connected: true, mode: 'polling' });
+        this.acceptSnapshot(snapshot);
+      } catch (error) {
+        if (signal.aborted || this.closed) return;
+        this.pollingHealthy = false;
+        const normalized = this.reportError(error, url);
+        if (!this.streamConnected) {
+          this.updateConnection({ connected: false, reconnecting: true, error: normalized, url });
+        }
+      }
+      const hidden = globalThis.document?.visibilityState === 'hidden';
+      await wait(hidden ? this.hiddenPollIntervalMs : this.pollIntervalMs, signal);
+    }
+  }
+
+  async refresh({ timeoutMs = 8_000 } = {}) {
+    const snapshot = await this.fetchSnapshot({ timeoutMs });
+    const mode = this.streamConnected ? 'stream' : 'polling';
+    if (!this.streamConnected) this.pollingHealthy = true;
+    this.updateConnection({ connected: true, mode });
+    this.acceptSnapshot(snapshot);
+    return snapshot;
+  }
+
+  async resume() {
+    if (this.resumePromise) return this.resumePromise;
+    this.resumePromise = (async () => {
+      this.closed = false;
+      try {
+        await this.refresh({ timeoutMs: 8_000 });
+      } catch (error) {
+        const normalized = this.reportError(error, worldServerUrl('/api/world'));
+        this.updateConnection({ connected: false, reconnecting: true, error: normalized, url: worldServerUrl('/api/world') });
+        this.startPolling();
+      }
+      if (!this.streamLoop && !this.streamConnected) this.openEvents();
+      return this.snapshot;
+    })().finally(() => {
+      this.resumePromise = null;
+    });
+    return this.resumePromise;
   }
 
   async consumeEventStream(body, signal) {
@@ -160,7 +333,7 @@ export class SharedWorldClient {
     try {
       this.acceptSnapshot(JSON.parse(data.join('\n')));
     } catch (error) {
-      this.onError(error);
+      this.reportError(error, worldServerUrl('/events'));
     }
   }
 
@@ -192,19 +365,26 @@ export class SharedWorldClient {
   }
 
   async command(path, values = {}) {
-    const response = await fetch(worldServerUrl(path), {
-      method: 'POST',
-      headers: this.authHeaders({ 'content-type': 'application/json' }),
-      credentials: 'include',
-      body: JSON.stringify({
-        playerId: this.playerId,
-        label: this.playerLabel,
-        ...values,
-      }),
-    });
-    const payload = await parseResponse(response);
-    if (payload.snapshot) this.acceptSnapshot(payload.snapshot);
-    return payload;
+    const url = worldServerUrl(path);
+    try {
+      const response = await fetchWithTimeout(url, {
+        method: 'POST',
+        headers: this.authHeaders({ 'content-type': 'application/json' }),
+        credentials: 'include',
+        body: JSON.stringify({
+          playerId: this.playerId,
+          label: this.playerLabel,
+          ...values,
+        }),
+      }, 10_000);
+      const payload = await parseResponse(response, url);
+      if (payload.snapshot) this.acceptSnapshot(payload.snapshot);
+      if (!this.connected) this.updateConnection({ connected: true, mode: this.streamConnected ? 'stream' : 'polling' });
+      return payload;
+    } catch (error) {
+      const normalized = this.reportError(formatRequestError('Shared-world command', url, error), url);
+      throw normalized;
+    }
   }
 
   joinQueue() {
@@ -228,6 +408,10 @@ export class SharedWorldClient {
     this.streamAbort?.abort();
     this.streamAbort = null;
     this.streamLoop = null;
+    this.stopPolling();
+    this.streamConnected = false;
+    this.pollingHealthy = false;
     this.connected = false;
+    this.connectionMode = 'offline';
   }
 }

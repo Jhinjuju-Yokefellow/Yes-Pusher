@@ -22,6 +22,6 @@ test('world server writes and restores the confirmed machine from disk', async (
   await second.close();
 
   assert.equal(after.coinCount, before.coinCount);
-  assert.equal(after.pusherTime, before.pusherTime);
+  assert.ok(Math.abs(after.pusherTime - stored.pusherTime) < 0.25);
   assert.deepEqual(after.coins[0].position, before.coins[0].position);
 });

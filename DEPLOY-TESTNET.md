@@ -81,3 +81,8 @@ For Vercel preview deployments, add each preview origin temporarily or use a sta
 7. Confirm the returned output maps to one of the fifteen `yes_drop.*` skin identifiers.
 
 The world server stores confirmed world, player progress, and settlement outbox files in the Railway volume. Redeploying the frontend does not reset the machine.
+
+
+## Confirm live or fallback synchronization
+
+Open `https://YOUR-RAILWAY-DOMAIN/api/health`. A normal live connection reports `streamConnections: 1` or higher. If the stream is interrupted but the frontend remains synchronized, `pollingClients` reports the fallback client instead. Both modes use the same authoritative Railway world.

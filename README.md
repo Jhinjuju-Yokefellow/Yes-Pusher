@@ -165,3 +165,10 @@ See `DEPLOY-TESTNET.md` for the deployment order and exact variables.
 When `VITE_WORLD_SERVER_URL` is present, the browser remains an authoritative shared-world client. It does not silently create a separate local machine if Railway is waking up or temporarily unreachable. Railway continuously advances and saves the machine independently of browser focus.
 
 The Railway health endpoint reports persistence details at `/api/health`.
+
+
+## Hosted transport recovery
+
+The browser prefers Railway's live event stream. If a browser, proxy, or background-tab policy closes that stream, the game automatically switches to authoritative `/api/world` polling. The UI shows `FALLBACK SYNC`, keeps the queue usable, and continues retrying the live stream. Returning to the tab forces an immediate snapshot refresh so the renderer catches up to Railway's current machine.
+
+Railway health reports `connections`, `streamConnections`, and `pollingClients` so the active transport is visible.

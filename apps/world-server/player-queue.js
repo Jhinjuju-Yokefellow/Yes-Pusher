@@ -26,6 +26,7 @@ export class PlayerQueue {
       label: cleanLabel(label, fallback),
       connected: false,
       connections: 0,
+      pollSeenAt: null,
       lastSeenAt: this.now(),
       disconnectedAt: null,
       leaveAfterTurn: false,
@@ -43,13 +44,25 @@ export class PlayerQueue {
     return player;
   }
 
+  touch(id, label = '') {
+    const player = this.ensurePlayer(id, label);
+    const now = this.now();
+    player.pollSeenAt = now;
+    player.connected = true;
+    player.disconnectedAt = null;
+    player.lastSeenAt = now;
+    return player;
+  }
+
   disconnect(id) {
     const player = this.players.get(id);
     if (!player) return null;
+    const now = this.now();
     player.connections = Math.max(0, player.connections - 1);
-    player.connected = player.connections > 0;
-    player.lastSeenAt = this.now();
-    if (!player.connected) player.disconnectedAt = this.now();
+    const pollIsFresh = player.pollSeenAt !== null && now - player.pollSeenAt < this.disconnectGraceMs;
+    player.connected = player.connections > 0 || pollIsFresh;
+    player.lastSeenAt = now;
+    if (!player.connected) player.disconnectedAt = now;
     return player;
   }
 
@@ -87,6 +100,18 @@ export class PlayerQueue {
   prune({ preserveActive = true } = {}) {
     const now = this.now();
     const activeId = preserveActive ? this.activeId() : null;
+    for (const player of this.players.values()) {
+      const pollIsFresh = player.pollSeenAt !== null && now - player.pollSeenAt < this.disconnectGraceMs;
+      const connectedNow = player.connections > 0 || pollIsFresh;
+      if (connectedNow) {
+        player.connected = true;
+        player.disconnectedAt = null;
+      } else if (player.connected) {
+        player.connected = false;
+        player.disconnectedAt = player.pollSeenAt ?? now;
+      }
+    }
+
     this.queue = this.queue.filter((id) => {
       if (id === activeId) return true;
       const player = this.players.get(id);

@@ -32,7 +32,7 @@ test('server exposes one world and allows only the active queued player to start
   const idleBefore = await fetch(`${base}/api/world`).then((response) => response.json());
   await new Promise((resolve) => setTimeout(resolve, 90));
   const idleAfter = await fetch(`${base}/api/world`).then((response) => response.json());
-  assert.equal(idleAfter.pusherTime, idleBefore.pusherTime);
+  assert.ok(idleAfter.pusherTime > idleBefore.pusherTime);
 
   await post(base, '/api/queue/join', { playerId: 'one', label: 'PLAYER ONE' });
   await post(base, '/api/queue/join', { playerId: 'two', label: 'PLAYER TWO' });
