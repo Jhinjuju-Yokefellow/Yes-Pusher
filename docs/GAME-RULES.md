@@ -15,7 +15,7 @@ It is:
 * Wide enough to receive the dropped coins.
 * Shorter and narrower than the fixed lower board.
 * Retracts completely behind the rear scraper wall at the back of every cycle.
-* Continuously cycling from machine startup through coin insertion, active turns, settlement, and handoff.
+* Cycles continuously while a turn is active, then pauses at the rear handoff position while the machine is ready.
 
 Coins coming through the peg board land **on top of the moving pusher shelf**, or on coins and toys already resting on that shelf.
 
@@ -150,11 +150,13 @@ The active player owns all valid scoring exits from their confirmed drop until t
 
 ---
 
-## 6. Continuous motion and scoring ownership
+## 6. Turn motion and scoring ownership
 
-The pusher cycles continuously from machine startup onward. It does not pause while coins are inserted, while a turn is active, during settlement, or between local test turns.
+The pusher cycles continuously while a turn is inserting coins, active, finishing its current cycle, or settling payouts.
 
-Scoring ownership is separate from physical machine movement. A completed player turn owns front-edge payouts only from the beginning of its confirmed batch through the end of its settlement window. The future shared-world queue must keep handoff time short so the continuously moving machine is not left without an active scoring owner.
+After settlement, it stops at the rear handoff position until the next queued turn begins. No physics or scoring advances while the machine is ready and unowned.
+
+The active player owns every valid front-edge payout from the beginning of their confirmed turn through the end of its settlement window.
 
 ---
 

@@ -23,11 +23,15 @@ The separate `RUN-SHARED-DEV.ps1` script keeps the normal development workflow f
 
 ## Hosted motion model
 
-The hosted browser no longer tries to animate coins by chasing network transforms. That approach caused visible jumping and could make the pusher appear to miss the pile.
+Hosted turns use **event-driven local replay with authoritative turn boundaries**.
 
-Railway still owns the official machine, turns, scores, queue, persistence, wallet identity, and Yokefellow settlement. The browser receives an authoritative checkpoint, builds a local visual copy of the same Cannon machine, and runs real coin collisions and pusher contact between checkpoints. Railway sends two compact checkpoints per second for reconciliation rather than attempting to stream every physics frame.
+Railway owns the official queue, random seed, chute plan, timer, scoring, payouts, persistence, wallet identity, and Yokefellow settlement. At the start of a turn it sends the confirmed machine boundary plus the turn ID, seed, selected coin count, chute plan, and start time.
 
-Normal movement is never position-extrapolated. Small differences are corrected with gentle velocity steering; exact position corrections happen when the machine is settled or after an impossible reconnect-scale divergence. The result keeps the shared-world authority while restoring actual physical pushing in the browser.
+Each browser then runs that turn continuously in its own Cannon world. Railway does not stream or correct individual coin transforms during the turn, so falling coins and the lower pile are never pulled, snapped, or steered by network checkpoints.
+
+When the turn fully settles, Railway sends the canonical end-of-turn boundary. The browser replaces its local replay with that confirmed shared state before the next queued turn starts.
+
+A browser joining during a running turn receives the same starting boundary and replay data, then fast-forwards the local simulation to the current elapsed time.
 
 ## Current build
 
@@ -166,56 +170,45 @@ See `DEPLOY-TESTNET.md` for the deployment order and exact variables.
 
 ## Persistent hosted-world behavior
 
-When `VITE_WORLD_SERVER_URL` is present, the browser remains an authoritative shared-world client. It does not silently create a separate local machine if Railway is waking up or temporarily unreachable. Railway continuously advances and saves the machine independently of browser focus.
+When `VITE_WORLD_SERVER_URL` is present, the browser remains connected to the authoritative Railway machine. It does not create a separate local world when Railway is waking or reconnecting.
+
+The confirmed machine is saved to the Railway `/data` volume after completed turns. Between turns, the pusher pauses at the rear handoff position so unowned payouts cannot occur while the machine is idle.
 
 The Railway health endpoint reports persistence details at `/api/health`.
 
-
 ## Hosted transport recovery
 
-The browser prefers Railway's live event stream. If a browser, proxy, or background-tab policy closes that stream, the game automatically switches to authoritative `/api/world` polling. The UI shows `FALLBACK SYNC`, keeps the queue usable, and continues retrying the live stream. Returning to the tab forces an immediate snapshot refresh so the renderer catches up to Railway's current machine.
+The browser prefers Railway's live event stream. If that stream is interrupted, it switches to `/api/world` polling and continues retrying the stream. The queue and turn status remain server-owned in either transport mode.
 
-Railway health reports `connections`, `streamConnections`, and `pollingClients` so the active transport is visible.
+Returning to a throttled or hidden tab fast-forwards the local replay through missing elapsed time. It does not apply intermediate server coin positions.
 
 ## Shared-world performance
 
-Hosted shared-world coins render through one instanced mesh. Railway remains authoritative, while the browser runs the same local visual physics between compact checkpoints. Lower-board coins use planar physics: they move and collide across the playfield without solving vertical floor contacts or building unstable stacks. Peg-board, shelf-transfer, and payout-fall coins remain fully three-dimensional.
+- One instanced coin mesh renders the shared field.
+- Railway broadcasts turn/status envelopes rather than moving coin transforms.
+- Active-turn payloads reuse the immutable starting boundary.
+- Browser physics runs continuously during a turn without reconciliation.
+- Railway physics runs only while a turn is resolving.
+- Idle worlds remain persisted but physically paused at the handoff position.
 
-After deployment, `/api/health` reports the active transport and planar count:
-
-```json
-{
-  "network": {
-    "coinEncoding": "id-position-quaternion-sleep-phase-velocity-v3",
-    "physicsSolverIterations": 5,
-    "physicsStepsPerSecond": 45,
-    "checkpointBroadcastsPerSecond": 2,
-    "clientVisualMode": "planar-board-physics-with-authoritative-checkpoints",
-    "planarBoardCoins": 121
-  }
-}
-```
-
-The exact coin and snapshot counts change as coins enter or leave the machine.
-
-## CoinPusher 52 balanced board physics
-
-The lower field uses guided physical board contacts rather than a frictionless planar surface. Coins retain real board and coin friction, can wobble slightly, and slow naturally after a push. Vertical rise is limited so the flat starting field does not turn back into a costly stack simulation.
-
-Railway checkpoints do not steer or snap a coin while it is in the peg field, transferring to the shelf, or visibly falling over an edge. The browser completes those short motions continuously and reconciles only after a coin has returned to the grounded board state.
-
-The starting machine contains 121 unstacked coins. A localized pressure aid keeps the pusher effective, and a side-weighted front-edge assist is tuned for regular small payouts instead of moving the entire bed like one sheet.
-
-`/api/health` reports:
+After deployment, `/api/health` reports:
 
 ```json
 {
   "network": {
-    "clientVisualMode": "balanced-friction-board-with-authoritative-checkpoints",
-    "guidedBoardCoins": 121
+    "clientVisualMode": "event-driven-turn-replay-with-boundary-snapshots",
+    "liveCoinTransformStreaming": false,
+    "statusBroadcastsPerSecond": 2
+  },
+  "persistence": {
+    "boundarySnapshots": true
   }
 }
 ```
+
+## CoinPusher 54
+
+CoinPusher 54 removes the hybrid checkpoint-reconciliation system. Turns now begin from one confirmed boundary and play locally from the server-issued seed and chute plan. Railway sends the next canonical boundary only after settlement. The pusher pauses at the rear position while no turn is active.
 
 ## CoinPusher 53
 

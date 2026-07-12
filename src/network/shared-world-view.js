@@ -4,11 +4,6 @@ import { CONFIG } from '../config/machine-config.js';
 import { WorldEngine } from '../game/world-engine.js';
 
 const INITIAL_CAPACITY = 256;
-const EXTREME_DRIFT_DISTANCE_SQ = 3.2 * 3.2;
-const GROUNDED_STEER_DISTANCE_SQ = 0.48 * 0.48;
-const SETTLED_SNAP_DISTANCE_SQ = 1.35 * 1.35;
-const MISSING_SNAPSHOT_GRACE = 4;
-const MAX_GROUNDED_STEER_SPEED = 0.055;
 
 function nextCapacity(required) {
   let capacity = INITIAL_CAPACITY;
@@ -38,9 +33,9 @@ export function unpackCoinState(raw) {
 
     const position = raw.slice(1, 4);
     const sleeping = raw.length >= 9 && raw[8] === 1;
-    const hasV3Phase = raw.length >= 10 && Number.isInteger(raw[9]) && raw[9] >= 0 && raw[9] <= 2;
-    const phase = phaseFromCode(hasV3Phase ? raw[9] : null, position);
-    const velocityStart = hasV3Phase ? 10 : 9;
+    const hasPhase = raw.length >= 10 && Number.isInteger(raw[9]) && raw[9] >= 0 && raw[9] <= 2;
+    const phase = phaseFromCode(hasPhase ? raw[9] : null, position);
+    const velocityStart = hasPhase ? 10 : 9;
 
     return {
       id: raw[0],
@@ -82,58 +77,11 @@ export function unpackCoinState(raw) {
   };
 }
 
-function wrappedTimeDifference(target, current, period) {
-  if (!Number.isFinite(target) || !Number.isFinite(current) || !Number.isFinite(period) || period <= 0) return 0;
-  let difference = (target - current) % period;
-  if (difference > period / 2) difference -= period;
-  if (difference < -period / 2) difference += period;
-  return difference;
-}
-
 function shouldUsePlanarBoard(engine, state) {
   return state.phase !== 'peg'
+    && state.phase !== 'transfer'
     && state.position[1] <= engine.coinRestY + 0.05
     && state.position[2] < CONFIG.board.front - 0.06;
-}
-
-function isAirborneState(engine, state) {
-  return state.phase === 'peg'
-    || state.phase === 'transfer'
-    || state.position[1] > engine.coinRestY + 0.09
-    || state.position[1] < engine.coinRestY - 0.07
-    || state.position[2] >= CONFIG.board.front - 0.04;
-}
-
-function isAirborneCoin(engine, coin) {
-  const body = coin.body;
-  return coin.phase === 'peg'
-    || coin.phase === 'transfer'
-    || (!coin.planar && (
-      body.position.y > engine.coinRestY + 0.09
-      || body.position.y < engine.coinRestY - 0.07
-      || body.position.z >= CONFIG.board.front - 0.04
-    ));
-}
-
-function configureCoinPhase(coin, requestedPhase, engine, state = null) {
-  const phase = requestedPhase === 'peg' ? 'peg' : 'board';
-  const body = coin.body;
-  coin.phase = phase;
-  coin.transfer = null;
-
-  if (phase === 'peg') {
-    body.allowSleep = false;
-    body.collisionResponse = true;
-    body.linearDamping = 0.018;
-    body.angularDamping = 0.035;
-    body.linearFactor.set(1, 1, 0);
-    body.angularFactor.set(0, 0, 1);
-    coin.planar = false;
-  } else if (state && shouldUsePlanarBoard(engine, state)) {
-    engine.configurePlanarBoardCoin(coin, { preserveSleep: true });
-  } else {
-    engine.configureFreeBoardCoin(coin, { falling: state?.position?.[2] >= CONFIG.board.front - 0.06 });
-  }
 }
 
 export class SharedWorldView {
@@ -152,6 +100,9 @@ export class SharedWorldView {
     this.capacity = INITIAL_CAPACITY;
     this.hasSnapshot = false;
     this.lastRevision = 0;
+    this.boundaryId = null;
+    this.activeReplayId = null;
+    this.replayElapsed = 0;
     this.turnState = 'ready';
     this.matrixObject = new THREE.Object3D();
     this.instanceMesh = this.createInstanceMesh(this.capacity);
@@ -165,7 +116,7 @@ export class SharedWorldView {
     mesh.receiveShadow = false;
     mesh.frustumCulled = false;
     mesh.count = 0;
-    mesh.name = 'shared-world-coins-local-physics';
+    mesh.name = 'shared-world-coins-turn-replay';
     return mesh;
   }
 
@@ -197,154 +148,143 @@ export class SharedWorldView {
   }
 
   createCoinFromState(state) {
-    const requestedPhase = state.phase === 'peg' ? 'peg' : 'board';
+    const requestedPhase = state.phase === 'peg' ? 'peg' : state.phase === 'transfer' ? 'transfer' : 'board';
     const coin = this.engine.createCoin({
       x: state.position[0],
       y: state.position[1],
       z: state.position[2],
       flat: requestedPhase !== 'peg',
       rotationY: 0,
-      phase: requestedPhase,
+      phase: requestedPhase === 'transfer' ? 'board' : requestedPhase,
       id: state.id,
       startAsleep: false,
       planar: requestedPhase === 'board' && shouldUsePlanarBoard(this.engine, state),
     });
-    configureCoinPhase(coin, requestedPhase, this.engine, state);
-    this.applyStateDirectly(coin, state);
-    coin.missingSnapshots = 0;
-    return coin;
-  }
-
-  applyStateDirectly(coin, state) {
     const body = coin.body;
-    const requestedPhase = state.phase === 'peg' ? 'peg' : 'board';
-    if (
-      coin.phase !== requestedPhase
-      || (requestedPhase === 'board' && coin.planar !== shouldUsePlanarBoard(this.engine, state))
-    ) configureCoinPhase(coin, requestedPhase, this.engine, state);
+    coin.phase = requestedPhase;
+    coin.transfer = null;
     body.position.set(...state.position);
     body.quaternion.set(...state.quaternion);
     body.velocity.set(...state.velocity);
     body.angularVelocity.set(...state.angularVelocity);
-    if (coin.planar) {
+
+    if (requestedPhase === 'peg') {
+      body.allowSleep = false;
+      body.linearFactor.set(1, 1, 0);
+      body.angularFactor.set(0, 0, 1);
+    } else if (shouldUsePlanarBoard(this.engine, state)) {
       this.engine.configurePlanarBoardCoin(coin, { preserveSleep: true });
+    } else {
+      this.engine.configureFreeBoardCoin(coin, {
+        falling: requestedPhase === 'transfer' || state.position[2] >= CONFIG.board.front - 0.06,
+      });
     }
+
     body.aabbNeedsUpdate = true;
     if (state.sleeping && requestedPhase === 'board') body.sleep();
     else body.wakeUp();
+    return coin;
   }
 
-  softlySteerGroundedCoin(coin, state) {
-    const body = coin.body;
-    const dx = state.position[0] - body.position.x;
-    const dz = state.position[2] - body.position.z;
-    body.velocity.x += clamp(dx * 0.035, -MAX_GROUNDED_STEER_SPEED, MAX_GROUNDED_STEER_SPEED);
-    body.velocity.z += clamp(dz * 0.035, -MAX_GROUNDED_STEER_SPEED, MAX_GROUNDED_STEER_SPEED);
-    body.wakeUp();
-  }
-
-  reconcileCoin(coin, state, { initial = false, ready = false } = {}) {
-    const body = coin.body;
-    const requestedPhase = state.phase === 'peg' ? 'peg' : 'board';
-    const dx = state.position[0] - body.position.x;
-    const dy = state.position[1] - body.position.y;
-    const dz = state.position[2] - body.position.z;
-    const distanceSq = dx * dx + dy * dy + dz * dz;
-
-    if (initial) {
-      this.applyStateDirectly(coin, state);
-      return;
-    }
-
-    // Never steer or snap a coin while it is visibly falling through the peg
-    // field, dropping to the board, or falling over an edge. Each browser lets
-    // that short motion finish continuously; Railway remains authoritative for
-    // the final settled position and payout result.
-    if (isAirborneState(this.engine, state) || isAirborneCoin(this.engine, coin)) return;
-
-    if (coin.phase !== requestedPhase) configureCoinPhase(coin, requestedPhase, this.engine, state);
-
-    const localSleeping = body.sleepState === CANNON.Body.SLEEPING;
-    if (ready && state.sleeping && localSleeping) {
-      if (distanceSq > SETTLED_SNAP_DISTANCE_SQ) this.applyStateDirectly(coin, state);
-      return;
-    }
-
-    if (distanceSq > EXTREME_DRIFT_DISTANCE_SQ && ready && state.sleeping) {
-      this.applyStateDirectly(coin, state);
-      return;
-    }
-
-    if (distanceSq > GROUNDED_STEER_DISTANCE_SQ) this.softlySteerGroundedCoin(coin, state);
-  }
-
-  syncPusher(snapshot, initial = false) {
-    const serverTime = Number(snapshot?.serverTime);
-    const snapshotAge = Number.isFinite(serverTime)
-      ? clamp((Date.now() - serverTime) / 1000, 0, 0.5)
-      : 0;
-    const targetTime = Number.isFinite(snapshot?.pusherTime)
-      ? Number(snapshot.pusherTime) + snapshotAge
-      : null;
-
-    if (targetTime === null) return;
-    if (initial) {
-      this.engine.pusherTime = targetTime;
-      this.engine.updatePusher(0.0001);
-      return;
-    }
-
-    const difference = wrappedTimeDifference(targetTime, this.engine.pusherTime, CONFIG.pusher.period);
-    if (Math.abs(difference) > 2.4) this.engine.pusherTime += difference;
-    else this.engine.pusherTime += clamp(difference * 0.10, -0.035, 0.035);
-  }
-
-  applySnapshot(snapshot) {
-    if (!snapshot || !Array.isArray(snapshot.coins)) return;
-    const initial = !this.hasSnapshot;
-    const ready = (snapshot.turn?.state ?? 'ready') === 'ready';
-    this.turnState = snapshot.turn?.state ?? this.turnState;
-    this.lastRevision = Number(snapshot.revision) || this.lastRevision;
-    this.syncPusher(snapshot, initial);
-
-    const present = new Set();
-    let membershipChanged = false;
-
+  loadBoundary(snapshot) {
+    if (!snapshot || !Array.isArray(snapshot.coins)) return false;
+    this.engine.initializeEmptyMachine();
     for (const raw of snapshot.coins) {
       const state = unpackCoinState(raw);
       if (!state) continue;
-      present.add(state.id);
-
-      let coin = this.coins.get(state.id) ?? this.engine.coinById.get(state.id);
-      if (!coin) {
-        // Do not resurrect a payout that the server is already showing below the
-        // collection area while two snapshots cross in flight.
-        if (state.position[1] < -2.8 || state.position[2] > CONFIG.board.front + 3.0) continue;
-        coin = this.createCoinFromState(state);
-        membershipChanged = true;
-      } else {
-        coin.missingSnapshots = 0;
-        this.reconcileCoin(coin, state, { initial, ready });
-      }
+      if (state.position[1] < -2.8 || state.position[2] > CONFIG.board.front + 3.0) continue;
+      this.createCoinFromState(state);
     }
 
-    for (const coin of [...this.engine.coins]) {
-      if (present.has(coin.id)) continue;
-      coin.missingSnapshots = (coin.missingSnapshots ?? 0) + 1;
-      if (ready || coin.missingSnapshots >= MISSING_SNAPSHOT_GRACE || !coin.body.world) {
-        this.engine.removeCoin(coin);
-        membershipChanged = true;
-      }
-    }
+    const pusherTime = Number(snapshot.pusherTime);
+    this.engine.pusherTime = Number.isFinite(pusherTime) ? pusherTime : 0;
+    this.engine.pusher.z = Number.isFinite(Number(snapshot.pusherZ))
+      ? Number(snapshot.pusherZ)
+      : CONFIG.pusher.rearZ;
+    this.engine.pusher.lastZ = this.engine.pusher.z;
+    this.engine.pusher.velocity = 0;
+    this.engine.pusher.pushing = false;
+    this.engine.pusher.body.position.set(0, CONFIG.pusher.y, this.engine.pusher.z);
+    this.engine.pusher.body.velocity.set(0, 0, 0);
+    this.engine.pusher.body.aabbNeedsUpdate = true;
 
-    if (membershipChanged || initial) this.rebuildOrder();
+    this.rebuildOrder();
     this.hasSnapshot = true;
+    this.activeReplayId = null;
+    this.replayElapsed = 0;
+    this.turnState = 'ready';
+    return true;
+  }
+
+  beginTurnReplay(snapshot) {
+    const replay = snapshot?.replay;
+    if (!replay?.turnId || !Array.isArray(snapshot?.coins)) return false;
+    if (this.activeReplayId === replay.turnId) return true;
+
+    this.loadBoundary({
+      coins: snapshot.coins,
+      pusherTime: snapshot.pusherTime,
+      pusherZ: snapshot.pusherZ,
+    });
+
+    this.engine.startTurn({
+      playerId: replay.playerId ?? null,
+      coinsDropped: replay.coinsDropped,
+      slotPlan: replay.slotPlan,
+      id: replay.turnId,
+      seed: replay.seed,
+      startedAt: replay.startedAt,
+    });
+
+    const elapsedSeconds = clamp(
+      Number(replay.elapsedSeconds)
+        || Math.max(0, (Number(snapshot.serverTime) - Number(replay.startedAt)) / 1000)
+        || 0,
+      0,
+      38,
+    );
+    if (elapsedSeconds > 0.001) this.engine.fastForward(elapsedSeconds);
+
+    this.activeReplayId = replay.turnId;
+    this.replayElapsed = elapsedSeconds;
+    this.turnState = snapshot.turn?.state ?? 'active';
+    this.rebuildOrder();
+    return true;
+  }
+
+  applySnapshot(snapshot) {
+    if (!snapshot) return;
+    this.lastRevision = Number(snapshot.revision) || this.lastRevision;
+    this.turnState = snapshot.turn?.state ?? this.turnState;
+
+    if (snapshot.syncMode === 'turn-replay' && snapshot.replay?.turnId) {
+      if (this.activeReplayId !== snapshot.replay.turnId) {
+        this.beginTurnReplay(snapshot);
+      } else {
+        const targetElapsed = clamp(Number(snapshot.replay.elapsedSeconds) || 0, 0, 38);
+        const missingTime = targetElapsed - this.replayElapsed;
+        // Normal foreground rendering stays completely local. Only a tab that
+        // was throttled or suspended fast-forwards through the missing physics.
+        if (missingTime > 0.75) {
+          this.engine.fastForward(missingTime);
+          this.replayElapsed = targetElapsed;
+        }
+      }
+      return;
+    }
+
+    const boundaryId = snapshot.boundaryId ?? `boundary-${snapshot.turn?.nextTurnNumber ?? 0}`;
+    if (!this.hasSnapshot || this.boundaryId !== boundaryId || this.activeReplayId) {
+      this.loadBoundary(snapshot);
+      this.boundaryId = boundaryId;
+    }
   }
 
   update(dt) {
     if (!this.hasSnapshot) return;
     const safeDt = clamp(Number(dt) || 0, 0, 0.05);
     this.engine.advance(safeDt);
+    if (this.activeReplayId) this.replayElapsed += safeDt;
 
     let membershipChanged = false;
     for (const coin of [...this.order]) {
@@ -361,6 +301,10 @@ export class SharedWorldView {
     if (this.pusherMesh) this.pusherMesh.position.z = this.engine.pusher.z;
   }
 
+  activeSlotIndex() {
+    return Number.isInteger(this.engine.activeSlotIndex) ? this.engine.activeSlotIndex : -1;
+  }
+
   clear() {
     this.engine.clearCoins();
     this.coins.clear();
@@ -368,5 +312,8 @@ export class SharedWorldView {
     this.instanceMesh.count = 0;
     this.instanceMesh.instanceMatrix.needsUpdate = true;
     this.hasSnapshot = false;
+    this.boundaryId = null;
+    this.activeReplayId = null;
+    this.replayElapsed = 0;
   }
 }

@@ -32,7 +32,8 @@ test('server exposes one world and allows only the active queued player to start
   const idleBefore = await fetch(`${base}/api/world`).then((response) => response.json());
   await new Promise((resolve) => setTimeout(resolve, 90));
   const idleAfter = await fetch(`${base}/api/world`).then((response) => response.json());
-  assert.ok(idleAfter.pusherTime > idleBefore.pusherTime);
+  assert.equal(idleAfter.pusherTime, idleBefore.pusherTime);
+  assert.equal(idleAfter.syncMode, 'boundary');
 
   const firstDrop = await post(base, '/api/queue/join', {
     playerId: 'one',
@@ -43,6 +44,9 @@ test('server exposes one world and allows only the active queued player to start
   assert.equal(firstDrop.body.turn.playerId, 'one');
   assert.equal(firstDrop.body.turn.coinsDropped, 4);
   assert.equal(firstDrop.body.snapshot.turn.activeSecondsRemaining, 30);
+  assert.equal(firstDrop.body.snapshot.syncMode, 'turn-replay');
+  assert.equal(firstDrop.body.snapshot.replay.turnId, firstDrop.body.turn.id);
+  assert.deepEqual(firstDrop.body.snapshot.replay.slotPlan, firstDrop.body.turn.slotPlan);
 
   const secondDrop = await post(base, '/api/queue/join', {
     playerId: 'two',
@@ -60,10 +64,13 @@ test('server exposes one world and allows only the active queued player to start
   const denied = await post(base, '/api/turn/start', { playerId: 'two', coins: 4 });
   assert.equal(denied.status, 403);
 
-  const runningBefore = firstDrop.body.snapshot.pusherTime;
+  const replayBefore = firstDrop.body.snapshot.replay.elapsedSeconds;
+  const boundaryCoin = firstDrop.body.snapshot.coins[0];
   await new Promise((resolve) => setTimeout(resolve, 90));
   const runningAfter = await fetch(`${base}/api/world`).then((response) => response.json());
-  assert.ok(runningAfter.pusherTime > runningBefore);
+  assert.ok(runningAfter.replay.elapsedSeconds > replayBefore);
+  assert.deepEqual(runningAfter.coins[0], boundaryCoin);
   assert.ok(runningAfter.turn.activeSecondsRemaining < 30);
   assert.equal(runningAfter.turn.state, 'dropping');
+  assert.equal(runningAfter.syncMode, 'turn-replay');
 });

@@ -1,92 +1,81 @@
 # YES Pusher Shared World
 
-CoinPusher 32 changes the game from one local simulation per browser into one persistent machine controlled by an authoritative Node server.
+YES Pusher uses one persistent machine with server-authoritative turn results and event-driven browser replay.
 
 ## Authority boundary
 
-The world server owns:
+Railway owns:
 
-- the Cannon physics world
-- all coin bodies and physical object state
-- the continuously cycling pusher
-- the random chute plan for every turn
-- the two-second insertion schedule
+- the confirmed machine at every turn boundary
+- queue order and the active player
+- turn IDs and random seeds
+- random chute plans and insertion timing
+- authoritative physics for scoring
 - front payouts and side losses
-- the immediate 30-second turn clock, coin insertion, cycle finish, and settlement window
-- lifetime score and skin-milestone counters
-- the player queue and active-player permission
-- separate lifetime score and pending/resolved skin milestones for each anonymous player
-- the latest confirmed world saved on disk
+- the 30-second timer, cycle finish, and settlement window
+- per-wallet lifetime score and skin milestones
+- settlement records and Yokefellow submissions
+- persistent confirmed-world files on the `/data` volume
 
 A browser owns only:
 
-- its anonymous local player ID
-- its selected 1–10 coin count before submitting a drop request
-- a non-authoritative local visual physics copy used only to render smooth collisions between server checkpoints
 - camera controls
+- the selected 1–10 coin count before queueing
+- a temporary visual replay of the active turn
 
-The browser cannot submit coin positions, scores, chute results, timers, completed turns, lifetime totals, or milestone results.
+Browser coin positions and local scores are never submitted to Railway.
 
-## Transport
+## Turn transport
 
-The server exposes:
+While ready, Railway sends a full canonical boundary snapshot.
 
-- `GET /api/health` — server and machine status
-- `GET /api/world` — an initial authoritative snapshot
-- `GET /events` — live Server-Sent Event snapshots
-- `POST /api/queue/join` — submit a one-shot queued drop request with the selected coin count
-- `POST /api/queue/leave` — cancel a waiting request
-- `POST /api/turn/start` — backward-compatible manual start route; normal clients do not use it
+When a queued turn starts, Railway sends:
 
-The server broadcasts compact authoritative checkpoints at no more than two per second. The browser initializes a real Cannon visual machine from the first checkpoint and advances physical coin/pusher contact locally between checkpoints. Small drift is corrected through low-speed steering; the browser does not extrapolate rendered transforms or submit its local positions back to Railway.
+- the boundary ID
+- the starting coin snapshot
+- turn ID
+- player ID
+- selected coin count
+- chute plan
+- deterministic turn seed
+- start time and elapsed time
 
-Railway continuously advances the official machine even when every browser is closed. Railway alone decides payouts, losses, timers, queue order, final world state, and settlement. The local visual copy exists only to make the shared machine move smoothly.
+The browser starts the same turn locally and does not accept moving coin transforms from Railway during that turn.
+
+Railway continues its independent authoritative simulation for scoring. Repeated live events carry queue, timer, score, and settlement status, but the coin array remains the unchanged starting boundary.
+
+When the turn is finalized, Railway sends a new canonical boundary. That boundary replaces the browser replay before the next turn.
+
+A browser joining mid-turn reconstructs the starting boundary and fast-forwards the replay to the server's elapsed time.
+
+## Idle behavior
+
+The pusher pauses at the rear handoff position while the turn state is `ready`. Railway does not advance idle physics, so payouts cannot occur without a scoring owner.
+
+## Endpoints
+
+- `GET /api/health`
+- `GET /api/world`
+- `GET /events`
+- `POST /api/queue/join`
+- `POST /api/queue/leave`
+- `POST /api/turn/start` for backward compatibility
+- wallet authentication and settlement endpoints documented separately
 
 ## Queue rules
 
-- Watching does not require joining the queue.
-- Pressing **Drop Coins** records the selected 1–10 coin count and adds one turn request to the queue.
-- When that request reaches the front, the server starts it automatically; the player does not press again.
-- The server creates the turn ID and random chute plan.
-- A completed request leaves the queue. The player presses Drop Coins again to request another turn.
-- A disconnected active turn finishes on the server.
-- Short disconnects keep a player’s queue position for twenty seconds so a refresh can reconnect cleanly.
+- Watching does not require queueing.
+- Pressing **Drop Coins** records the chosen 1–10 coins and creates one queued turn.
+- The server starts the request automatically when it reaches the front.
+- The player does not press again.
+- A completed request leaves the queue.
+- A disconnected active turn finishes on Railway.
+- Short disconnects preserve queue position for reconnection.
 
 ## Persistence
 
-The shared server saves `.world-data/confirmed-world.json` and `.world-data/player-progress.json` after completed turns and while the machine is ready. Writes use temporary files and atomic renames.
+Railway saves the confirmed world after finalized turns. An unfinished turn is not committed. Restarting during a partial turn restores the prior confirmed boundary.
 
-An unfinished turn is not committed. Restarting during a partial turn restores the previous confirmed world.
+## Transport fallback
 
-Set `YES_PUSHER_DATA_DIR` to move the runtime save directory. Set `PORT` or `HOST` to change the server listener.
-
-## Development and production
-
-Development:
-
-```powershell
-npm run dev
-```
-
-Production-style local run:
-
-```powershell
-npm run build
-npm start
-```
-
-When `dist/` exists, the world server serves both the built game and the shared API from the same origin.
-
-## Local fallback
-
-A hosted build with `VITE_WORLD_SERVER_URL` never silently creates a separate local machine. It reconnects to Railway and falls back from the live stream to authoritative `/api/world` polling when necessary. Local confirmed-world mode remains available only for explicit local development without a configured server URL.
-
-## Wallet-owned queue control
-
-The machine remains public to watch. Queue control is wallet-owned by default. A browser signs a short-lived server challenge and receives an HTTP-only session; queue and turn commands use that verified session instead of trusting a wallet string sent by the client.
-
-The wallet is identity only at this stage. The login signature does not spend YES or submit a chain transaction.
-
-## Durable turn settlement
-
-The authoritative server writes one settlement record after each finalized wallet-owned turn. The record is saved before external SDK calls. Yokefellow offering events and optional YES bucket-credit submission are retried independently with idempotency keys. See `WALLET-AND-SETTLEMENT.md`.
+The browser prefers the live event stream and falls back to `/api/world` polling when needed. Both paths deliver the same event-driven turn envelope. Neither path streams active coin corrections.

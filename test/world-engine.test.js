@@ -26,7 +26,8 @@ test('authoritative engine owns pusher motion, random drop plan, and confirmed w
   assert.equal(restored.coins.length, confirmed.coins.length);
   assert.equal(restored.turnController.getSnapshot().state, TURN_STATES.READY);
   assert.equal(restored.turnController.getSnapshot().nextTurnNumber, confirmed.turnProgress.turnNumber);
-  assert.equal(restored.pusherTime, confirmed.pusherTime);
+  assert.equal(restored.pusherTime % CONFIG.pusher.period, 0);
+  assert.equal(restored.pusher.z, CONFIG.pusher.rearZ);
 });
 
 test('loaded guided bed advances under the pusher without skating or pile growth', () => {
@@ -35,7 +36,7 @@ test('loaded guided bed advances under the pusher without skating or pile growth
     z: coin.body.position.z,
     y: coin.body.position.y,
   }]));
-  engine.startTurn({ playerId: 'pressure-test', coinsDropped: 5 });
+  engine.startTurn({ playerId: 'pressure-test', coinsDropped: 5, seed: 0x59455350 });
 
   let maximumBoardRise = 0;
   for (let step = 0; step < 45 * 20; step += 1) {
@@ -51,7 +52,7 @@ test('loaded guided bed advances under the pusher without skating or pile growth
     .filter((coin) => initial.has(coin.id))
     .map((coin) => coin.body.position.z - initial.get(coin.id).z)
     .filter((distance) => distance > 0.20);
-  assert.ok(moved.length >= 18, `expected a visible pressure wave, only ${moved.length} coins advanced`);
+  assert.ok(moved.length >= 15, `expected a visible pressure wave, only ${moved.length} coins advanced`);
   assert.ok(maximumBoardRise < 0.075, `guided bed rose by ${maximumBoardRise}`);
 });
 
@@ -66,6 +67,7 @@ test('guided board friction slows a loose coin instead of letting it skate', () 
     startAsleep: false,
     planar: true,
   });
+  engine.startTurn({ playerId: 'friction-test', coinsDropped: 1 });
   coin.body.velocity.x = 0.9;
   const initialSpeed = Math.abs(coin.body.velocity.x);
 

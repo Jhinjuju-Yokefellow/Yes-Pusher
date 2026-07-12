@@ -27,25 +27,74 @@ function packedCoin(id, x, y, z, { sleeping = true, phase = 0, velocity = [0, 0,
   return sleeping ? base : [...base, ...velocity, ...angularVelocity];
 }
 
-test('shared world view renders packed coins through one instanced mesh', () => {
+function boundarySnapshot({ boundaryId = 'boundary-1', coins = [] } = {}) {
+  return {
+    revision: 1,
+    syncMode: 'boundary',
+    boundaryId,
+    pusherTime: 0,
+    pusherZ: CONFIG.pusher.rearZ,
+    turn: { state: 'ready', nextTurnNumber: 1 },
+    coins,
+  };
+}
+
+function replaySnapshot({
+  boundaryId = 'boundary-1',
+  turnId = 'turn-1',
+  elapsedSeconds = 0,
+  coins = [],
+} = {}) {
+  return {
+    revision: 2,
+    syncMode: 'turn-replay',
+    boundaryId,
+    serverTime: 1_000,
+    pusherTime: 0,
+    pusherZ: CONFIG.pusher.rearZ,
+    turn: {
+      state: 'dropping',
+      currentTurn: {
+        id: turnId,
+        playerId: 'player-a',
+        number: 1,
+        coinsDropped: 2,
+        coinsWon: 0,
+        slotPlan: [1, 4],
+        startedAt: 1_000,
+      },
+    },
+    replay: {
+      turnId,
+      playerId: 'player-a',
+      coinsDropped: 2,
+      slotPlan: [1, 4],
+      seed: 12345,
+      startedAt: 1_000,
+      elapsedSeconds,
+    },
+    coins,
+  };
+}
+
+test('shared world view renders a boundary through one instanced mesh', () => {
   const { scene, view } = makeView();
-  const coins = Array.from({ length: 135 }, (_, index) => packedCoin(
+  const coins = Array.from({ length: 121 }, (_, index) => packedCoin(
     `coin-${index}`,
-    (index % 15) * 0.65 - 4.5,
+    (index % 11) * 0.72 - 3.6,
     0.816,
-    Math.floor(index / 15) * 0.65 - 2.5,
+    Math.floor(index / 11) * 0.62 - 2.5,
   ));
 
-  view.applySnapshot({ pusherTime: 0, turn: { state: 'ready' }, coins });
+  view.applySnapshot(boundarySnapshot({ coins }));
   view.update(1 / 60);
 
   assert.equal(view.instanceMesh.isInstancedMesh, true);
-  assert.equal(view.instanceMesh.count, 135);
+  assert.equal(view.instanceMesh.count, 121);
   assert.equal(scene.children.filter((child) => child.isInstancedMesh).length, 1);
-  assert.equal(scene.children.filter((child) => child.isMesh && !child.isInstancedMesh).length, 0);
 });
 
-test('packed v3 coin state preserves phase and velocity without prediction', () => {
+test('packed v3 coin state preserves phase and velocity', () => {
   const state = unpackCoinState(packedCoin('drop-1', 1, 8, CONFIG.peg.z, {
     sleeping: false,
     phase: 1,
@@ -58,11 +107,10 @@ test('packed v3 coin state preserves phase and velocity without prediction', () 
   assert.deepEqual(state.angularVelocity, [0, 0, 1.4]);
 });
 
-test('shared world view remains compatible with object-form snapshots', () => {
+test('shared world view remains compatible with object-form boundary snapshots', () => {
   const { view } = makeView();
 
-  view.applySnapshot({
-    turn: { state: 'ready' },
+  view.applySnapshot(boundarySnapshot({
     coins: [{
       id: 'legacy-coin',
       position: [1, 0.816, 3],
@@ -70,83 +118,57 @@ test('shared world view remains compatible with object-form snapshots', () => {
       sleeping: true,
       phase: 'board',
     }],
-  });
+  }));
   view.update(1 / 60);
 
   assert.equal(view.instanceMesh.count, 1);
   assert.equal(view.coins.has('legacy-coin'), true);
 });
 
-test('active server updates steer local physics instead of teleporting coins', () => {
+test('active turn replay starts once and ignores later server coin transforms', () => {
   const { view } = makeView();
-  view.applySnapshot({
-    revision: 1,
-    pusherTime: 0,
-    turn: { state: 'active' },
-    coins: [packedCoin('coin-1', 0, 0.816, 1, { sleeping: false, velocity: [0, 0, 0] })],
-  });
+  const startCoins = [packedCoin('coin-1', 0, 0.816, 1)];
+  view.applySnapshot(boundarySnapshot({ coins: startCoins }));
+  view.applySnapshot(replaySnapshot({ coins: startCoins, elapsedSeconds: 0 }));
 
   const coin = view.coins.get('coin-1');
-  const before = coin.body.position.x;
+  const before = coin.body.position.clone();
+  const replayCount = view.engine.turnController.getSnapshot().currentTurn?.id;
+
   view.applySnapshot({
-    revision: 2,
-    pusherTime: 0.5,
-    turn: { state: 'active' },
-    coins: [packedCoin('coin-1', 1, 0.816, 1, { sleeping: false, velocity: [0, 0, 0] })],
+    ...replaySnapshot({ coins: [packedCoin('coin-1', 4, 3, 5)], elapsedSeconds: 0.1 }),
+    revision: 3,
   });
 
-  assert.equal(coin.body.position.x, before);
-  assert.ok(coin.body.velocity.x > 0);
+  assert.equal(view.engine.turnController.getSnapshot().currentTurn?.id, replayCount);
+  assert.equal(coin.body.position.x, before.x);
+  assert.equal(coin.body.position.y, before.y);
+  assert.equal(coin.body.position.z, before.z);
 });
 
-test('airborne peg coins are never steered or snapped by later checkpoints', () => {
-  const { view } = makeView();
-  view.applySnapshot({
-    revision: 1,
-    pusherTime: 0,
-    turn: { state: 'active' },
-    coins: [packedCoin('drop-1', 0, 8.0, CONFIG.peg.z, {
-      sleeping: false,
-      phase: 1,
-      velocity: [0.12, -0.8, 0],
-      angularVelocity: [0, 0, 0.7],
-    })],
-  });
-
-  const coin = view.coins.get('drop-1');
-  const beforePosition = coin.body.position.clone();
-  const beforeVelocity = coin.body.velocity.clone();
-  view.applySnapshot({
-    revision: 2,
-    pusherTime: 0.5,
-    turn: { state: 'active' },
-    coins: [packedCoin('drop-1', 2.2, 6.5, CONFIG.peg.z, {
-      sleeping: false,
-      phase: 1,
-      velocity: [-0.5, -1.4, 0],
-      angularVelocity: [0, 0, -1.2],
-    })],
-  });
-
-  assert.equal(coin.body.position.x, beforePosition.x);
-  assert.equal(coin.body.position.y, beforePosition.y);
-  assert.equal(coin.body.velocity.x, beforeVelocity.x);
-  assert.equal(coin.body.velocity.y, beforeVelocity.y);
-});
-
-test('local visual physics lets the flat pusher move a board coin', () => {
+test('turn replay generates falling coins locally without checkpoint steering', () => {
   const { view } = makeView();
   const restY = CONFIG.board.y + 0.42 / 2 + CONFIG.coin.thickness / 2 + 0.004;
-  view.applySnapshot({
-    revision: 1,
-    pusherTime: 0,
-    turn: { state: 'active' },
-    coins: [packedCoin('coin-1', 0, restY, -3.0, { sleeping: false, velocity: [0, 0, 0] })],
-  });
+  const startCoins = [packedCoin('coin-1', 0, restY, -2.5)];
+  view.applySnapshot(replaySnapshot({ coins: startCoins, elapsedSeconds: 2.2 }));
 
-  const startZ = view.coins.get('coin-1').body.position.z;
-  for (let frame = 0; frame < 180; frame += 1) view.update(1 / 60);
-  const endZ = view.coins.get('coin-1')?.body.position.z ?? startZ;
+  const localDrops = view.engine.coins.filter((coin) => coin.id !== 'coin-1');
+  assert.ok(localDrops.length >= 2);
+  assert.equal(view.activeReplayId, 'turn-1');
+  assert.ok(view.engine.pusher.z > CONFIG.pusher.rearZ);
+});
 
-  assert.ok(endZ > startZ + 0.15, `expected pusher movement, start=${startZ}, end=${endZ}`);
+test('ready boundary replaces local replay only after the turn ends', () => {
+  const { view } = makeView();
+  const startCoins = [packedCoin('coin-1', 0, 0.816, 1)];
+  view.applySnapshot(replaySnapshot({ coins: startCoins, elapsedSeconds: 1.5 }));
+  assert.equal(view.activeReplayId, 'turn-1');
+
+  const finalCoins = [packedCoin('coin-1', 0.4, 0.816, 2.2)];
+  view.applySnapshot(boundarySnapshot({ boundaryId: 'boundary-2', coins: finalCoins }));
+
+  assert.equal(view.activeReplayId, null);
+  assert.equal(view.boundaryId, 'boundary-2');
+  assert.equal(view.coins.get('coin-1').body.position.x, 0.4);
+  assert.equal(view.coins.get('coin-1').body.position.z, 2.2);
 });

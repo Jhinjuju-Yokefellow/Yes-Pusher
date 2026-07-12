@@ -654,7 +654,7 @@ function renderSharedSnapshot(snapshot) {
   minusButton.disabled = !canRequestDrop;
   plusButton.disabled = !canRequestDrop;
   resetMachineButton.disabled = true;
-  showActiveChute(Number.isInteger(snapshot.activeSlotIndex) ? snapshot.activeSlotIndex : -1);
+  showActiveChute(sharedView?.activeSlotIndex?.() ?? -1);
   const transportNote = sharedClient?.connectionMode === 'polling' ? ' — FALLBACK SYNC' : '';
   statusText.textContent = `${snapshot.status ?? 'SHARED MACHINE RUNNING'}${transportNote}`;
 

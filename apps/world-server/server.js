@@ -214,6 +214,8 @@ export async function createWorldServer({
   const connectionClientIds = new Map();
   const recentPollClients = new Map();
   let revision = 0;
+  let boundaryRevision = 1;
+  let activeTurnReplay = null;
   let lastCompletedTurnId = null;
   let savePromise = Promise.resolve();
   let closed = false;
@@ -225,6 +227,8 @@ export async function createWorldServer({
       revision += 1;
       if (reason === 'turn-finalized' && snapshot.lastResult?.id !== lastCompletedTurnId) {
         lastCompletedTurnId = snapshot.lastResult.id;
+        activeTurnReplay = null;
+        boundaryRevision += 1;
         const finalizedResult = progressStore.finalizeTurn(snapshot.lastResult);
         if (finalizedResult) settlementStore.enqueue(finalizedResult);
         queue.completeTurn();
@@ -292,14 +296,44 @@ export async function createWorldServer({
     return anonymousIdentity(fallbackId, fallbackLabel);
   }
 
-  function publicSnapshot(playerId = null, identity = null, world = engine.getNetworkSnapshot({ packed: true })) {
-    world.turn = progressStore.decorateTurnSnapshot(world.turn, playerId);
+  function transportWorld() {
+    const liveTurn = engine.turnController.getSnapshot();
+    if (liveTurn.state !== TURN_STATES.READY && activeTurnReplay) {
+      return {
+        ...activeTurnReplay.startWorld,
+        syncMode: 'turn-replay',
+        boundaryId: activeTurnReplay.boundaryId,
+        replay: {
+          turnId: activeTurnReplay.turnId,
+          playerId: activeTurnReplay.playerId,
+          coinsDropped: activeTurnReplay.coinsDropped,
+          slotPlan: [...activeTurnReplay.slotPlan],
+          seed: activeTurnReplay.seed,
+          startedAt: activeTurnReplay.startedAt,
+          elapsedSeconds: Math.max(0, (Date.now() - activeTurnReplay.startedAt) / 1000),
+        },
+        activeSlotIndex: engine.activeSlotIndex,
+        coinCount: engine.coins.length,
+        turn: liveTurn,
+      };
+    }
+
+    return {
+      ...engine.getNetworkSnapshot({ packed: true }),
+      syncMode: 'boundary',
+      boundaryId: `boundary-${boundaryRevision}`,
+      replay: null,
+    };
+  }
+
+  function publicSnapshot(playerId = null, identity = null, world = transportWorld()) {
+    const decoratedTurn = progressStore.decorateTurnSnapshot(world.turn, playerId);
     const activePlayerId = queue.activeId();
     const player = playerId ? queue.getPlayer(playerId) : null;
     const position = playerId ? queue.positionOf(playerId) : null;
     return {
       kind: 'yes-pusher-shared-world',
-      protocolVersion: 2,
+      protocolVersion: 3,
       revision,
       serverTime: Date.now(),
       authoritative: true,
@@ -330,6 +364,7 @@ export async function createWorldServer({
         queuedCoins: position !== null ? player?.requestedCoins ?? 5 : null,
       } : null,
       ...world,
+      turn: decoratedTurn,
     };
   }
 
@@ -342,10 +377,25 @@ export async function createWorldServer({
     if (engine.turnController.getSnapshot().state !== TURN_STATES.READY) return null;
     const request = queue.activeRequest();
     if (!request) return null;
+
+    const startWorld = engine.getNetworkSnapshot({ packed: true });
+    const seed = ((Date.now() ^ Math.imul(revision + 1, 0x9e3779b1)) >>> 0);
+    const boundaryId = `boundary-${boundaryRevision}`;
     const turn = engine.startTurn({
       playerId: request.id,
       coinsDropped: request.requestedCoins,
+      seed,
     });
+    activeTurnReplay = {
+      turnId: turn.id,
+      playerId: request.id,
+      coinsDropped: turn.coinsDropped,
+      slotPlan: [...turn.slotPlan],
+      seed: turn.seed ?? seed,
+      startedAt: turn.startedAt,
+      boundaryId,
+      startWorld,
+    };
     revision += 1;
     broadcast();
     return turn;
@@ -354,7 +404,7 @@ export async function createWorldServer({
   function broadcast() {
     queue.prune({ preserveActive: engine.turnController.getSnapshot().state !== TURN_STATES.READY });
     revision += 1;
-    const world = engine.getNetworkSnapshot({ packed: true });
+    const world = transportWorld();
     for (const [playerId, responses] of connections) {
       for (const response of responses) {
         const identity = connectionIdentities.get(response) ?? anonymousIdentity(playerId, queue.getPlayer(playerId)?.label ?? '');
@@ -443,7 +493,7 @@ export async function createWorldServer({
     }
 
     if (request.method === 'GET' && pathname === '/api/health') {
-      const transportSnapshot = engine.getNetworkSnapshot({ packed: true });
+      const transportSnapshot = transportWorld();
       writeJson(response, 200, {
         ok: true,
         authoritative: true,
@@ -462,8 +512,9 @@ export async function createWorldServer({
           snapshotBytes: Buffer.byteLength(JSON.stringify(transportSnapshot)),
           physicsSolverIterations: engine.world.solver.iterations,
           physicsStepsPerSecond: engine.physicsRate,
-          checkpointBroadcastsPerSecond: broadcastRate,
-          clientVisualMode: 'balanced-friction-board-with-authoritative-checkpoints',
+          statusBroadcastsPerSecond: broadcastRate,
+          clientVisualMode: 'event-driven-turn-replay-with-boundary-snapshots',
+          liveCoinTransformStreaming: false,
           guidedBoardCoins: engine.coins.filter((coin) => coin.planar).length,
         },
         allowedOrigins: [...allowedOrigins],
@@ -472,7 +523,8 @@ export async function createWorldServer({
           dataDir,
           loadedFromDisk: Boolean(initialSnapshot),
           lastSavedAt: lastSavedAt ? new Date(lastSavedAt).toISOString() : null,
-          continuousPhysics: true,
+          continuousPhysics: engine.turnController.getSnapshot().state !== TURN_STATES.READY,
+          boundarySnapshots: true,
         },
       });
       return;
@@ -653,10 +705,11 @@ export async function createWorldServer({
             writeJson(response, 409, { error: 'The current turn has not finished' });
             return;
           }
-          const requestedCoins = queue.getPlayer(playerId)?.requestedCoins ?? body.coins;
-          const turn = engine.startTurn({ playerId, coinsDropped: requestedCoins });
-          revision += 1;
-          broadcast();
+          const turn = startNextQueuedTurnIfReady();
+          if (!turn) {
+            writeJson(response, 409, { error: 'The queued turn could not be started' });
+            return;
+          }
           writeJson(response, 200, { ok: true, turn, snapshot: publicSnapshot(playerId, identity) });
           return;
         }
@@ -671,6 +724,8 @@ export async function createWorldServer({
             return;
           }
           engine.resetMachine();
+          activeTurnReplay = null;
+          boundaryRevision += 1;
           revision += 1;
           savePromise = savePromise
             .catch(() => {})
@@ -696,10 +751,9 @@ export async function createWorldServer({
     const now = process.hrtime.bigint();
     const elapsed = Number(now - lastTick) / 1e9;
     lastTick = now;
-    // The authoritative machine must continue whether or not a browser tab is
-    // focused or connected. Browsers only render snapshots; Railway owns time.
-    // A drop request is a one-shot queued turn, so the server starts the next
-    // request automatically as soon as the prior turn has fully settled.
+    // Railway owns turn timing and scoring. The machine is paused at the rear
+    // handoff position while ready, then advances only while a queued turn is
+    // resolving. Browsers replay the turn locally from the same boundary state.
     startNextQueuedTurnIfReady();
     engine.advance(Math.min(elapsed, 0.05));
   }, Math.max(4, Math.floor(1000 / tickRate)));

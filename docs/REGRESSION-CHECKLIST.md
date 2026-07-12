@@ -86,3 +86,14 @@ Run this checklist before accepting any future patch.
 - [ ] The skin trigger request does not include `selectedOutputId`; Yokefellow chooses the random output.
 - [ ] A successful skin response records the selected `yes_drop.*` ID and request/mint references.
 - [ ] A no-match response remains retryable and is not displayed as an issued skin.
+
+
+## Event-driven shared turn
+
+- [ ] Ready state is a full canonical boundary snapshot.
+- [ ] A new turn includes one stable seed and chute plan.
+- [ ] Repeated active events do not alter browser coin positions.
+- [ ] Falling coins never snap, steer, or jump because of network updates.
+- [ ] Returning from a background tab fast-forwards physics rather than teleporting coins.
+- [ ] The final Railway boundary replaces the local replay only after settlement.
+- [ ] The pusher remains paused at the rear handoff while no turn is active.

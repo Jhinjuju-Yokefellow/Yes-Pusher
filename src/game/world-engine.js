@@ -53,6 +53,7 @@ export class WorldEngine {
     seedMachine = true,
   } = {}) {
     this.random = createSeededRandom(seed);
+    this.turnRandom = null;
     this.onEvent = onEvent;
     this.world = null;
     this.materials = null;
@@ -80,6 +81,9 @@ export class WorldEngine {
       onChange: (snapshot, reason) => {
         if (reason === 'turn-finalized') {
           this.lastFinalizedResult = snapshot.lastResult;
+          this.turnRandom = null;
+          this.dropSequence = null;
+          this.activeSlotIndex = -1;
         }
         this.onEvent({ type: 'turn', reason, snapshot });
       },
@@ -110,6 +114,10 @@ export class WorldEngine {
     this.pusher.body.velocity.set(0, 0, 0);
     this.pusher.body.position.set(0, CONFIG.pusher.y, CONFIG.pusher.rearZ);
     this.pusher.body.aabbNeedsUpdate = true;
+  }
+
+  randomDuringTurn() {
+    return (this.turnRandom ?? this.random)();
   }
 
   createPhysicsWorld() {
@@ -388,8 +396,13 @@ export class WorldEngine {
     this.world.addBody(body);
     if (startAsleep) body.sleep();
 
+    const coinId = id ?? `coin-${this.nextCoinId++}`;
+    if (id) {
+      const match = /^coin-(\d+)$/.exec(String(id));
+      if (match) this.nextCoinId = Math.max(this.nextCoinId, Number(match[1]) + 1);
+    }
     const coin = {
-      id: id ?? `coin-${this.nextCoinId++}`,
+      id: coinId,
       body,
       tower,
       phase,
@@ -487,22 +500,40 @@ export class WorldEngine {
     this.onEvent({ type: 'machine-reset' });
   }
 
-  startTurn({ playerId, coinsDropped }) {
+  startTurn({
+    playerId,
+    coinsDropped,
+    slotPlan: requestedSlotPlan = null,
+    id = null,
+    seed = null,
+    startedAt = null,
+  }) {
     const turn = this.turnController.getSnapshot();
     if (turn.state !== TURN_STATES.READY) throw new Error('The machine is already resolving a turn');
     const count = Math.max(1, Math.min(10, Math.floor(Number(coinsDropped) || 1)));
-    const slotPlan = makeRandomSlotPlan(CONFIG.slots.length, count, this.random);
-    const turnId = `shared-turn-${turn.nextTurnNumber}-${Date.now().toString(36)}`;
+    const turnSeed = Number.isInteger(seed)
+      ? seed >>> 0
+      : ((Date.now() ^ Math.imul(turn.nextTurnNumber, 0x9e3779b1)) >>> 0);
+    this.turnRandom = createSeededRandom(turnSeed);
+    const slotPlan = Array.isArray(requestedSlotPlan) && requestedSlotPlan.length === count
+      ? requestedSlotPlan.map((slot) => Math.max(0, Math.min(CONFIG.slots.length - 1, Math.floor(Number(slot) || 0))))
+      : makeRandomSlotPlan(CONFIG.slots.length, count, this.turnRandom);
+    const turnId = typeof id === 'string' && id
+      ? id
+      : `shared-turn-${turn.nextTurnNumber}-${turnSeed.toString(36)}`;
     this.turnController.startTurn({
       coinsDropped: count,
       slotPlan,
       id: turnId,
       playerId,
+      seed: turnSeed,
+      startedAt,
     });
     this.dropSequence = {
       turnId,
       playerId,
       slotPlan,
+      seed: turnSeed,
       index: 0,
       elapsed: 0,
       nextDropAt: 0,
@@ -510,7 +541,14 @@ export class WorldEngine {
       batchFinished: false,
     };
     this.spawnScheduledCoins();
-    this.onEvent({ type: 'turn-started', turnId, playerId, slotPlan });
+    this.onEvent({
+      type: 'turn-started',
+      turnId,
+      playerId,
+      slotPlan,
+      seed: turnSeed,
+      startedAt: this.turnController.getSnapshot().currentTurn?.startedAt ?? Date.now(),
+    });
     return this.turnController.getSnapshot().currentTurn;
   }
 
@@ -521,18 +559,18 @@ export class WorldEngine {
     while (sequence.index < sequence.slotPlan.length && sequence.elapsed + 1e-9 >= sequence.nextDropAt) {
       const slotIndex = sequence.slotPlan[sequence.index];
       const x = CONFIG.slots[slotIndex];
-      const direction = this.random() < 0.5 ? -1 : 1;
+      const direction = this.randomDuringTurn() < 0.5 ? -1 : 1;
       const coin = this.createCoin({
-        x: x + (this.random() - 0.5) * 0.10,
+        x: x + (this.randomDuringTurn() - 0.5) * 0.10,
         y: 10.72,
         z: CONFIG.peg.z,
         flat: false,
-        rotationY: this.random() * Math.PI * 2,
+        rotationY: this.randomDuringTurn() * Math.PI * 2,
         phase: 'peg',
       });
       coin.slotIndex = slotIndex;
-      coin.body.velocity.set(direction * (0.08 + this.random() * 0.10), -0.20, 0);
-      coin.body.angularVelocity.set(0, 0, direction * (1.15 + this.random() * 0.45));
+      coin.body.velocity.set(direction * (0.08 + this.randomDuringTurn() * 0.10), -0.20, 0);
+      coin.body.angularVelocity.set(0, 0, direction * (1.15 + this.randomDuringTurn() * 0.45));
       sequence.lastDroppedCoinId = coin.id;
       this.activeSlotIndex = slotIndex;
       sequence.index += 1;
@@ -573,7 +611,7 @@ export class WorldEngine {
       targetX: body.position.x,
       targetY: this.pusherCoinRestY + 0.14,
       targetZ: CONFIG.pusher.wallZ + 0.78,
-      yaw: this.random() * Math.PI * 2,
+      yaw: this.randomDuringTurn() * Math.PI * 2,
     };
     body.allowSleep = false;
     body.wakeUp();
@@ -603,7 +641,7 @@ export class WorldEngine {
         if (speed < 0.12 && body.position.y > CONFIG.peg.exitY) {
           coin.pegStallSeconds += dt;
           if (coin.pegStallSeconds > 0.24) {
-            body.velocity.x += coin.pegNudgeDirection * (0.26 + this.random() * 0.08);
+            body.velocity.x += coin.pegNudgeDirection * (0.26 + this.randomDuringTurn() * 0.08);
             body.velocity.y -= 0.085;
             body.angularVelocity.z += coin.pegNudgeDirection * 0.35;
             coin.pegNudgeDirection *= -1;
@@ -647,7 +685,7 @@ export class WorldEngine {
           body.position.set(transfer.targetX, transfer.targetY, transfer.targetZ);
           body.quaternion.setFromEuler(0, transfer.yaw, 0);
           body.velocity.set(0, -0.10, Math.max(0.06, this.pusher.velocity));
-          body.angularVelocity.set(0, (this.random() - 0.5) * 0.18, 0);
+          body.angularVelocity.set(0, (this.randomDuringTurn() - 0.5) * 0.18, 0);
           body.wakeUp();
           this.markCoinReachedPusher(coin);
         }
@@ -656,7 +694,10 @@ export class WorldEngine {
   }
 
   updatePusher(dt) {
-    let nextTime = this.pusherTime + dt;
+    const turnState = this.turnController.getSnapshot().state;
+    let nextTime = turnState === TURN_STATES.READY
+      ? this.pusherTime
+      : this.pusherTime + dt;
     nextTime = this.turnController.limitPusherTime(nextTime);
     this.pusherTime = nextTime;
     const t = (this.pusherTime % CONFIG.pusher.period) / CONFIG.pusher.period;
@@ -880,6 +921,10 @@ export class WorldEngine {
   }
 
   advance(seconds) {
+    if (this.turnController.getSnapshot().state === TURN_STATES.READY) {
+      this.accumulator = 0;
+      return;
+    }
     const safeSeconds = Math.max(0, Math.min(Number(seconds) || 0, MAX_STEP));
     this.accumulator += safeSeconds;
     let steps = 0;
@@ -889,6 +934,14 @@ export class WorldEngine {
       steps += 1;
     }
     if (steps >= 6) this.accumulator = 0;
+  }
+
+  fastForward(seconds, { maximumSeconds = 38 } = {}) {
+    const safeSeconds = Math.max(0, Math.min(Number(seconds) || 0, maximumSeconds));
+    const steps = Math.floor(safeSeconds / FIXED_STEP);
+    for (let index = 0; index < steps; index += 1) this.fixedStep(FIXED_STEP);
+    const remainder = safeSeconds - steps * FIXED_STEP;
+    if (remainder > 0.0001) this.advance(remainder);
   }
 
   serializeCoin(coin, { compact = false, packed = false } = {}) {
@@ -1036,8 +1089,8 @@ export class WorldEngine {
     snapshot.coins.forEach((coin) => this.restoreCoin(coin));
     this.nextCoinId = Math.max(snapshot.nextCoinId, this.nextCoinId);
 
-    this.pusherTime = snapshot.pusherTime;
-    const z = Number.isFinite(snapshot.pusherZ) ? snapshot.pusherZ : CONFIG.pusher.rearZ;
+    this.pusherTime = Math.ceil(snapshot.pusherTime / CONFIG.pusher.period) * CONFIG.pusher.period;
+    const z = CONFIG.pusher.rearZ;
     this.pusher.z = z;
     this.pusher.lastZ = z;
     this.pusher.velocity = 0;

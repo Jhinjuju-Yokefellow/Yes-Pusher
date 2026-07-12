@@ -1,0 +1,5 @@
+After applying this patch, delete the previous built JavaScript bundle because dist/index.html now uses the CoinPusher 54 bundle:
+
+dist/assets/index-COPhUGEv.js
+
+Leaving it in place is harmless, but removing it keeps dist clean.

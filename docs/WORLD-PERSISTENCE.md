@@ -1,6 +1,6 @@
 # YES Pusher Local Fallback Persistence
 
-This document describes the browser-only fallback used when the authoritative shared server cannot be reached. Normal shared play stores the confirmed machine on the world server; see `SHARED-WORLD.md`. The fallback still saves and restores the approved local machine between browser reloads without changing the locked cabinet, peg board, pusher, scoring edges, or coin physics.
+This document describes confirmed-world persistence. Normal hosted play saves canonical turn-boundary snapshots on Railway; explicit browser-only local development uses IndexedDB/localStorage as a fallback. Both preserve the locked cabinet, peg board, pusher, scoring edges, and coin physics.
 
 ## What is saved
 
@@ -24,8 +24,8 @@ The snapshot is stored in IndexedDB with a synchronous localStorage fallback.
 The game saves a confirmed snapshot:
 
 - after a turn fully settles and finalizes
-- periodically while the machine is ready between turns
-- when the page becomes hidden or closes, when the game is in a confirmed ready state
+- while the machine is ready at the rear handoff position
+- when the page becomes hidden or closes in explicit local mode, when the game is in a confirmed ready state
 - after Reset Machine creates a fresh starting world
 
 An unfinished turn is never committed as the confirmed world. Reloading during an active turn restores the most recent confirmed state from before that turn. This prevents a partial drop, partial payout, or interrupted timer from becoming permanent.

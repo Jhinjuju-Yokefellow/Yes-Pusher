@@ -75,9 +75,21 @@ export function createTurnController({
     }
   }
 
-  function startTurn({ coinsDropped, slotPlan = [], id = null, playerId = null }) {
+  function startTurn({
+    coinsDropped,
+    slotPlan = [],
+    id = null,
+    playerId = null,
+    seed = null,
+    startedAt = null,
+  }) {
     assertState([TURN_STATES.READY], 'startTurn');
     const normalizedCount = Math.max(1, Math.min(10, clampWholeNumber(coinsDropped, 1)));
+    const normalizedStartedAt = startedAt !== null
+      && startedAt !== undefined
+      && Number.isFinite(Number(startedAt))
+      ? Number(startedAt)
+      : Date.now();
     currentTurn = {
       id: typeof id === 'string' && id ? id : `local-turn-${nextTurnNumber}`,
       playerId: typeof playerId === 'string' && playerId ? playerId : null,
@@ -86,8 +98,9 @@ export function createTurnController({
       coinsWon: 0,
       coinsLost: 0,
       slotPlan: [...slotPlan],
-      startedAt: Date.now(),
-      activeStartedAt: null,
+      seed: Number.isInteger(seed) ? seed >>> 0 : null,
+      startedAt: normalizedStartedAt,
+      activeStartedAt: normalizedStartedAt,
       completedAt: null,
     };
     lastResult = null;
@@ -95,7 +108,6 @@ export function createTurnController({
     finishAtPusherTime = null;
     settleQuietRemaining = 0;
     settleMaximumRemaining = 0;
-    currentTurn.activeStartedAt = Date.now();
     state = TURN_STATES.DROPPING;
     emit('turn-started');
     return currentTurn.id;
