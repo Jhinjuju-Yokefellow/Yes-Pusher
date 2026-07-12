@@ -91,3 +91,51 @@ test('shared world view linearly interpolates between server snapshots', () => {
   assert.ok(coin.position.x > 0.9 && coin.position.x < 1.1);
   assert.ok(pusher.position.z > -3.1 && pusher.position.z < -2.9);
 });
+
+test('shared world view predicts awake v2 coins between snapshots', () => {
+  const scene = new THREE.Scene();
+  const geometry = new THREE.CylinderGeometry(0.34, 0.34, 0.105, 8);
+  const material = new THREE.MeshBasicMaterial();
+  const view = new SharedWorldView({
+    scene,
+    coinGeometry: geometry,
+    coinMaterials: material,
+    pusherMesh: null,
+  });
+
+  view.applySnapshot({
+    serverTime: Date.now(),
+    coins: [[
+      'moving-coin',
+      0, 1, 0,
+      0, 0, 0, 1,
+      0,
+      1, 0, 0,
+      0, 0, 0,
+    ]],
+  });
+  view.update(0.1);
+
+  assert.ok(view.coins.get('moving-coin').position.x > 0.07);
+});
+
+test('shared world view leaves sleeping v2 coins fixed', () => {
+  const scene = new THREE.Scene();
+  const geometry = new THREE.CylinderGeometry(0.34, 0.34, 0.105, 8);
+  const material = new THREE.MeshBasicMaterial();
+  const view = new SharedWorldView({
+    scene,
+    coinGeometry: geometry,
+    coinMaterials: material,
+    pusherMesh: null,
+  });
+
+  view.applySnapshot({
+    serverTime: Date.now(),
+    coins: [['sleeping-coin', 2, 1, 3, 0, 0, 0, 1, 1]],
+  });
+  view.update(0.2);
+
+  assert.equal(view.coins.get('sleeping-coin').position.x, 2);
+  assert.equal(view.coins.get('sleeping-coin').position.z, 3);
+});

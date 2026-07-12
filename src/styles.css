@@ -250,3 +250,24 @@ button { font: inherit; }
 .result-skin.resolved span { color:var(--green); }
 .result-skin.failed { border-color:rgba(255,107,122,.42); }
 .result-skin.failed span { color:#ff9daa; }
+
+/* Hosted shared-world mode favors stable frame pacing over expensive glass UI effects. */
+.hosted-performance .glass-panel {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  box-shadow: none;
+  background: rgba(7, 14, 29, 0.96);
+}
+.hosted-performance .brand-mark,
+.hosted-performance .status-dot,
+.hosted-performance .primary-button,
+.hosted-performance .slot-indicator.active,
+.hosted-performance .result-skin img {
+  box-shadow: none;
+}
+.hosted-performance .slot-indicator,
+.hosted-performance .primary-button,
+.hosted-performance .turn-result,
+.hosted-performance .loading-screen {
+  transition: none;
+}

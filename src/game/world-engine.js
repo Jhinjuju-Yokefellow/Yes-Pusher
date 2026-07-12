@@ -9,7 +9,7 @@ import { makeRandomSlotPlan } from './drop-plan.js';
 import { createTurnController, TURN_STATES } from './turn-controller.js';
 import { createConfirmedWorldSnapshot, normalizeWorldSnapshot } from './world-snapshot.js';
 
-const PHYSICS_RATE = 45;
+const PHYSICS_RATE = 30;
 const FIXED_STEP = 1 / PHYSICS_RATE;
 const MAX_STEP = 0.05;
 
@@ -29,7 +29,7 @@ function lerp(a, b, t) {
 }
 
 function transportNumber(value) {
-  return Math.round(Number(value) * 10_000) / 10_000;
+  return Math.round(Number(value) * 1_000) / 1_000;
 }
 
 export class WorldEngine {
@@ -85,7 +85,8 @@ export class WorldEngine {
       allowSleep: true,
     });
     world.broadphase = new CANNON.SAPBroadphase(world);
-    world.solver.iterations = 5;
+    world.solver.iterations = 4;
+    world.broadphase.axisIndex = 2;
     world.solver.tolerance = 0.002;
     world.defaultContactMaterial.friction = 0.25;
     world.defaultContactMaterial.restitution = 0.02;
@@ -298,7 +299,7 @@ export class WorldEngine {
       CONFIG.coin.radius,
       CONFIG.coin.radius,
       CONFIG.coin.thickness,
-      10,
+      8,
     ));
     body.position.set(x, y, z);
     if (flat) body.quaternion.setFromEuler(0, rotationY, 0);
@@ -747,7 +748,8 @@ export class WorldEngine {
   serializeCoin(coin, { compact = false, packed = false } = {}) {
     const body = coin.body;
     if (packed) {
-      return [
+      const sleeping = body.sleepState === CANNON.Body.SLEEPING;
+      const base = [
         coin.id,
         transportNumber(body.position.x),
         transportNumber(body.position.y),
@@ -756,6 +758,17 @@ export class WorldEngine {
         transportNumber(body.quaternion.y),
         transportNumber(body.quaternion.z),
         transportNumber(body.quaternion.w),
+        sleeping ? 1 : 0,
+      ];
+      if (sleeping) return base;
+      return [
+        ...base,
+        transportNumber(body.velocity.x),
+        transportNumber(body.velocity.y),
+        transportNumber(body.velocity.z),
+        transportNumber(body.angularVelocity.x),
+        transportNumber(body.angularVelocity.y),
+        transportNumber(body.angularVelocity.z),
       ];
     }
     const base = {
@@ -787,7 +800,7 @@ export class WorldEngine {
       pusherZ: packed ? transportNumber(this.pusher.z) : this.pusher.z,
       activeSlotIndex: this.activeSlotIndex,
       coinCount: this.coins.length,
-      coinEncoding: packed ? 'id-position-quaternion-v1' : 'object-v1',
+      coinEncoding: packed ? 'id-position-quaternion-velocity-v2' : 'object-v1',
       coins: this.coins.map((coin) => this.serializeCoin(coin, packed
         ? { packed: true }
         : { compact: true })),

@@ -1,33 +1,31 @@
-# CoinPusher 48 — smooth hosted rendering and lower server load
+# CoinPusher 49 — Predictive shared-world rendering
 
-The flat starting field proved the remaining lag was not primarily caused by the old towers. The hosted client was still visibly chasing six network targets per second, while the Vercel renderer was paying for shadows, physical transmission materials, several real-time lights, and repeated matrix uploads for stationary coins.
+The prior hosted build still looked slow because the browser was always rendering delayed server transforms. Reducing shadows and coin count did not remove that network-frame delay.
 
-## Changes
+## Architecture correction
 
-- Replaced exponential target chasing with timed linear interpolation between authoritative snapshots.
-- The first snapshot now appears immediately; later snapshots animate continuously over their measured interval.
-- Stationary coin instances no longer rewrite their transform matrix every animation frame.
-- Added a hosted performance renderer for Vercel/remote-world builds.
-- Disabled the hosted shadow-map pass and high-cost transmission shaders.
-- Replaced the individual peg meshes with one instanced peg mesh.
-- Reduced hosted coin and peg geometry detail without changing physical dimensions.
-- Reduced hosted render pixel density and texture anisotropy.
-- Simplified hosted lighting while preserving the emissive cabinet artwork and neon strips.
-- Reduced authoritative physics from 60 to 45 steps per second and solver iterations from 6 to 5.
-- Reduced collision-cylinder sides from 12 to 10.
-- Added `physicsStepsPerSecond` to `/api/health`.
-- Changed the recommended Railway `YES_PUSHER_TICK_RATE` to `45`.
+- Railway remains authoritative for physics, scoring, turns, queue order, persistence, and Yokefellow settlement.
+- Network snapshots now include velocity and angular velocity for awake coins.
+- The browser predicts coin motion between snapshots and smoothly corrects back to Railway state.
+- The pusher is animated from authoritative pusher time instead of waiting for each network position update.
+- Sleeping coins remain compact and do not receive unnecessary per-frame matrix updates.
 
-## Preserved
+## Hosted rendering reduction
 
-- 135-coin flat starting field
-- Drop-to-queue turn flow
-- Pusher dimensions and travel
-- Payout pressure and scoring boundaries
-- Shared-world persistence
-- Wallet authentication and Yokefellow settlement paths
+- Hosted builds render at a stable 30 FPS instead of attempting an unstable 60 FPS.
+- Maximum hosted pixel ratio is reduced to 0.62.
+- Hosted materials use lightweight unlit shaders while preserving textures and machine colors.
+- Fog, tone mapping, dynamic shadows, glass blur, and UI backdrop blur are disabled in hosted mode.
+- Hosted coin geometry uses eight sides.
 
-## Validation
+## Railway physics reduction
 
-- `npm test`: 38 tests pass
-- `npm run build`: passes
+- Authoritative physics runs at 30 steps per second with four solver iterations.
+- The broadphase is aligned to the machine's forward axis.
+- A Railway variable requesting a higher tick rate is automatically capped at the engine physics rate.
+- The flat 135-coin starting field and all game rules remain unchanged.
+
+## Compatibility
+
+- The browser still accepts older v1 transform snapshots.
+- Saved world files are unchanged and remain compatible.

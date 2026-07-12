@@ -197,3 +197,14 @@ The exact byte count changes as coins enter or leave the machine.
 ## CoinPusher 47 flat starting field
 
 The authoritative machine now starts with 135 non-overlapping coins in one flat layer. There are no starting towers or stacked side banks. This reduces physics load and lets pusher pressure travel through the bed more directly.
+
+## Predictive hosted renderer
+
+Hosted clients do not wait for each Railway transform before moving the machine. Railway sends authoritative transforms plus velocity for awake coins, and the browser predicts the short interval until the next correction. Sleeping coins stay fixed and cheap to render. The pusher uses authoritative pusher time for smooth local animation.
+
+Recommended Railway values:
+
+```dotenv
+YES_PUSHER_TICK_RATE=30
+YES_PUSHER_BROADCAST_RATE=6
+```

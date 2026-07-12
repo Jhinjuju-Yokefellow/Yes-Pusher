@@ -88,7 +88,7 @@ const turnController = createTurnController({
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x040710);
-scene.fog = new THREE.FogExp2(0x060913, 0.018);
+scene.fog = HOSTED_PERFORMANCE_MODE ? null : new THREE.FogExp2(0x060913, 0.018);
 
 const camera = new THREE.PerspectiveCamera(45, innerWidth / innerHeight, 0.1, 100);
 camera.position.set(0, 10.65, 18.35);
@@ -100,8 +100,10 @@ const renderer = new THREE.WebGLRenderer({
   alpha: false,
   powerPreference: 'high-performance',
 });
-const MAX_RENDER_PIXEL_RATIO = HOSTED_PERFORMANCE_MODE ? 0.86 : 1.1;
-const MIN_RENDER_PIXEL_RATIO = HOSTED_PERFORMANCE_MODE ? 0.52 : 0.72;
+const MAX_RENDER_PIXEL_RATIO = HOSTED_PERFORMANCE_MODE ? 0.62 : 1.1;
+const MIN_RENDER_PIXEL_RATIO = HOSTED_PERFORMANCE_MODE ? 0.46 : 0.72;
+const HOSTED_RENDER_INTERVAL_MS = 1000 / 30;
+let lastHostedRenderAt = 0;
 let renderPixelRatio = Math.min(devicePixelRatio || 1, MAX_RENDER_PIXEL_RATIO);
 let qualitySampleSeconds = 0;
 let qualitySampleFrames = 0;
@@ -110,12 +112,12 @@ renderer.setSize(innerWidth, innerHeight);
 renderer.shadowMap.enabled = !HOSTED_PERFORMANCE_MODE;
 renderer.shadowMap.type = THREE.PCFShadowMap;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
-renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.22;
+renderer.toneMapping = HOSTED_PERFORMANCE_MODE ? THREE.NoToneMapping : THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = HOSTED_PERFORMANCE_MODE ? 1 : 1.22;
 
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.target.copy(defaultCamera.target);
-controls.enableDamping = true;
+controls.enableDamping = !HOSTED_PERFORMANCE_MODE;
 controls.dampingFactor = 0.075;
 controls.minDistance = 11;
 controls.maxDistance = 24;
@@ -176,13 +178,51 @@ async function loadTextures() {
 
 let textures;
 
+function hostedBasicMaterial(source) {
+  if (!source || source.isMeshBasicMaterial) return source;
+  const color = source.color?.clone?.() ?? new THREE.Color(0xffffff);
+  if (!source.map && source.emissive?.isColor) {
+    color.lerp(source.emissive, Math.min(0.45, Number(source.emissiveIntensity ?? 0) * 0.18));
+  }
+  return new THREE.MeshBasicMaterial({
+    color,
+    map: source.map ?? null,
+    transparent: Boolean(source.transparent) || Number(source.opacity ?? 1) < 1,
+    opacity: Number.isFinite(source.opacity) ? source.opacity : 1,
+    side: source.side,
+    depthWrite: source.depthWrite !== false && Number(source.opacity ?? 1) > 0.18,
+    alphaTest: source.alphaTest ?? 0,
+    blending: source.blending,
+  });
+}
+
+function flattenHostedSceneMaterials() {
+  if (!HOSTED_PERFORMANCE_MODE) return;
+  const materialCache = new Map();
+  const convert = (material) => {
+    if (!material) return material;
+    if (materialCache.has(material)) return materialCache.get(material);
+    const replacement = hostedBasicMaterial(material);
+    materialCache.set(material, replacement);
+    return replacement;
+  };
+  scene.traverse((object) => {
+    if (!object?.isMesh) return;
+    object.castShadow = false;
+    object.receiveShadow = false;
+    object.material = Array.isArray(object.material)
+      ? object.material.map(convert)
+      : convert(object.material);
+  });
+}
+
 let pusher;
 
 const coinGeometry = new THREE.CylinderGeometry(
   CONFIG.coin.radius,
   CONFIG.coin.radius,
   CONFIG.coin.thickness,
-  HOSTED_PERFORMANCE_MODE ? 14 : 24,
+  HOSTED_PERFORMANCE_MODE ? 8 : 24,
 );
 const boardTopY = CONFIG.board.y + .42/2;
 const coinRestY = boardTopY + CONFIG.coin.thickness/2 + .004;
@@ -1300,11 +1340,17 @@ function updateAdaptiveRenderQuality(dt) {
 
 async function init() {
   textures = await loadTextures();
-  coinMats = [
-    new THREE.MeshStandardMaterial({color:0xd6941b,metalness:.9,roughness:.2,emissive:0x4a2600,emissiveIntensity:.16}),
-    new THREE.MeshStandardMaterial({map:textures.coinFront,metalness:.65,roughness:.24,emissive:0x221500,emissiveIntensity:.20}),
-    new THREE.MeshStandardMaterial({map:textures.coinBack,metalness:.65,roughness:.24,emissive:0x221500,emissiveIntensity:.20}),
-  ];
+  coinMats = HOSTED_PERFORMANCE_MODE
+    ? [
+      new THREE.MeshBasicMaterial({ color: 0xd6941b }),
+      new THREE.MeshBasicMaterial({ map: textures.coinFront, color: 0xffffff }),
+      new THREE.MeshBasicMaterial({ map: textures.coinBack, color: 0xffffff }),
+    ]
+    : [
+      new THREE.MeshStandardMaterial({color:0xd6941b,metalness:.9,roughness:.2,emissive:0x4a2600,emissiveIntensity:.16}),
+      new THREE.MeshStandardMaterial({map:textures.coinFront,metalness:.65,roughness:.24,emissive:0x221500,emissiveIntensity:.20}),
+      new THREE.MeshStandardMaterial({map:textures.coinBack,metalness:.65,roughness:.24,emissive:0x221500,emissiveIntensity:.20}),
+    ];
   addLightRig(colors);
   createCabinet({
     scene,
@@ -1337,6 +1383,8 @@ async function init() {
     pusherTopY,
     addStaticBox,
   });
+  flattenHostedSceneMaterials();
+  document.body.classList.toggle('hosted-performance', HOSTED_PERFORMANCE_MODE);
   createUI();
   const connectedToSharedWorld=await initializeSharedWorld();
   if(!connectedToSharedWorld) await restoreOrSeedMachine();
@@ -1347,7 +1395,11 @@ async function init() {
 
 function animate(now=performance.now()) {
   requestAnimationFrame(animate);
-  const dt=Math.min((now-lastTime)/1000,.033); lastTime=now;
+  if (HOSTED_PERFORMANCE_MODE && now - lastHostedRenderAt < HOSTED_RENDER_INTERVAL_MS) return;
+  const previousTime = lastTime;
+  lastTime = now;
+  if (HOSTED_PERFORMANCE_MODE) lastHostedRenderAt = now;
+  const dt=Math.min((now-previousTime)/1000, HOSTED_PERFORMANCE_MODE ? .05 : .033);
   if(sharedMode) {
     sharedView?.update(dt);
   } else {
@@ -1361,7 +1413,7 @@ function animate(now=performance.now()) {
     checkScoring();
     updateConfirmedAutosave(dt);
   }
-  controls.update();
+  if (!HOSTED_PERFORMANCE_MODE || controls.enabled) controls.update();
   updateAdaptiveRenderQuality(dt);
   renderer.render(scene,camera);
 }
