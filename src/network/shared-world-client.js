@@ -99,6 +99,7 @@ export class SharedWorldClient {
     this.snapshot = null;
     this.connected = false;
     this.streamConnected = false;
+    this.streamHasSnapshot = false;
     this.pollingHealthy = false;
     this.connectionMode = 'offline';
     this.lastError = null;
@@ -153,7 +154,7 @@ export class SharedWorldClient {
     try {
       const response = await fetchWithTimeout(url, {
         cache: 'no-store',
-        credentials: 'include',
+        credentials: 'omit',
         headers: this.authHeaders({ accept: 'application/json' }),
       }, timeoutMs, signal);
       const snapshot = await parseResponse(response, url);
@@ -171,7 +172,7 @@ export class SharedWorldClient {
       try {
         const snapshot = await this.fetchSnapshot({ timeoutMs });
         this.updateConnection({ connected: true, mode: 'snapshot' });
-        this.acceptSnapshot(snapshot);
+        this.acceptSnapshot(snapshot, 'snapshot');
         this.openEvents();
         return snapshot;
       } catch (error) {
@@ -179,6 +180,11 @@ export class SharedWorldClient {
         if (attempt < retries - 1) await wait(retryDelayMs);
       }
     }
+    // Keep both recovery transports alive even when the very first snapshot
+    // request fails. Hosted browsers must never remain on an empty shell just
+    // because Railway was waking up or a single request was interrupted.
+    this.startPolling();
+    if (!this.streamLoop) this.openEvents();
     this.updateConnection({ connected: false, reconnecting: true, error: lastError, url: worldServerUrl('/api/world') });
     throw lastError ?? new Error('Shared world server is unavailable');
   }
@@ -203,21 +209,25 @@ export class SharedWorldClient {
       try {
         const response = await fetchWithTimeout(url, {
           cache: 'no-store',
-          credentials: 'include',
+          credentials: 'omit',
           headers: this.authHeaders({ accept: 'text/event-stream' }),
         }, 12_000, signal);
         if (!response.ok || !response.body) {
           throw new Error(`Shared-world stream failed (${response.status}) at ${url}`);
         }
         this.streamConnected = true;
+        this.streamHasSnapshot = false;
         retryMs = 500;
-        this.stopPolling();
-        this.updateConnection({ connected: true, mode: 'stream' });
+        // Some proxies return stream headers before forwarding the first event.
+        // Keep polling until a real stream snapshot arrives so the machine never
+        // blanks out while an apparently-open stream is buffered.
+        this.startPolling();
         await this.consumeEventStream(response.body, signal);
         if (!signal.aborted) throw new Error(`Shared-world stream closed at ${url}`);
       } catch (error) {
         if (signal.aborted || this.closed) return;
         this.streamConnected = false;
+        this.streamHasSnapshot = false;
         const normalized = this.reportError(formatRequestError('Shared-world live stream', url, error), url);
         this.startPolling();
         if (!this.pollingHealthy) {
@@ -250,14 +260,14 @@ export class SharedWorldClient {
   }
 
   async runPollingLoop(signal) {
-    while (!signal.aborted && !this.closed && !this.streamConnected) {
+    while (!signal.aborted && !this.closed && (!this.streamConnected || !this.streamHasSnapshot)) {
       const url = worldServerUrl(`/api/world?${this.query()}`);
       try {
         const snapshot = await this.fetchSnapshot({ timeoutMs: 8_000, signal });
-        if (signal.aborted || this.closed || this.streamConnected) return;
+        if (signal.aborted || this.closed || (this.streamConnected && this.streamHasSnapshot)) return;
         this.pollingHealthy = true;
         this.updateConnection({ connected: true, mode: 'polling' });
-        this.acceptSnapshot(snapshot);
+        this.acceptSnapshot(snapshot, 'polling');
       } catch (error) {
         if (signal.aborted || this.closed) return;
         this.pollingHealthy = false;
@@ -276,7 +286,7 @@ export class SharedWorldClient {
     const mode = this.streamConnected ? 'stream' : 'polling';
     if (!this.streamConnected) this.pollingHealthy = true;
     this.updateConnection({ connected: true, mode });
-    this.acceptSnapshot(snapshot);
+    this.acceptSnapshot(snapshot, 'refresh');
     return snapshot;
   }
 
@@ -331,17 +341,24 @@ export class SharedWorldClient {
     }
     if (eventName !== 'world' || !data.length) return;
     try {
-      this.acceptSnapshot(JSON.parse(data.join('\n')));
+      this.acceptSnapshot(JSON.parse(data.join('\n')), 'stream');
     } catch (error) {
       this.reportError(error, worldServerUrl('/events'));
     }
   }
 
-  acceptSnapshot(snapshot) {
-    if (!snapshot || snapshot.kind !== 'yes-pusher-shared-world') return;
-    if (this.snapshot && Number(snapshot.revision) < Number(this.snapshot.revision)) return;
+  acceptSnapshot(snapshot, source = 'unknown') {
+    if (!snapshot || snapshot.kind !== 'yes-pusher-shared-world') return false;
+    if (this.snapshot && Number(snapshot.revision) < Number(this.snapshot.revision)) return false;
     this.snapshot = snapshot;
     this.onSnapshot(snapshot);
+    if (source === 'stream') {
+      this.streamHasSnapshot = true;
+      this.pollingHealthy = false;
+      this.stopPolling();
+      this.updateConnection({ connected: true, mode: 'stream' });
+    }
+    return true;
   }
 
   useSession(session = null) {
@@ -370,7 +387,7 @@ export class SharedWorldClient {
       const response = await fetchWithTimeout(url, {
         method: 'POST',
         headers: this.authHeaders({ 'content-type': 'application/json' }),
-        credentials: 'include',
+        credentials: 'omit',
         body: JSON.stringify({
           playerId: this.playerId,
           label: this.playerLabel,
@@ -378,7 +395,7 @@ export class SharedWorldClient {
         }),
       }, 10_000);
       const payload = await parseResponse(response, url);
-      if (payload.snapshot) this.acceptSnapshot(payload.snapshot);
+      if (payload.snapshot) this.acceptSnapshot(payload.snapshot, 'command');
       if (!this.connected) this.updateConnection({ connected: true, mode: this.streamConnected ? 'stream' : 'polling' });
       return payload;
     } catch (error) {
@@ -410,6 +427,7 @@ export class SharedWorldClient {
     this.streamLoop = null;
     this.stopPolling();
     this.streamConnected = false;
+    this.streamHasSnapshot = false;
     this.pollingHealthy = false;
     this.connected = false;
     this.connectionMode = 'offline';

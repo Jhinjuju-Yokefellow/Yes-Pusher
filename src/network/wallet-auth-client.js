@@ -64,7 +64,7 @@ export class WalletAuthClient {
     try {
       const response = await fetch(worldServerUrl('/api/auth/session'), {
         cache: 'no-store',
-        credentials: 'include',
+        credentials: 'omit',
         headers: authHeaders(this.sessionToken),
       });
       const payload = await parseResponse(response);
@@ -99,7 +99,7 @@ export class WalletAuthClient {
       const challengeResponse = await fetch(worldServerUrl('/api/auth/challenge'), {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        credentials: 'include',
+        credentials: 'omit',
         body: JSON.stringify({ wallet, chainId }),
       });
       const challenge = await parseResponse(challengeResponse);
@@ -122,7 +122,7 @@ export class WalletAuthClient {
       const verifyResponse = await fetch(worldServerUrl('/api/auth/verify'), {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        credentials: 'include',
+        credentials: 'omit',
         body: JSON.stringify({
           challengeId: challenge.challengeId,
           wallet,
@@ -144,7 +144,7 @@ export class WalletAuthClient {
     await fetch(worldServerUrl('/api/auth/logout'), {
       method: 'POST',
       headers: authHeaders(this.sessionToken, { 'content-type': 'application/json' }),
-      credentials: 'include',
+      credentials: 'omit',
       body: '{}',
     }).catch(() => null);
     this.session = null;

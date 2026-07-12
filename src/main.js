@@ -709,12 +709,20 @@ function scheduleInitialSharedReconnect() {
     setConnectionState({ connected: false, reconnecting: true });
     statusText.textContent = `WAITING FOR SHARED SERVER${WORLD_SERVER_ORIGIN ? ` — ${WORLD_SERVER_ORIGIN}` : ''}`;
     try {
-      await sharedClient.connect({ retries: 1, timeoutMs: 8_000 });
-      setConnectionState({ connected: true });
-      renderSharedSnapshot(sharedClient.snapshot);
+      const snapshot = await sharedClient.resume();
+      if (!snapshot || !sharedClient.connected) {
+        throw sharedClient.lastError ?? new Error('The shared machine has not returned a world snapshot yet');
+      }
+      setConnectionState({ connected: true, mode: sharedClient.connectionMode });
+      renderSharedSnapshot(snapshot);
     } catch (error) {
       console.error('Shared world reconnect failed', error);
-      setConnectionState({ connected: false, reconnecting: true });
+      setConnectionState({
+        connected: false,
+        reconnecting: true,
+        error,
+        url: sharedClient.lastFailedUrl || `${WORLD_SERVER_ORIGIN}/api/world`,
+      });
       scheduleInitialSharedReconnect();
     }
   }, 1_500);

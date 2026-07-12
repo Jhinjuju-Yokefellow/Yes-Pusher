@@ -1,16 +1,8 @@
-# CoinPusher 43 — Reliable hosted reconnect and polling fallback
+# CoinPusher 44 — Hosted connection recovery hardening
 
-## What changed
-
-- The Vercel client still prefers the Railway live event stream.
-- If that stream closes, the client immediately falls back to `/api/world` polling instead of disabling the machine.
-- Queue and turn controls stay usable while fallback polling is healthy.
-- The client continuously retries the live stream and automatically returns to it when available.
-- Returning to the tab, restoring a page, or coming back online forces an immediate authoritative snapshot refresh.
-- The status bar shows `FALLBACK SYNC` while polling and exposes the exact failed Railway request in its tooltip.
-- Railway treats a recent polling client as connected, so a temporary stream failure does not remove that player from the queue.
-- `/api/health` now separates `streamConnections` and `pollingClients` while `connections` reports the total active clients.
-
-## Verification
-
-A healthy stream reports `streamConnections: 1` or higher. Fallback mode can report `streamConnections: 0` and `pollingClients: 1`. Both use the same authoritative Railway world.
+- Starts authoritative polling and live-stream retry even when the first Railway snapshot fails.
+- Keeps polling until the live stream has delivered an actual world snapshot; stream headers alone no longer blank the machine.
+- Uses bearer-token authentication without requiring cross-site cookies, avoiding browser privacy blocks between Vercel and Railway.
+- Preserves the exact failed Railway URL and error while reconnecting.
+- Visibility and reconnect attempts now reuse the same recovery loops instead of repeatedly restarting the client.
+- Machine physics, layout, scoring, queue rules, persistence, and Yokefellow settlement behavior are unchanged.
