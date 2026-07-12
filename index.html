@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#060913" />
+    <title>YES Pusher — Shared Machine</title>
+  </head>
+  <body>
+    <div id="app">
+      <canvas id="game"></canvas>
+
+      <header class="topbar glass-panel">
+        <div class="brand-lockup">
+          <div class="brand-mark">YF</div>
+          <div>
+            <strong>YES PUSHER</strong>
+            <span>one persistent shared machine</span>
+          </div>
+        </div>
+        <div class="machine-status">
+          <span id="statusDot" class="status-dot connecting"></span>
+          <span id="statusText">MACHINE RUNNING</span>
+        </div>
+      </header>
+
+      <aside class="player-card glass-panel">
+        <span class="eyebrow">ACTIVE PLAYER SHOWCASE</span>
+        <strong id="activePlayerName">NO PLAYER QUEUED</strong>
+        <div class="wallet-row">
+          <span id="walletStatus" class="wallet-status">WALLET NOT CONNECTED</span>
+          <button id="walletButton" class="wallet-button" type="button">CONNECT</button>
+        </div>
+        <div class="player-metrics">
+          <span>TURN <b id="turnNumber">1</b></span>
+          <span>NEXT SKIN <b id="skinProgress">0 / 50</b></span>
+        </div>
+        <div class="queue-row">
+          <span id="queueStatus" class="queue-status">CONNECTING</span>
+          <button id="queueButton" class="queue-button" type="button">JOIN QUEUE</button>
+        </div>
+        <span class="muted">Everyone watches and inherits the same loaded machine.</span>
+      </aside>
+
+      <section class="score-card glass-panel">
+        <div>
+          <span class="eyebrow">TOTAL WON</span>
+          <strong id="score">0</strong>
+        </div>
+        <div>
+          <span class="eyebrow">THIS TURN</span>
+          <strong id="turnScore">0</strong>
+        </div>
+        <div>
+          <span class="eyebrow">IN MACHINE</span>
+          <strong id="coinCount">0</strong>
+        </div>
+        <div>
+          <span class="eyebrow">TIMER</span>
+          <strong id="turnTimer">—</strong>
+        </div>
+      </section>
+
+
+      <aside id="turnResult" class="turn-result glass-panel hidden" aria-live="polite">
+        <span class="eyebrow">TURN COMPLETE</span>
+        <strong><span id="resultWon">0</span> COINS WON</strong>
+        <div class="result-grid">
+          <span>DROPPED <b id="resultDropped">0</b></span>
+          <span>LIFETIME <b id="resultLifetime">0</b></span>
+        </div>
+        <span id="resultMilestone" class="result-milestone">50 COINS TO NEXT SKIN</span>
+        <div id="resultSkin" class="result-skin hidden">
+          <img id="resultSkinImage" alt="" hidden />
+          <div>
+            <strong id="resultSkinName">RANDOM COIN SKIN</strong>
+            <span id="resultSkinStatus">DROP RECORD PENDING</span>
+          </div>
+        </div>
+        <span id="resultCredit" class="result-credit">YES CREDIT NOT RECORDED</span>
+      </aside>
+
+      <section class="controls glass-panel">
+        <div class="control-block">
+          <span class="eyebrow">RANDOM CHUTES</span>
+          <div id="slots" class="slot-grid" aria-label="Random coin-entry chutes"></div>
+        </div>
+        <div class="control-block count-block">
+          <span class="eyebrow">COINS</span>
+          <button id="minus" class="square-button" type="button">−</button>
+          <strong id="dropCount">5</strong>
+          <button id="plus" class="square-button" type="button">+</button>
+        </div>
+        <button id="drop" class="primary-button" type="button">DROP COINS</button>
+        <button id="resetCamera" class="secondary-button" type="button">RESET VIEW</button>
+        <button id="resetMachine" class="secondary-button danger" type="button">RESET MACHINE</button>
+      </section>
+
+      <div class="hint">Drag to inspect • Scroll to zoom • Join the queue to control a turn • Every connected player sees the same machine</div>
+      <div id="loading" class="loading-screen"><div class="loader"></div><strong>BUILDING THE MACHINE</strong></div>
+    </div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

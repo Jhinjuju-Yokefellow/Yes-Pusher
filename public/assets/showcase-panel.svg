@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="700" height="1200" viewBox="0 0 700 1200">
+  <defs><linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#0d2340"/><stop offset="1" stop-color="#030711"/></linearGradient></defs>
+  <rect width="700" height="1200" rx="45" fill="url(#bg)" stroke="#58e7ff" stroke-width="8"/>
+  <text x="350" y="92" text-anchor="middle" fill="#ffd35b" font-family="Arial, sans-serif" font-size="34" font-weight="900" letter-spacing="5">ACTIVE PLAYER</text>
+  <text x="350" y="140" text-anchor="middle" fill="#91a7c9" font-family="Arial, sans-serif" font-size="22" font-weight="700" letter-spacing="4">TRINKET SHOWCASE</text>
+  <g fill="none" stroke="#58e7ff" stroke-opacity=".42" stroke-width="5">
+    <rect x="65" y="210" width="570" height="190" rx="26"/><rect x="65" y="440" width="570" height="190" rx="26"/><rect x="65" y="670" width="570" height="190" rx="26"/><rect x="65" y="900" width="570" height="190" rx="26"/>
+  </g>
+  <g fill="#0a1528" stroke="#ffd35b" stroke-opacity=".5" stroke-width="4">
+    <circle cx="170" cy="305" r="54"/><circle cx="350" cy="305" r="54"/><circle cx="530" cy="305" r="54"/>
+    <circle cx="170" cy="535" r="54"/><circle cx="350" cy="535" r="54"/><circle cx="530" cy="535" r="54"/>
+    <circle cx="170" cy="765" r="54"/><circle cx="350" cy="765" r="54"/><circle cx="530" cy="765" r="54"/>
+    <circle cx="170" cy="995" r="54"/><circle cx="350" cy="995" r="54"/><circle cx="530" cy="995" r="54"/>
+  </g>
+</svg>

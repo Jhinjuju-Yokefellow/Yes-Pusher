@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <defs><radialGradient id="g" cx="38%" cy="32%"><stop stop-color="#fffac6"/><stop offset=".35" stop-color="#f6d354"/><stop offset=".72" stop-color="#c68712"/><stop offset="1" stop-color="#6c3905"/></radialGradient><filter id="glow"><feGaussianBlur stdDeviation="8" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs>
+  <circle cx="256" cy="256" r="252" fill="url(#g)"/><circle cx="256" cy="256" r="218" fill="none" stroke="#fff2a0" stroke-width="20"/><circle cx="256" cy="256" r="178" fill="#10132d" stroke="#4b2804" stroke-width="8"/>
+  <text x="256" y="292" text-anchor="middle" fill="#fff7bd" font-family="Arial, sans-serif" font-size="142" font-weight="900" filter="url(#glow)">YES</text>
+  <text x="256" y="350" text-anchor="middle" fill="#58e7ff" font-family="Arial, sans-serif" font-size="22" font-weight="800" letter-spacing="2">WHAT WILL YOU SAY YES TO?</text>
+</svg>

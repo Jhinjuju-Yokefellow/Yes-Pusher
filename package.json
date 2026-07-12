@@ -1,0 +1,23 @@
+{
+  "name": "yes-pusher-shared-world",
+  "private": true,
+  "version": "0.7.0",
+  "type": "module",
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "dev:web": "vite --host 0.0.0.0",
+    "dev:server": "node apps/world-server/server.js",
+    "build": "vite build",
+    "preview": "vite preview --host 0.0.0.0",
+    "start": "node apps/world-server/server.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "cannon-es": "^0.20.0",
+    "three": "^0.165.0",
+    "viem": "^2.55.0"
+  },
+  "devDependencies": {
+    "vite": "^5.4.0"
+  }
+}
