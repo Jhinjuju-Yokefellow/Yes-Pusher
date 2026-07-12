@@ -1,8 +1,19 @@
 import * as THREE from 'three';
 import * as CANNON from 'cannon-es';
 
-export function createSceneHelpers({ scene, world, materials }) {
+export function createSceneHelpers({ scene, world, materials, performanceMode = false }) {
   function addLightRig(colors) {
+    if (performanceMode) {
+      scene.add(new THREE.HemisphereLight(0xa4c2ff, 0x090612, 1.72));
+      scene.add(new THREE.AmbientLight(0x394968, 0.42));
+
+      const key = new THREE.DirectionalLight(0xffffff, 2.15);
+      key.position.set(2, 13, 10);
+      key.castShadow = false;
+      scene.add(key);
+      return;
+    }
+
     scene.add(new THREE.HemisphereLight(0x90b8ff, 0x080512, 1.5));
 
     const key = new THREE.DirectionalLight(0xffffff, 2.7);
@@ -40,8 +51,8 @@ export function createSceneHelpers({ scene, world, materials }) {
   }) {
     const mesh = new THREE.Mesh(new THREE.BoxGeometry(...size), material);
     mesh.position.set(...position);
-    mesh.castShadow = true;
-    mesh.receiveShadow = true;
+    mesh.castShadow = !performanceMode;
+    mesh.receiveShadow = !performanceMode;
     mesh.visible = visible;
     if (rotation) mesh.rotation.set(...rotation);
     scene.add(mesh);
@@ -62,13 +73,15 @@ export function createSceneHelpers({ scene, world, materials }) {
   }
 
   function neonStrip(size, position, color, rotation = null) {
-    const material = new THREE.MeshStandardMaterial({
-      color,
-      emissive: color,
-      emissiveIntensity: 3.2,
-      metalness: 0.2,
-      roughness: 0.25,
-    });
+    const material = performanceMode
+      ? new THREE.MeshBasicMaterial({ color })
+      : new THREE.MeshStandardMaterial({
+        color,
+        emissive: color,
+        emissiveIntensity: 3.2,
+        metalness: 0.2,
+        roughness: 0.25,
+      });
     const mesh = new THREE.Mesh(new THREE.BoxGeometry(...size), material);
     mesh.position.set(...position);
     if (rotation) mesh.rotation.set(...rotation);
@@ -80,8 +93,8 @@ export function createSceneHelpers({ scene, world, materials }) {
     const mesh = new THREE.Mesh(new THREE.BoxGeometry(...size), material);
     mesh.position.set(...position);
     if (rotation) mesh.rotation.set(...rotation);
-    mesh.castShadow = true;
-    mesh.receiveShadow = true;
+    mesh.castShadow = !performanceMode;
+    mesh.receiveShadow = !performanceMode;
     scene.add(mesh);
     return mesh;
   }

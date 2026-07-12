@@ -8,9 +8,15 @@ export function createCabinet({
   boardTopY,
   addStaticBox,
   neonStrip,
+  performanceMode = false,
 }) {
+  function makeGlassMaterial(options) {
+    if (!performanceMode) return new THREE.MeshPhysicalMaterial(options);
+    const { transmission: _transmission, ...lightweight } = options;
+    return new THREE.MeshStandardMaterial({ ...lightweight, opacity: Math.min(0.38, options.opacity ?? 0.3) });
+  }
   function addBoardFunnelGuide(side) {
-    const material = new THREE.MeshPhysicalMaterial({
+    const material = makeGlassMaterial({
       color: side < 0 ? 0x153c62 : 0x35236f,
       emissive: side < 0 ? colors.cyan : colors.violet,
       emissiveIntensity: 0.18,
@@ -65,7 +71,7 @@ export function createCabinet({
       new THREE.BoxGeometry(1.15, 6.2, 7.2),
       new THREE.MeshStandardMaterial({ color: 0x081226, metalness: 0.65, roughness: 0.28 }),
     );
-    shell.castShadow = true;
+    shell.castShadow = !performanceMode;
     group.add(shell);
 
     const inset = new THREE.Mesh(
@@ -136,7 +142,7 @@ export function createCabinet({
     new THREE.MeshStandardMaterial({ color: 0x050912, metalness: 0.6, roughness: 0.3 }),
   );
   under.position.set(0, -0.35, 0.75);
-  under.castShadow = true;
+  under.castShadow = !performanceMode;
   scene.add(under);
 
   const frontArt = new THREE.Mesh(
@@ -150,7 +156,7 @@ export function createCabinet({
     }),
   );
   frontArt.position.set(0, boardTopY - 1.42, config.board.front - 0.28);
-  frontArt.castShadow = true;
+  frontArt.castShadow = !performanceMode;
   scene.add(frontArt);
 
   const sideMaterial = new THREE.MeshStandardMaterial({
@@ -162,7 +168,7 @@ export function createCabinet({
   });
   const leftRail = new THREE.Mesh(new THREE.BoxGeometry(1.15, 2.25, 10.4), sideMaterial);
   leftRail.position.set(-6.15, 1.45, 0.65);
-  leftRail.castShadow = true;
+  leftRail.castShadow = !performanceMode;
   scene.add(leftRail);
   const rightRail = leftRail.clone();
   rightRail.position.x = 6.15;
@@ -171,7 +177,7 @@ export function createCabinet({
   addStaticBox({
     size: [0.34, 2.0, 10.1],
     position: [-5.75, 1.55, 0.7],
-    material: new THREE.MeshPhysicalMaterial({
+    material: makeGlassMaterial({
       color: 0x0a2442,
       transparent: true,
       opacity: 0.25,
@@ -183,7 +189,7 @@ export function createCabinet({
   addStaticBox({
     size: [0.34, 2.0, 10.1],
     position: [5.75, 1.55, 0.7],
-    material: new THREE.MeshPhysicalMaterial({
+    material: makeGlassMaterial({
       color: 0x29185b,
       transparent: true,
       opacity: 0.23,

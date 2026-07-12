@@ -21,9 +21,11 @@ Use **Reset Machine** between layout tests. Close the PowerShell window to stop 
 
 The separate `RUN-SHARED-DEV.ps1` script keeps the normal development workflow for later wallet and Yokefellow integration testing.
 
-## Performance correction
+## Hosted performance mode
 
-The loaded shared machine previously rendered every coin as a separate textured mesh. With roughly 253 coins and three coin material groups, that could create hundreds of draw calls every frame. The shared renderer now uses one instanced coin mesh, reducing that work to only a few draw calls. Server snapshots default to six updates per second and are smoothly interpolated in the browser. The authoritative physics remains at 60 steps per second.
+The hosted game now separates network smoothness from physics frequency. Server snapshots are linearly interpolated across the full interval instead of making the coins chase a new target six times per second. Coins that did not move are not rewritten to the GPU every frame.
+
+The Vercel build also uses a lower-cost visual path: one instanced coin mesh, one instanced peg mesh, no dynamic shadow pass, no transmission shaders, fewer real-time lights, reduced anisotropy, and adaptive resolution capped below full device pixel density. Railway runs the authoritative machine at 45 physics steps per second with five solver iterations; the pusher, scoring, persistence, and queue remain server-owned.
 
 ## Current build
 

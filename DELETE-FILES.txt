@@ -1,5 +1,0 @@
-After applying this patch, the old built bundle can be deleted because dist/index.html now uses the new bundle:
-
-dist/assets/index-CcY30ehI.js
-
-Leaving it in place is harmless, but removing it keeps dist clean.

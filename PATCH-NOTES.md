@@ -1,24 +1,33 @@
-# CoinPusher 47 — Flat starting field and lower physics load
+# CoinPusher 48 — smooth hosted rendering and lower server load
 
-## Starting field
+The flat starting field proved the remaining lag was not primarily caused by the old towers. The hosted client was still visibly chasing six network targets per second, while the Vercel renderer was paying for shadows, physical transmission materials, several real-time lights, and repeated matrix uploads for stationary coins.
 
-- Removed the center jackpot tower.
-- Removed every upper starting layer.
-- The machine now starts with 135 non-overlapping coins in one flat layer.
-- No starting coin is behind or outside the guide walls.
-- The front row begins at the payout edge so normal pressure can create earlier wins.
+## Changes
 
-## Performance
-
-- Starting physics bodies reduced from 253 to 135.
-- Removed the expensive stack-on-stack contact graph.
-- Physics solver iterations reduced from 8 to 6 for the flat field.
-- The existing instanced renderer and packed network snapshots remain in place.
-
-## Persistence
-
-The machine revision changed to `coinpusher-47-flat-starting-field-v1`. Railway will reject the old stacked save and seed the new flat field once after deployment. Later saves continue using the `/data` volume normally.
+- Replaced exponential target chasing with timed linear interpolation between authoritative snapshots.
+- The first snapshot now appears immediately; later snapshots animate continuously over their measured interval.
+- Stationary coin instances no longer rewrite their transform matrix every animation frame.
+- Added a hosted performance renderer for Vercel/remote-world builds.
+- Disabled the hosted shadow-map pass and high-cost transmission shaders.
+- Replaced the individual peg meshes with one instanced peg mesh.
+- Reduced hosted coin and peg geometry detail without changing physical dimensions.
+- Reduced hosted render pixel density and texture anisotropy.
+- Simplified hosted lighting while preserving the emissive cabinet artwork and neon strips.
+- Reduced authoritative physics from 60 to 45 steps per second and solver iterations from 6 to 5.
+- Reduced collision-cylinder sides from 12 to 10.
+- Added `physicsStepsPerSecond` to `/api/health`.
+- Changed the recommended Railway `YES_PUSHER_TICK_RATE` to `45`.
 
 ## Preserved
 
-Pusher geometry, stronger forward pressure, payout scoring, drop-to-queue turns, wallet identity, shared-world persistence, and Yokefellow settlement behavior are unchanged.
+- 135-coin flat starting field
+- Drop-to-queue turn flow
+- Pusher dimensions and travel
+- Payout pressure and scoring boundaries
+- Shared-world persistence
+- Wallet authentication and Yokefellow settlement paths
+
+## Validation
+
+- `npm test`: 38 tests pass
+- `npm run build`: passes

@@ -76,6 +76,7 @@ let walletAuth = null;
 let walletCommandPending = false;
 let sharedInitialReconnectTimer = null;
 const hostedFrontend = /(^|\.)vercel\.app$/i.test(globalThis.location?.hostname ?? '');
+const HOSTED_PERFORMANCE_MODE = WORLD_SERVER_IS_REMOTE || hostedFrontend;
 
 const turnController = createTurnController({
   activeDurationSeconds: 30,
@@ -93,15 +94,20 @@ const camera = new THREE.PerspectiveCamera(45, innerWidth / innerHeight, 0.1, 10
 camera.position.set(0, 10.65, 18.35);
 const defaultCamera = { position: camera.position.clone(), target: new THREE.Vector3(0, 4.28, -0.72) };
 
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false, powerPreference: 'high-performance' });
-const MAX_RENDER_PIXEL_RATIO = 1.1;
-const MIN_RENDER_PIXEL_RATIO = 0.72;
+const renderer = new THREE.WebGLRenderer({
+  canvas,
+  antialias: !HOSTED_PERFORMANCE_MODE,
+  alpha: false,
+  powerPreference: 'high-performance',
+});
+const MAX_RENDER_PIXEL_RATIO = HOSTED_PERFORMANCE_MODE ? 0.86 : 1.1;
+const MIN_RENDER_PIXEL_RATIO = HOSTED_PERFORMANCE_MODE ? 0.52 : 0.72;
 let renderPixelRatio = Math.min(devicePixelRatio || 1, MAX_RENDER_PIXEL_RATIO);
 let qualitySampleSeconds = 0;
 let qualitySampleFrames = 0;
 renderer.setPixelRatio(renderPixelRatio);
 renderer.setSize(innerWidth, innerHeight);
-renderer.shadowMap.enabled = true;
+renderer.shadowMap.enabled = !HOSTED_PERFORMANCE_MODE;
 renderer.shadowMap.type = THREE.PCFShadowMap;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -139,6 +145,7 @@ const { addLightRig, addStaticBox, neonStrip, addVisualBox } = createSceneHelper
   scene,
   world,
   materials: MAT,
+  performanceMode: HOSTED_PERFORMANCE_MODE,
 });
 
 
@@ -162,7 +169,7 @@ async function loadTextures() {
   ]);
   for (const texture of [cabinet, pegboard, coinFront, coinBack]) {
     texture.colorSpace = THREE.SRGBColorSpace;
-    texture.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+    texture.anisotropy = Math.min(HOSTED_PERFORMANCE_MODE ? 2 : 8, renderer.capabilities.getMaxAnisotropy());
   }
   return { cabinet, pegboard, coinFront, coinBack };
 }
@@ -171,7 +178,12 @@ let textures;
 
 let pusher;
 
-const coinGeometry = new THREE.CylinderGeometry(CONFIG.coin.radius,CONFIG.coin.radius,CONFIG.coin.thickness,24);
+const coinGeometry = new THREE.CylinderGeometry(
+  CONFIG.coin.radius,
+  CONFIG.coin.radius,
+  CONFIG.coin.thickness,
+  HOSTED_PERFORMANCE_MODE ? 14 : 24,
+);
 const boardTopY = CONFIG.board.y + .42/2;
 const coinRestY = boardTopY + CONFIG.coin.thickness/2 + .004;
 const pusherTopY = CONFIG.pusher.y + CONFIG.pusher.shelfThickness/2;
@@ -1302,6 +1314,7 @@ async function init() {
     boardTopY,
     addStaticBox,
     neonStrip,
+    performanceMode: HOSTED_PERFORMANCE_MODE,
   });
   createPegBoard({
     scene,
@@ -1313,6 +1326,7 @@ async function init() {
     addStaticBox,
     addVisualBox,
     neonStrip,
+    performanceMode: HOSTED_PERFORMANCE_MODE,
   });
   pusher = buildPusher({
     scene,

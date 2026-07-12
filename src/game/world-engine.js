@@ -9,7 +9,8 @@ import { makeRandomSlotPlan } from './drop-plan.js';
 import { createTurnController, TURN_STATES } from './turn-controller.js';
 import { createConfirmedWorldSnapshot, normalizeWorldSnapshot } from './world-snapshot.js';
 
-const FIXED_STEP = 1 / 60;
+const PHYSICS_RATE = 45;
+const FIXED_STEP = 1 / PHYSICS_RATE;
 const MAX_STEP = 0.05;
 
 function createSeededRandom(seed = Date.now()) {
@@ -50,6 +51,7 @@ export class WorldEngine {
     this.activeSlotIndex = -1;
     this.lastFinalizedResult = null;
     this.accumulator = 0;
+    this.physicsRate = PHYSICS_RATE;
 
     this.boardTopY = CONFIG.board.y + 0.42 / 2;
     this.coinRestY = this.boardTopY + CONFIG.coin.thickness / 2 + 0.004;
@@ -83,7 +85,7 @@ export class WorldEngine {
       allowSleep: true,
     });
     world.broadphase = new CANNON.SAPBroadphase(world);
-    world.solver.iterations = 6;
+    world.solver.iterations = 5;
     world.solver.tolerance = 0.002;
     world.defaultContactMaterial.friction = 0.25;
     world.defaultContactMaterial.restitution = 0.02;
@@ -296,7 +298,7 @@ export class WorldEngine {
       CONFIG.coin.radius,
       CONFIG.coin.radius,
       CONFIG.coin.thickness,
-      12,
+      10,
     ));
     body.position.set(x, y, z);
     if (flat) body.quaternion.setFromEuler(0, rotationY, 0);

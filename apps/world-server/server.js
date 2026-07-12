@@ -461,6 +461,7 @@ export async function createWorldServer({
           coinEncoding: transportSnapshot.coinEncoding,
           snapshotBytes: Buffer.byteLength(JSON.stringify(transportSnapshot)),
           physicsSolverIterations: engine.world.solver.iterations,
+          physicsStepsPerSecond: engine.physicsRate,
         },
         allowedOrigins: [...allowedOrigins],
         settlement: settlementStore.integrationStatus(),

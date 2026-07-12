@@ -27,7 +27,7 @@ Set these Railway variables:
 YES_PUSHER_REQUIRE_WALLET=true
 YES_PUSHER_TEST_MODE=false
 YES_PUSHER_DATA_DIR=/data
-YES_PUSHER_TICK_RATE=60
+YES_PUSHER_TICK_RATE=45
 YES_PUSHER_BROADCAST_RATE=6
 
 # Add the final Vercel preview/production origin after Vercel is created.

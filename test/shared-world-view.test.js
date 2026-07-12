@@ -62,3 +62,32 @@ test('shared world view remains compatible with object-form snapshots', () => {
   assert.equal(view.instanceMesh.count, 1);
   assert.equal(view.coins.has('legacy-coin'), true);
 });
+
+test('shared world view linearly interpolates between server snapshots', () => {
+  const scene = new THREE.Scene();
+  const geometry = new THREE.CylinderGeometry(0.34, 0.34, 0.105, 10);
+  const material = new THREE.MeshBasicMaterial();
+  const pusher = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), material);
+  const view = new SharedWorldView({
+    scene,
+    coinGeometry: geometry,
+    coinMaterials: material,
+    pusherMesh: pusher,
+  });
+
+  view.applySnapshot({
+    serverTime: 1_000,
+    pusherZ: -4,
+    coins: [['coin-1', 0, 1, 0, 0, 0, 0, 1]],
+  });
+  view.applySnapshot({
+    serverTime: 1_200,
+    pusherZ: -2,
+    coins: [['coin-1', 2, 1, 0, 0, 0, 0, 1]],
+  });
+  view.update(0.104);
+
+  const coin = view.coins.get('coin-1');
+  assert.ok(coin.position.x > 0.9 && coin.position.x < 1.1);
+  assert.ok(pusher.position.z > -3.1 && pusher.position.z < -2.9);
+});
