@@ -215,6 +215,7 @@ export async function createWorldServer({
   let lastCompletedTurnId = null;
   let savePromise = Promise.resolve();
   let closed = false;
+  let lastSavedAt = initialSnapshot ? Date.now() : null;
 
   const engine = new WorldEngine({
     initialSnapshot,
@@ -228,17 +229,23 @@ export async function createWorldServer({
         savePromise = savePromise
           .catch(() => {})
           .then(async () => {
-            await Promise.all([
-              saveWorldAtomic(worldFile, engine.exportConfirmedWorld()),
-              saveWorldAtomic(progressFile, progressStore.serialize()),
-              saveWorldAtomic(settlementFile, settlementStore.serialize()),
-            ]);
+            await persistConfirmedState();
             const changed = await settlementStore.process();
             if (changed) await saveWorldAtomic(settlementFile, settlementStore.serialize());
           });
       }
     },
   });
+
+
+  async function persistConfirmedState() {
+    await Promise.all([
+      saveWorldAtomic(worldFile, engine.exportConfirmedWorld()),
+      saveWorldAtomic(progressFile, progressStore.serialize()),
+      saveWorldAtomic(settlementFile, settlementStore.serialize()),
+    ]);
+    lastSavedAt = Date.now();
+  }
 
   function connectionCount() {
     let total = 0;
@@ -403,6 +410,12 @@ export async function createWorldServer({
         broadcastRate,
         allowedOrigins: [...allowedOrigins],
         settlement: settlementStore.integrationStatus(),
+        persistence: {
+          dataDir,
+          loadedFromDisk: Boolean(initialSnapshot),
+          lastSavedAt: lastSavedAt ? new Date(lastSavedAt).toISOString() : null,
+          continuousPhysics: true,
+        },
       });
       return;
     }
@@ -613,13 +626,9 @@ export async function createWorldServer({
     const now = process.hrtime.bigint();
     const elapsed = Number(now - lastTick) / 1e9;
     lastTick = now;
-    const turnState = engine.turnController.getSnapshot().state;
-    // Do not let an unattended 24/7 server slowly push value out of the machine.
-    // Live viewers resume the continuously cycling pusher, and an already-started
-    // turn always finishes even if every browser disconnects.
-    if (connectionCount() > 0 || turnState !== TURN_STATES.READY) {
-      engine.advance(Math.min(elapsed, 0.05));
-    }
+    // The authoritative machine must continue whether or not a browser tab is
+    // focused or connected. Browsers only render snapshots; Railway owns time.
+    engine.advance(Math.min(elapsed, 0.05));
   }, Math.max(4, Math.floor(1000 / tickRate)));
   tickInterval.unref?.();
 
@@ -630,11 +639,7 @@ export async function createWorldServer({
     if (engine.turnController.getSnapshot().state !== TURN_STATES.READY) return;
     savePromise = savePromise
       .catch(() => {})
-      .then(() => Promise.all([
-        saveWorldAtomic(worldFile, engine.exportConfirmedWorld()),
-        saveWorldAtomic(progressFile, progressStore.serialize()),
-        saveWorldAtomic(settlementFile, settlementStore.serialize()),
-      ]));
+      .then(() => persistConfirmedState());
   }, 10_000);
   saveInterval.unref?.();
 
@@ -665,11 +670,7 @@ export async function createWorldServer({
     connectionIdentities.clear();
     await savePromise.catch(() => {});
     if (engine.turnController.getSnapshot().state === TURN_STATES.READY) {
-      await Promise.all([
-        saveWorldAtomic(worldFile, engine.exportConfirmedWorld()),
-        saveWorldAtomic(progressFile, progressStore.serialize()),
-        saveWorldAtomic(settlementFile, settlementStore.serialize()),
-      ]).catch(() => {});
+      await persistConfirmedState().catch(() => {});
     }
     await new Promise((resolve) => server.close(() => resolve()));
   }

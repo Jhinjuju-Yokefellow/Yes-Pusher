@@ -67,7 +67,7 @@ export class SharedWorldClient {
       : headers;
   }
 
-  async connect({ retries = 6, retryDelayMs = 250 } = {}) {
+  async connect({ retries = 10, retryDelayMs = 500, timeoutMs = 8_000 } = {}) {
     this.closed = false;
     let lastError = null;
     for (let attempt = 0; attempt < retries; attempt += 1) {
@@ -76,7 +76,7 @@ export class SharedWorldClient {
           cache: 'no-store',
           credentials: 'include',
           headers: this.authHeaders(),
-          signal: AbortSignal.timeout?.(1800),
+          signal: AbortSignal.timeout?.(timeoutMs),
         });
         const snapshot = await parseResponse(response);
         if (!snapshot.authoritative) throw new Error('Shared world is not authoritative');

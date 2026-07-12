@@ -16,6 +16,7 @@ import { createPusher as buildPusher } from './machine/pusher.js';
 import { SharedWorldClient } from './network/shared-world-client.js';
 import { SharedWorldView } from './network/shared-world-view.js';
 import { WalletAuthClient } from './network/wallet-auth-client.js';
+import { WORLD_SERVER_IS_REMOTE, WORLD_SERVER_ORIGIN } from './network/world-server-url.js';
 
 
 const canvas = document.querySelector('#game');
@@ -73,6 +74,8 @@ let lastSharedResultId = null;
 let sharedCommandPending = false;
 let walletAuth = null;
 let walletCommandPending = false;
+let sharedInitialReconnectTimer = null;
+const hostedFrontend = /(^|\.)vercel\.app$/i.test(globalThis.location?.hostname ?? '');
 
 const turnController = createTurnController({
   activeDurationSeconds: 30,
@@ -688,6 +691,25 @@ async function toggleWalletConnection() {
   }
 }
 
+function scheduleInitialSharedReconnect() {
+  if (!sharedClient || sharedClient.connected || sharedInitialReconnectTimer) return;
+  sharedInitialReconnectTimer = setTimeout(async () => {
+    sharedInitialReconnectTimer = null;
+    if (!sharedMode || !sharedClient || sharedClient.connected) return;
+    setConnectionState({ connected: false, reconnecting: true });
+    statusText.textContent = `WAITING FOR SHARED SERVER${WORLD_SERVER_ORIGIN ? ` — ${WORLD_SERVER_ORIGIN}` : ''}`;
+    try {
+      await sharedClient.connect({ retries: 1, timeoutMs: 8_000 });
+      setConnectionState({ connected: true });
+      renderSharedSnapshot(sharedClient.snapshot);
+    } catch (error) {
+      console.error('Shared world reconnect failed', error);
+      setConnectionState({ connected: false, reconnecting: true });
+      scheduleInitialSharedReconnect();
+    }
+  }, 1_500);
+}
+
 async function initializeSharedWorld() {
   walletAuth = new WalletAuthClient({
     onChange: (session, reason) => {
@@ -725,13 +747,36 @@ async function initializeSharedWorld() {
   document.body.classList.add('shared-mode');
   resetMachineButton.title = 'The authoritative shared world can only be reset by the server operator.';
   setConnectionState({ connected: false, reconnecting: true });
+  if (hostedFrontend && !WORLD_SERVER_IS_REMOTE) {
+    statusText.textContent = 'VITE_WORLD_SERVER_URL IS MISSING FROM THIS VERCEL BUILD';
+    activePlayerNameEl.textContent = 'SHARED MACHINE';
+    queueStatusEl.textContent = 'SERVER URL NOT CONFIGURED';
+    queueButton.hidden = false;
+    walletButton.disabled = true;
+    walletButton.title = 'Add VITE_WORLD_SERVER_URL in Vercel and redeploy.';
+    resetMachineButton.disabled = true;
+    return true;
+  }
   try {
     await sharedClient.connect();
     setConnectionState({ connected: true });
     renderSharedSnapshot(sharedClient.snapshot);
     return true;
   } catch (error) {
-    console.warn('Shared world unavailable; using confirmed local mode.', error);
+    if (WORLD_SERVER_IS_REMOTE) {
+      console.warn('Shared world is temporarily unavailable; staying in authoritative mode and retrying.', error);
+      setConnectionState({ connected: false, reconnecting: true });
+      statusText.textContent = `WAITING FOR SHARED SERVER — ${WORLD_SERVER_ORIGIN}`;
+      activePlayerNameEl.textContent = 'SHARED MACHINE';
+      queueStatusEl.textContent = 'SERVER RECONNECTING';
+      queueButton.hidden = false;
+      walletButton.title = '';
+      resetMachineButton.disabled = true;
+      scheduleInitialSharedReconnect();
+      return true;
+    }
+
+    console.warn('No remote world server is configured; using confirmed local mode.', error);
     sharedClient.close();
     sharedClient = null;
     sharedView.clear();
@@ -1222,6 +1267,12 @@ addEventListener('pagehide',()=>{
   walletAuth?.destroy();
 });
 document.addEventListener('visibilitychange',()=>{
-  if(document.visibilityState==='hidden' && !sharedMode) void persistConfirmedWorld('visibility-hidden');
+  if(document.visibilityState==='hidden' && !sharedMode) {
+    void persistConfirmedWorld('visibility-hidden');
+    return;
+  }
+  if(document.visibilityState==='visible' && sharedMode && sharedClient && !sharedClient.connected) {
+    scheduleInitialSharedReconnect();
+  }
 });
 init();

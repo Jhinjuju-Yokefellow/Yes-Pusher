@@ -158,3 +158,10 @@ This build is prepared for a public test environment:
 - A Railway volume mounted at `/data` preserves the machine and settlement records.
 
 See `DEPLOY-TESTNET.md` for the deployment order and exact variables.
+
+
+## Persistent hosted-world behavior
+
+When `VITE_WORLD_SERVER_URL` is present, the browser remains an authoritative shared-world client. It does not silently create a separate local machine if Railway is waking up or temporarily unreachable. Railway continuously advances and saves the machine independently of browser focus.
+
+The Railway health endpoint reports persistence details at `/api/health`.
