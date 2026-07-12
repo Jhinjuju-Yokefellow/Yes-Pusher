@@ -1,7 +1,7 @@
 import * as THREE from 'three';
-import * as CANNON from 'cannon-es';
 import { CONFIG } from '../config/machine-config.js';
-import { WorldEngine } from '../game/world-engine.js';
+import { isReplayPackage, replayFramesAt } from '../game/replay-package.js';
+import { worldServerUrl } from './world-server-url.js';
 
 const INITIAL_CAPACITY = 256;
 
@@ -21,6 +21,10 @@ function phaseFromCode(code, position = null) {
   if (code === 0 || code === 'board') return 'board';
   if (position && position[1] > CONFIG.peg.exitY - 0.2 && Math.abs(position[2] - CONFIG.peg.z) < 0.85) return 'peg';
   return 'board';
+}
+
+function nowMs() {
+  return globalThis.performance?.now?.() ?? Date.now();
 }
 
 export function unpackCoinState(raw) {
@@ -77,24 +81,46 @@ export function unpackCoinState(raw) {
   };
 }
 
-function shouldUsePlanarBoard(engine, state) {
-  return state.phase !== 'peg'
-    && state.phase !== 'transfer'
-    && state.position[1] <= engine.coinRestY + 0.05
-    && state.position[2] < CONFIG.board.front - 0.06;
+function createRenderCoin(state) {
+  return {
+    id: state.id,
+    phase: state.phase,
+    position: new THREE.Vector3(...state.position),
+    quaternion: new THREE.Quaternion(...state.quaternion),
+  };
+}
+
+async function defaultReplayLoader(packageUrl) {
+  const url = worldServerUrl(packageUrl);
+  const response = await fetch(url, {
+    cache: 'no-store',
+    credentials: 'omit',
+    headers: { accept: 'application/json' },
+  });
+  const payload = await response.json().catch(() => null);
+  if (!response.ok || !isReplayPackage(payload)) {
+    throw new Error(payload?.error || `Recorded replay could not be loaded (${response.status})`);
+  }
+  return payload;
 }
 
 export class SharedWorldView {
-  constructor({ scene, coinGeometry, coinMaterials, pusherMesh }) {
+  constructor({
+    scene,
+    coinGeometry,
+    coinMaterials,
+    pusherMesh,
+    fetchReplayPackage = defaultReplayLoader,
+    onReplayEvent = () => {},
+    onReplayError = () => {},
+  }) {
     this.scene = scene;
     this.coinGeometry = coinGeometry;
     this.coinMaterials = coinMaterials;
     this.pusherMesh = pusherMesh;
-    this.engine = new WorldEngine({
-      seed: 0x59455350,
-      seedMachine: false,
-      onEvent: () => {},
-    });
+    this.fetchReplayPackage = fetchReplayPackage;
+    this.onReplayEvent = onReplayEvent;
+    this.onReplayError = onReplayError;
     this.coins = new Map();
     this.order = [];
     this.capacity = INITIAL_CAPACITY;
@@ -102,9 +128,21 @@ export class SharedWorldView {
     this.lastRevision = 0;
     this.boundaryId = null;
     this.activeReplayId = null;
+    this.replayPackage = null;
+    this.replayLoadPromise = null;
+    this.replayLoadId = null;
+    this.replayAnchorElapsed = 0;
+    this.replayAnchorLocalMs = nowMs();
+    this.replayDurationSeconds = 0;
+    this.replayInitialElapsed = 0;
     this.replayElapsed = 0;
     this.turnState = 'ready';
+    this.currentSlotIndex = -1;
+    this.emittedReplayEvents = new Set();
+    this.frameCache = new WeakMap();
     this.matrixObject = new THREE.Object3D();
+    this.interpolationPosition = new THREE.Vector3();
+    this.interpolationQuaternion = new THREE.Quaternion();
     this.instanceMesh = this.createInstanceMesh(this.capacity);
     this.scene.add(this.instanceMesh);
   }
@@ -116,7 +154,7 @@ export class SharedWorldView {
     mesh.receiveShadow = false;
     mesh.frustumCulled = false;
     mesh.count = 0;
-    mesh.name = 'shared-world-coins-turn-replay';
+    mesh.name = 'shared-world-coins-recorded-replay';
     return mesh;
   }
 
@@ -132,125 +170,124 @@ export class SharedWorldView {
   }
 
   writeMatrix(index, coin) {
-    const body = coin.body;
-    this.matrixObject.position.set(body.position.x, body.position.y, body.position.z);
-    this.matrixObject.quaternion.set(body.quaternion.x, body.quaternion.y, body.quaternion.z, body.quaternion.w);
+    this.matrixObject.position.copy(coin.position);
+    this.matrixObject.quaternion.copy(coin.quaternion);
     this.matrixObject.scale.set(1, 1, 1);
     this.matrixObject.updateMatrix();
     this.instanceMesh.setMatrixAt(index, this.matrixObject.matrix);
   }
 
-  rebuildOrder() {
-    this.order = this.engine.coins.filter((coin) => coin.body.world);
-    this.coins = new Map(this.order.map((coin) => [coin.id, coin]));
+  rebuildOrder(ids = null) {
+    const orderedIds = ids ?? [...this.coins.keys()];
+    this.order = orderedIds.map((id) => this.coins.get(id)).filter(Boolean);
     this.ensureCapacity(this.order.length);
     this.instanceMesh.count = this.order.length;
   }
 
-  createCoinFromState(state) {
-    const requestedPhase = state.phase === 'peg' ? 'peg' : state.phase === 'transfer' ? 'transfer' : 'board';
-    const coin = this.engine.createCoin({
-      x: state.position[0],
-      y: state.position[1],
-      z: state.position[2],
-      flat: requestedPhase !== 'peg',
-      rotationY: 0,
-      phase: requestedPhase === 'transfer' ? 'board' : requestedPhase,
-      id: state.id,
-      startAsleep: false,
-      planar: requestedPhase === 'board' && shouldUsePlanarBoard(this.engine, state),
-    });
-    const body = coin.body;
-    coin.phase = requestedPhase;
-    coin.transfer = null;
-    body.position.set(...state.position);
-    body.quaternion.set(...state.quaternion);
-    body.velocity.set(...state.velocity);
-    body.angularVelocity.set(...state.angularVelocity);
-
-    if (requestedPhase === 'peg') {
-      body.allowSleep = false;
-      body.linearFactor.set(1, 1, 0);
-      body.angularFactor.set(0, 0, 1);
-    } else if (shouldUsePlanarBoard(this.engine, state)) {
-      this.engine.configurePlanarBoardCoin(coin, { preserveSleep: true });
-    } else {
-      this.engine.configureFreeBoardCoin(coin, {
-        falling: requestedPhase === 'transfer' || state.position[2] >= CONFIG.board.front - 0.06,
-      });
-    }
-
-    body.aabbNeedsUpdate = true;
-    if (state.sleeping && requestedPhase === 'board') body.sleep();
-    else body.wakeUp();
-    return coin;
-  }
-
   loadBoundary(snapshot) {
     if (!snapshot || !Array.isArray(snapshot.coins)) return false;
-    this.engine.setVisualReplayActive(false);
-    this.engine.initializeEmptyMachine();
+    this.coins.clear();
+    const ids = [];
     for (const raw of snapshot.coins) {
       const state = unpackCoinState(raw);
       if (!state) continue;
       if (state.position[1] < -2.8 || state.position[2] > CONFIG.board.front + 3.0) continue;
-      this.createCoinFromState(state);
+      this.coins.set(state.id, createRenderCoin(state));
+      ids.push(state.id);
     }
 
-    const pusherTime = Number(snapshot.pusherTime);
-    this.engine.pusherTime = Number.isFinite(pusherTime) ? pusherTime : 0;
-    this.engine.pusher.z = Number.isFinite(Number(snapshot.pusherZ))
-      ? Number(snapshot.pusherZ)
-      : CONFIG.pusher.rearZ;
-    this.engine.pusher.lastZ = this.engine.pusher.z;
-    this.engine.pusher.velocity = 0;
-    this.engine.pusher.pushing = false;
-    this.engine.pusher.body.position.set(0, CONFIG.pusher.y, this.engine.pusher.z);
-    this.engine.pusher.body.velocity.set(0, 0, 0);
-    this.engine.pusher.body.aabbNeedsUpdate = true;
-
-    this.rebuildOrder();
+    this.rebuildOrder(ids);
     this.hasSnapshot = true;
     this.activeReplayId = null;
+    this.replayPackage = null;
+    this.replayLoadId = null;
+    this.replayAnchorElapsed = 0;
     this.replayElapsed = 0;
+    this.replayDurationSeconds = 0;
+    this.replayInitialElapsed = 0;
     this.turnState = 'ready';
+    this.currentSlotIndex = Number.isInteger(snapshot.activeSlotIndex) ? snapshot.activeSlotIndex : -1;
+    this.emittedReplayEvents.clear();
+    if (this.pusherMesh) {
+      this.pusherMesh.position.z = Number.isFinite(Number(snapshot.pusherZ))
+        ? Number(snapshot.pusherZ)
+        : CONFIG.pusher.rearZ;
+    }
+    this.renderMatrices();
     return true;
   }
 
-  beginTurnReplay(snapshot) {
+  decodedFrame(frame) {
+    if (!frame) return new Map();
+    const cached = this.frameCache.get(frame);
+    if (cached) return cached;
+    const states = new Map();
+    for (const raw of frame.coins ?? []) {
+      const state = unpackCoinState(raw);
+      if (state) states.set(state.id, state);
+    }
+    this.frameCache.set(frame, states);
+    return states;
+  }
+
+  async loadRecordedReplay(descriptor) {
+    const turnId = descriptor?.turnId;
+    const packageUrl = descriptor?.packageUrl;
+    if (!turnId || !packageUrl) return null;
+    if (this.replayPackage?.id === turnId) return this.replayPackage;
+    if (this.replayLoadPromise && this.replayLoadId === turnId) return this.replayLoadPromise;
+
+    this.replayLoadId = turnId;
+    this.replayLoadPromise = Promise.resolve(this.fetchReplayPackage(packageUrl, descriptor))
+      .then((replayPackage) => {
+        if (!isReplayPackage(replayPackage)) throw new Error('Recorded replay package is invalid');
+        if (this.activeReplayId !== turnId) return null;
+        this.replayPackage = replayPackage;
+        this.replayDurationSeconds = Number(replayPackage.durationSeconds) || 0;
+        const elapsed = this.currentReplayElapsed();
+        for (const event of replayPackage.events ?? []) {
+          if (Number(event.at) <= this.replayInitialElapsed) this.emittedReplayEvents.add(event.id);
+        }
+        this.seekReplay(elapsed, { emitEvents: true });
+        return replayPackage;
+      })
+      .catch((error) => {
+        if (this.activeReplayId === turnId) this.onReplayError(error);
+        return null;
+      })
+      .finally(() => {
+        if (this.replayLoadId === turnId) {
+          this.replayLoadPromise = null;
+          this.replayLoadId = null;
+        }
+      });
+    return this.replayLoadPromise;
+  }
+
+  beginRecordedReplay(snapshot) {
     const replay = snapshot?.replay;
-    if (!replay?.turnId || !Array.isArray(snapshot?.coins)) return false;
-    if (this.activeReplayId === replay.turnId) return true;
+    if (!replay?.turnId || !replay?.packageUrl) return false;
 
-    this.loadBoundary({
-      coins: snapshot.coins,
-      pusherTime: snapshot.pusherTime,
-      pusherZ: snapshot.pusherZ,
-    });
-    this.engine.setVisualReplayActive(true);
+    if (this.activeReplayId !== replay.turnId) {
+      if (Array.isArray(snapshot.coins)) {
+        this.loadBoundary({
+          coins: snapshot.coins,
+          pusherZ: snapshot.pusherZ,
+          activeSlotIndex: snapshot.activeSlotIndex,
+        });
+      }
+      this.activeReplayId = replay.turnId;
+      this.replayPackage = null;
+      this.replayDurationSeconds = Number(replay.durationSeconds) || 0;
+      this.replayInitialElapsed = clamp(Number(replay.elapsedSeconds) || 0, 0, Number(replay.durationSeconds) || 90);
+      this.emittedReplayEvents.clear();
+    }
 
-    this.engine.startTurn({
-      playerId: replay.playerId ?? null,
-      coinsDropped: replay.coinsDropped,
-      slotPlan: replay.slotPlan,
-      id: replay.turnId,
-      seed: replay.seed,
-      startedAt: replay.startedAt,
-    });
-
-    const elapsedSeconds = clamp(
-      Number(replay.elapsedSeconds)
-        || Math.max(0, (Number(snapshot.serverTime) - Number(replay.startedAt)) / 1000)
-        || 0,
-      0,
-      38,
-    );
-    if (elapsedSeconds > 0.001) this.engine.fastForward(elapsedSeconds);
-
-    this.activeReplayId = replay.turnId;
-    this.replayElapsed = elapsedSeconds;
+    this.replayAnchorElapsed = clamp(Number(replay.elapsedSeconds) || 0, 0, Number(replay.durationSeconds) || 90);
+    this.replayAnchorLocalMs = nowMs();
+    this.replayElapsed = this.replayAnchorElapsed;
     this.turnState = snapshot.turn?.state ?? 'active';
-    this.rebuildOrder();
+    void this.loadRecordedReplay(replay);
     return true;
   }
 
@@ -259,19 +296,18 @@ export class SharedWorldView {
     this.lastRevision = Number(snapshot.revision) || this.lastRevision;
     this.turnState = snapshot.turn?.state ?? this.turnState;
 
-    if (snapshot.syncMode === 'turn-replay' && snapshot.replay?.turnId) {
-      if (this.activeReplayId !== snapshot.replay.turnId) {
-        this.beginTurnReplay(snapshot);
-      } else {
-        const targetElapsed = clamp(Number(snapshot.replay.elapsedSeconds) || 0, 0, 38);
-        const missingTime = targetElapsed - this.replayElapsed;
-        // Normal foreground rendering stays completely local. Only a tab that
-        // was throttled or suspended fast-forwards through the missing physics.
-        if (missingTime > 0.75) {
-          this.engine.fastForward(missingTime);
-          this.replayElapsed = targetElapsed;
-        }
+    if (snapshot.syncMode === 'recorded-replay' && snapshot.replay?.turnId) {
+      this.beginRecordedReplay(snapshot);
+      return;
+    }
+
+    if (snapshot.syncMode === 'preparing') {
+      const boundaryId = snapshot.boundaryId ?? this.boundaryId;
+      if (!this.hasSnapshot || this.boundaryId !== boundaryId || this.activeReplayId) {
+        this.loadBoundary(snapshot);
+        this.boundaryId = boundaryId;
       }
+      this.turnState = 'preparing';
       return;
     }
 
@@ -282,42 +318,95 @@ export class SharedWorldView {
     }
   }
 
-  update(dt) {
-    if (!this.hasSnapshot) return;
-    const safeDt = clamp(Number(dt) || 0, 0, 0.05);
-    this.engine.setVisualReplayActive(Boolean(this.activeReplayId));
-    this.engine.advance(safeDt);
-    if (this.activeReplayId) this.replayElapsed += safeDt;
+  currentReplayElapsed() {
+    if (!this.activeReplayId) return 0;
+    const elapsed = this.replayAnchorElapsed + Math.max(0, nowMs() - this.replayAnchorLocalMs) / 1000;
+    const maximum = this.replayDurationSeconds || Number(this.replayPackage?.durationSeconds) || 90;
+    return clamp(elapsed, 0, maximum);
+  }
 
-    let membershipChanged = false;
-    for (const coin of [...this.order]) {
-      if (coin.body.world) continue;
-      this.coins.delete(coin.id);
-      membershipChanged = true;
+  emitReplayEventsThrough(elapsedSeconds) {
+    for (const event of this.replayPackage?.events ?? []) {
+      if (Number(event.at) > elapsedSeconds || this.emittedReplayEvents.has(event.id)) continue;
+      this.emittedReplayEvents.add(event.id);
+      this.onReplayEvent(event, this.replayPackage);
+    }
+  }
+
+  seekReplay(elapsedSeconds, { emitEvents = true } = {}) {
+    if (!this.replayPackage) return false;
+    const elapsed = clamp(Number(elapsedSeconds) || 0, 0, Number(this.replayPackage.durationSeconds) || 0);
+    const { previous, next, alpha } = replayFramesAt(this.replayPackage, elapsed);
+    if (!previous) return false;
+
+    const previousStates = this.decodedFrame(previous);
+    const nextStates = this.decodedFrame(next ?? previous);
+    const ids = [...previousStates.keys()];
+    for (const id of nextStates.keys()) if (!previousStates.has(id)) ids.push(id);
+
+    const nextCoins = new Map();
+    for (const id of ids) {
+      const a = previousStates.get(id);
+      const b = nextStates.get(id);
+      if (!a && !b) continue;
+      if (!a) {
+        if (alpha >= 0.999) nextCoins.set(id, createRenderCoin(b));
+        continue;
+      }
+      if (!b) {
+        if (alpha < 0.999) nextCoins.set(id, createRenderCoin(a));
+        continue;
+      }
+
+      const coin = this.coins.get(id) ?? createRenderCoin(a);
+      coin.phase = alpha < 0.5 ? a.phase : b.phase;
+      this.interpolationPosition.set(...b.position);
+      this.interpolationQuaternion.set(...b.quaternion);
+      coin.position.set(...a.position).lerp(this.interpolationPosition, alpha);
+      coin.quaternion.set(...a.quaternion).slerp(this.interpolationQuaternion, alpha).normalize();
+      nextCoins.set(id, coin);
     }
 
-    // Turn replay spawns each later coin inside the local engine. The initial
-    // replay rebuild includes only the first immediately spawned coin, so add
-    // newly scheduled coins to the instanced render set as they appear.
-    if (!membershipChanged && this.engine.coins.length !== this.order.length) {
-      membershipChanged = this.engine.coins.some((coin) => coin.body.world && !this.coins.has(coin.id));
+    this.coins = nextCoins;
+    this.rebuildOrder(ids.filter((id) => nextCoins.has(id)));
+    this.currentSlotIndex = alpha < 0.5
+      ? (Number.isInteger(previous.activeSlotIndex) ? previous.activeSlotIndex : -1)
+      : (Number.isInteger(next?.activeSlotIndex) ? next.activeSlotIndex : -1);
+    if (this.pusherMesh) {
+      const previousZ = Number(previous.pusherZ) || CONFIG.pusher.rearZ;
+      const nextZ = Number(next?.pusherZ);
+      this.pusherMesh.position.z = THREE.MathUtils.lerp(
+        previousZ,
+        Number.isFinite(nextZ) ? nextZ : previousZ,
+        alpha,
+      );
     }
-    if (membershipChanged) this.rebuildOrder();
+    this.replayElapsed = elapsed;
+    if (emitEvents) this.emitReplayEventsThrough(elapsed);
+    this.renderMatrices();
+    return true;
+  }
 
+  renderMatrices() {
     for (let index = 0; index < this.order.length; index += 1) this.writeMatrix(index, this.order[index]);
     this.instanceMesh.count = this.order.length;
     this.instanceMesh.instanceMatrix.needsUpdate = true;
+  }
 
-    if (this.pusherMesh) this.pusherMesh.position.z = this.engine.pusher.z;
+  update() {
+    if (!this.hasSnapshot) return;
+    if (this.activeReplayId && this.replayPackage) {
+      this.seekReplay(this.currentReplayElapsed());
+      return;
+    }
+    this.renderMatrices();
   }
 
   activeSlotIndex() {
-    return Number.isInteger(this.engine.activeSlotIndex) ? this.engine.activeSlotIndex : -1;
+    return Number.isInteger(this.currentSlotIndex) ? this.currentSlotIndex : -1;
   }
 
   clear() {
-    this.engine.setVisualReplayActive(false);
-    this.engine.clearCoins();
     this.coins.clear();
     this.order = [];
     this.instanceMesh.count = 0;
@@ -325,6 +414,14 @@ export class SharedWorldView {
     this.hasSnapshot = false;
     this.boundaryId = null;
     this.activeReplayId = null;
+    this.replayPackage = null;
+    this.replayLoadPromise = null;
+    this.replayLoadId = null;
+    this.replayAnchorElapsed = 0;
     this.replayElapsed = 0;
+    this.replayDurationSeconds = 0;
+    this.replayInitialElapsed = 0;
+    this.currentSlotIndex = -1;
+    this.emittedReplayEvents.clear();
   }
 }

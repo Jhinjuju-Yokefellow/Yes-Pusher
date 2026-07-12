@@ -180,41 +180,42 @@ The Railway health endpoint reports persistence details at `/api/health`.
 
 The browser prefers Railway's live event stream. If that stream is interrupted, it switches to `/api/world` polling and continues retrying the stream. The queue and turn status remain server-owned in either transport mode.
 
-Returning to a throttled or hidden tab fast-forwards the local replay through missing elapsed time. It does not apply intermediate server coin positions.
+Returning to a throttled or hidden tab seeks into the same recorded replay package using Railway elapsed time. It does not re-simulate missing physics or apply live correction transforms.
 
 ## Shared-world performance
 
-- One instanced coin mesh renders the shared field.
-- Railway broadcasts turn/status envelopes rather than moving coin transforms.
-- Active-turn payloads reuse the immutable starting boundary.
-- Browser physics runs continuously during a turn without reconciliation.
-- Railway physics runs only while a turn is resolving.
-- Idle worlds remain persisted but physically paused at the handoff position.
+- Railway simulates each queued turn once, faster than real time, from the current confirmed boundary.
+- The completed simulation is stored as one replay package under `/data/replays`.
+- Browsers download that package once and interpolate recorded coin and pusher transforms.
+- Browsers never run authoritative or competing coin physics in shared mode.
+- Queue/status events remain lightweight; live coin transforms are not streamed continuously.
+- Mid-turn viewers seek directly into the recorded package using Railway elapsed time.
+- The replay's final world becomes the next confirmed boundary only after public playback finishes.
 
 After deployment, `/api/health` reports:
 
 ```json
 {
   "network": {
-    "clientVisualMode": "event-driven-turn-replay-with-boundary-snapshots",
-    "liveCoinTransformStreaming": false,
-    "statusBroadcastsPerSecond": 2
+    "clientVisualMode": "recorded-authoritative-replay-with-interpolation",
+    "visibleCoinPhysicsRunsInBrowser": false,
+    "authoritativeTurnSimulationRunsOnRailway": true,
+    "replayPackageDownload": true,
+    "replayCompression": "gzip",
+    "exactCoinIdEvents": true,
+    "liveCoinTransformStreaming": false
   },
   "persistence": {
-    "boundarySnapshots": true
+    "boundarySnapshots": true,
+    "replayDirectory": "/data/replays"
   }
 }
 ```
 
-## CoinPusher 54
+## CoinPusher 57 — authoritative simulation and recorded replay
 
-CoinPusher 54 removes the hybrid checkpoint-reconciliation system. Turns now begin from one confirmed boundary and play locally from the server-issued seed and chute plan. Railway sends the next canonical boundary only after settlement. The pusher pauses at the rear position while no turn is active.
+Each turn now has one physics result. Railway copies the confirmed machine, simulates the complete turn in fast-forward, records the exact movement and permanent coin-ID payout/loss events, stores the replay on `/data`, then starts public playback. Browsers only interpolate the recording. At replay completion, Railway promotes the recorded final world to the next confirmed boundary.
 
 ## CoinPusher 53
 
 Front payout exits now count at the authoritative release edge across the full playable width, including exits on the last settlement frame. The timer displays whole seconds, the bottom instructional hint has been removed, and the artificial payout-edge boost has been removed while retaining pressure directly ahead of the physical pusher.
-
-
-## CoinPusher 56 — browser-visible physics
-
-During an active turn, visible coin and pusher motion is simulated in the browser from the turn boundary, seed, chute plan, and timing. Railway does not stream live coin transforms. Railway continues to run a hidden authoritative scoring simulation and sends the confirmed machine boundary after the turn. The browser pusher remains active until that confirmed boundary arrives.

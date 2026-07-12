@@ -88,12 +88,19 @@ Run this checklist before accepting any future patch.
 - [ ] A no-match response remains retryable and is not displayed as an issued skin.
 
 
-## Event-driven shared turn
+## Authoritative recorded turn
 
 - [ ] Ready state is a full canonical boundary snapshot.
-- [ ] A new turn includes one stable seed and chute plan.
-- [ ] Repeated active events do not alter browser coin positions.
-- [ ] Falling coins never snap, steer, or jump because of network updates.
-- [ ] Returning from a background tab fast-forwards physics rather than teleporting coins.
-- [ ] The final Railway boundary replaces the local replay only after settlement.
+- [ ] The active request first enters a visible `Preparing turn…` stage.
+- [ ] Railway runs exactly one complete physics simulation for the turn.
+- [ ] A replay package is written to `/data/replays` before public playback starts.
+- [ ] Shared-mode browsers do not instantiate or advance coin physics.
+- [ ] Every browser interpolates the same recorded frames.
+- [ ] Repeated status snapshots cannot steer or correct recorded coin positions.
+- [ ] A mid-turn viewer downloads the package and seeks to current elapsed time.
+- [ ] Every payout and loss event includes the permanent coin ID.
+- [ ] A payout event is emitted once and matches the turn result/settlement record.
+- [ ] The final recorded world becomes the next boundary only after replay completion.
+- [ ] Restarting Railway during playback restores the active replay from `/data`.
+- [ ] Restarting during preparation preserves the prior confirmed boundary.
 - [ ] The pusher remains paused at the rear handoff while no turn is active.

@@ -1,6 +1,6 @@
 # YES Pusher Shared World
 
-YES Pusher uses one persistent machine with server-authoritative turn results and event-driven browser replay.
+YES Pusher uses one persistent machine with authoritative fast simulation followed by recorded public replay.
 
 ## Authority boundary
 
@@ -8,55 +8,67 @@ Railway owns:
 
 - the confirmed machine at every turn boundary
 - queue order and the active player
-- turn IDs and random seeds
+- the one physics simulation for each turn
+- permanent coin IDs
 - random chute plans and insertion timing
-- authoritative physics for scoring
-- front payouts and side losses
-- the 30-second timer, cycle finish, and settlement window
-- per-wallet lifetime score and skin milestones
-- settlement records and Yokefellow submissions
-- persistent confirmed-world files on the `/data` volume
+- front payouts and side/rear losses
+- exact payout/loss event records by coin ID
+- the final machine state
+- replay package storage on the `/data` volume
+- per-wallet lifetime score, skin milestones, and settlement records
 
 A browser owns only:
 
 - camera controls
 - the selected 1–10 coin count before queueing
-- a temporary visual replay of the active turn
+- smooth interpolation of the recorded replay
+- local presentation effects driven by recorded payout/loss events
 
-Browser coin positions and local scores are never submitted to Railway.
+Browser coin positions, local physics, and local scores are never authoritative because shared-mode browsers do not simulate the turn.
 
-## Turn transport
+## Turn flow
 
-While ready, Railway sends a full canonical boundary snapshot.
+1. The player presses **Drop Coins** and enters the queue.
+2. When the request reaches the front, Railway exposes `syncMode: preparing`.
+3. Railway copies the current confirmed world and simulates the complete turn faster than real time.
+4. During simulation Railway records sampled transforms, pusher motion, chute state, permanent coin IDs, exact payout/loss events, the result, and the final world.
+5. Railway writes one replay package to `/data/replays/<turn-id>.json`.
+6. Railway exposes `syncMode: recorded-replay` with one package URL and public start time.
+7. Every browser downloads the same package and interpolates between recorded frames.
+8. A browser joining midway downloads the package and seeks to Railway's current elapsed time.
+9. When playback finishes, Railway promotes `finalWorld` from the package to the next confirmed boundary.
+10. Settlement, player progress, queue advancement, and the next preparation begin from that committed result.
 
-When a queued turn starts, Railway sends:
+There is only one physics result and one set of payout coin IDs.
 
-- the boundary ID
-- the starting coin snapshot
-- turn ID
-- player ID
-- selected coin count
-- chute plan
-- deterministic turn seed
-- start time and elapsed time
+## Replay package
 
-The browser starts the same turn locally and does not accept moving coin transforms from Railway during that turn.
+A replay package contains:
 
-Railway continues its independent authoritative simulation for scoring. Repeated live events carry queue, timer, score, and settlement status, but the coin array remains the unchanged starting boundary.
+- turn ID, player ID, coin count, chute plan, and seed
+- the starting confirmed boundary
+- recorded frames with coin transforms, pusher position, active chute, and scoring counters
+- exact `payout` and `loss` events with permanent coin IDs
+- the finalized turn result
+- the complete final confirmed world
 
-When the turn is finalized, Railway sends a new canonical boundary. That boundary replaces the browser replay before the next turn.
+Frames are recorded at `YES_PUSHER_REPLAY_FRAME_RATE` and rendered smoothly at the browser frame rate through interpolation. Railway does not stream hundreds of transforms continuously.
 
-A browser joining mid-turn reconstructs the starting boundary and fast-forwards the replay to the server's elapsed time.
+## Persistence and restart behavior
 
-## Idle behavior
-
-The pusher pauses at the rear handoff position while the turn state is `ready`. Railway does not advance idle physics, so payouts cannot occur without a scoring owner.
+- Confirmed worlds remain in `/data/confirmed-world.json`.
+- Replay packages remain in `/data/replays`.
+- The active replay pointer is stored in `/data/active-replay.json`.
+- A Railway restart during public playback restores the replay and elapsed time.
+- A restart during preparation discards the unfinished simulation and preserves the previous confirmed boundary.
+- The final world is not committed until replay playback completes.
 
 ## Endpoints
 
 - `GET /api/health`
 - `GET /api/world`
 - `GET /events`
+- `GET /api/replays/:turnId`
 - `POST /api/queue/join`
 - `POST /api/queue/leave`
 - `POST /api/turn/start` for backward compatibility
@@ -66,16 +78,11 @@ The pusher pauses at the rear handoff position while the turn state is `ready`. 
 
 - Watching does not require queueing.
 - Pressing **Drop Coins** records the chosen 1–10 coins and creates one queued turn.
-- The server starts the request automatically when it reaches the front.
-- The player does not press again.
-- A completed request leaves the queue.
-- A disconnected active turn finishes on Railway.
-- Short disconnects preserve queue position for reconnection.
-
-## Persistence
-
-Railway saves the confirmed world after finalized turns. An unfinished turn is not committed. Restarting during a partial turn restores the prior confirmed boundary.
+- The server prepares the request automatically when it reaches the front.
+- The active request stays at the front through preparation and replay.
+- A completed replay removes that request and advances the queue.
+- A disconnected active turn still prepares, replays, commits, and settles on Railway.
 
 ## Transport fallback
 
-The browser prefers the live event stream and falls back to `/api/world` polling when needed. Both paths deliver the same event-driven turn envelope. Neither path streams active coin corrections.
+The browser prefers the live event stream and falls back to `/api/world` polling when needed. Both transports carry queue, timing, result, and replay descriptors. The recorded movement itself is downloaded once from `/api/replays/:turnId`.

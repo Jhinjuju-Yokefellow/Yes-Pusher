@@ -2,29 +2,98 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
 import { CONFIG } from '../src/config/machine-config.js';
+import { MACHINE_REVISION } from '../src/game/world-snapshot.js';
 import { SharedWorldView, unpackCoinState } from '../src/network/shared-world-view.js';
 
-function makeView() {
+function packedCoin(id, x, y, z, { sleeping = true, phase = 0 } = {}) {
+  return [id, x, y, z, 0, 0, 0, 1, sleeping ? 1 : 0, phase];
+}
+
+function replayPackage() {
+  const restY = CONFIG.board.y + 0.42 / 2 + CONFIG.coin.thickness / 2 + 0.004;
+  return {
+    kind: 'yes-pusher-recorded-replay',
+    version: 1,
+    machineRevision: MACHINE_REVISION,
+    id: 'turn-1',
+    createdAt: 1_000,
+    frameRate: 2,
+    frameIntervalSeconds: 0.5,
+    physicsRate: 45,
+    durationSeconds: 2,
+    turn: {
+      id: 'turn-1',
+      playerId: 'player-a',
+      playerLabel: 'PLAYER A',
+      number: 1,
+      coinsDropped: 1,
+      slotPlan: [3],
+      seed: 123,
+      startedAt: 1_000,
+    },
+    startWorld: {
+      pusherZ: CONFIG.pusher.rearZ,
+      coinCount: 1,
+      coins: [packedCoin('bed-1', 0, restY, -2)],
+    },
+    frames: [
+      {
+        t: 0,
+        pusherZ: CONFIG.pusher.rearZ,
+        activeSlotIndex: 3,
+        state: 1,
+        activeSecondsRemaining: 30,
+        coinsWon: 0,
+        coinsLost: 0,
+        coins: [packedCoin('bed-1', 0, restY, -2)],
+      },
+      {
+        t: 1,
+        pusherZ: CONFIG.pusher.frontZ,
+        activeSlotIndex: -1,
+        state: 3,
+        activeSecondsRemaining: 29,
+        coinsWon: 1,
+        coinsLost: 0,
+        coins: [
+          packedCoin('bed-1', 2, restY, 1),
+          packedCoin('drop-1', 1, 8, CONFIG.peg.z, { sleeping: false, phase: 1 }),
+        ],
+      },
+      {
+        t: 2,
+        pusherZ: CONFIG.pusher.rearZ,
+        activeSlotIndex: -1,
+        state: 5,
+        activeSecondsRemaining: 0,
+        coinsWon: 1,
+        coinsLost: 0,
+        coins: [packedCoin('drop-1', 0.5, restY, -1)],
+      },
+    ],
+    events: [
+      { id: 'event-payout-1', type: 'payout', turnId: 'turn-1', playerId: 'player-a', coinId: 'bed-1', at: 0.75, value: 1 },
+      { id: 'event-loss-1', type: 'loss', turnId: 'turn-1', playerId: 'player-a', coinId: 'drop-1', at: 1.75, value: 1 },
+    ],
+    result: { id: 'turn-1', playerId: 'player-a', coinsDropped: 1, coinsWon: 1, coinsLost: 0, slotPlan: [3] },
+    finalWorld: { kind: 'yes-pusher-confirmed-world' },
+  };
+}
+
+function makeView({ packageValue = replayPackage(), events = [] } = {}) {
   const scene = new THREE.Scene();
   const geometry = new THREE.CylinderGeometry(0.34, 0.34, 0.105, 12);
-  const materials = [
-    new THREE.MeshBasicMaterial(),
-    new THREE.MeshBasicMaterial(),
-    new THREE.MeshBasicMaterial(),
-  ];
+  const materials = [new THREE.MeshBasicMaterial(), new THREE.MeshBasicMaterial(), new THREE.MeshBasicMaterial()];
   const pusher = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshBasicMaterial());
   const view = new SharedWorldView({
     scene,
     coinGeometry: geometry,
     coinMaterials: materials,
     pusherMesh: pusher,
+    fetchReplayPackage: async () => packageValue,
+    onReplayEvent: (event) => events.push(event),
   });
-  return { scene, view, pusher };
-}
-
-function packedCoin(id, x, y, z, { sleeping = true, phase = 0, velocity = [0, 0, 0], angularVelocity = [0, 0, 0] } = {}) {
-  const base = [id, x, y, z, 0, 0, 0, 1, sleeping ? 1 : 0, phase];
-  return sleeping ? base : [...base, ...velocity, ...angularVelocity];
+  return { scene, view, pusher, events };
 }
 
 function boundarySnapshot({ boundaryId = 'boundary-1', coins = [] } = {}) {
@@ -32,48 +101,30 @@ function boundarySnapshot({ boundaryId = 'boundary-1', coins = [] } = {}) {
     revision: 1,
     syncMode: 'boundary',
     boundaryId,
-    pusherTime: 0,
     pusherZ: CONFIG.pusher.rearZ,
     turn: { state: 'ready', nextTurnNumber: 1 },
     coins,
   };
 }
 
-function replaySnapshot({
-  boundaryId = 'boundary-1',
-  turnId = 'turn-1',
-  elapsedSeconds = 0,
-  coins = [],
-} = {}) {
+function recordedSnapshot({ elapsedSeconds = 0, coins = null } = {}) {
+  const pkg = replayPackage();
   return {
     revision: 2,
-    syncMode: 'turn-replay',
-    boundaryId,
+    syncMode: 'recorded-replay',
+    boundaryId: 'boundary-1',
     serverTime: 1_000,
-    pusherTime: 0,
     pusherZ: CONFIG.pusher.rearZ,
-    turn: {
-      state: 'dropping',
-      currentTurn: {
-        id: turnId,
-        playerId: 'player-a',
-        number: 1,
-        coinsDropped: 2,
-        coinsWon: 0,
-        slotPlan: [1, 4],
-        startedAt: 1_000,
-      },
-    },
+    turn: { state: 'dropping', currentTurn: pkg.turn },
     replay: {
-      turnId,
-      playerId: 'player-a',
-      coinsDropped: 2,
-      slotPlan: [1, 4],
-      seed: 12345,
+      turnId: pkg.id,
+      packageUrl: `/api/replays/${pkg.id}`,
       startedAt: 1_000,
       elapsedSeconds,
+      durationSeconds: pkg.durationSeconds,
+      frameRate: pkg.frameRate,
     },
-    coins,
+    coins: coins ?? pkg.startWorld.coins,
   };
 }
 
@@ -87,156 +138,89 @@ test('shared world view renders a boundary through one instanced mesh', () => {
   ));
 
   view.applySnapshot(boundarySnapshot({ coins }));
-  view.update(1 / 60);
+  view.update();
 
   assert.equal(view.instanceMesh.isInstancedMesh, true);
   assert.equal(view.instanceMesh.count, 121);
   assert.equal(scene.children.filter((child) => child.isInstancedMesh).length, 1);
 });
 
-test('packed v3 coin state preserves phase and velocity', () => {
-  const state = unpackCoinState(packedCoin('drop-1', 1, 8, CONFIG.peg.z, {
-    sleeping: false,
-    phase: 1,
-    velocity: [0.2, -1.1, 0],
-    angularVelocity: [0, 0, 1.4],
-  }));
-
+test('packed v3 coin state preserves phase', () => {
+  const state = unpackCoinState(packedCoin('drop-1', 1, 8, CONFIG.peg.z, { sleeping: false, phase: 1 }));
   assert.equal(state.phase, 'peg');
-  assert.deepEqual(state.velocity, [0.2, -1.1, 0]);
-  assert.deepEqual(state.angularVelocity, [0, 0, 1.4]);
+  assert.deepEqual(state.position, [1, 8, CONFIG.peg.z]);
 });
 
-test('shared world view remains compatible with object-form boundary snapshots', () => {
-  const { view } = makeView();
-
-  view.applySnapshot(boundarySnapshot({
-    coins: [{
-      id: 'legacy-coin',
-      position: [1, 0.816, 3],
-      quaternion: [0, 0, 0, 1],
-      sleeping: true,
-      phase: 'board',
-    }],
-  }));
-  view.update(1 / 60);
-
-  assert.equal(view.instanceMesh.count, 1);
-  assert.equal(view.coins.has('legacy-coin'), true);
-});
-
-test('active turn replay starts once and ignores later server coin transforms', () => {
-  const { view } = makeView();
-  const startCoins = [packedCoin('coin-1', 0, 0.816, 1)];
-  view.applySnapshot(boundarySnapshot({ coins: startCoins }));
-  view.applySnapshot(replaySnapshot({ coins: startCoins, elapsedSeconds: 0 }));
-
-  const coin = view.coins.get('coin-1');
-  const before = coin.body.position.clone();
-  const replayCount = view.engine.turnController.getSnapshot().currentTurn?.id;
-
-  view.applySnapshot({
-    ...replaySnapshot({ coins: [packedCoin('coin-1', 4, 3, 5)], elapsedSeconds: 0.1 }),
-    revision: 3,
-  });
-
-  assert.equal(view.engine.turnController.getSnapshot().currentTurn?.id, replayCount);
-  assert.equal(coin.body.position.x, before.x);
-  assert.equal(coin.body.position.y, before.y);
-  assert.equal(coin.body.position.z, before.z);
-});
-
-test('turn replay generates falling coins locally without checkpoint steering', () => {
-  const { view } = makeView();
-  const restY = CONFIG.board.y + 0.42 / 2 + CONFIG.coin.thickness / 2 + 0.004;
-  const startCoins = [packedCoin('coin-1', 0, restY, -2.5)];
-  view.applySnapshot(replaySnapshot({ coins: startCoins, elapsedSeconds: 2.2 }));
-
-  const localDrops = view.engine.coins.filter((coin) => coin.id !== 'coin-1');
-  assert.ok(localDrops.length >= 2);
-  assert.equal(view.activeReplayId, 'turn-1');
-  assert.ok(view.engine.pusher.z > CONFIG.pusher.rearZ);
-});
-
-test('ready boundary replaces local replay only after the turn ends', () => {
-  const { view } = makeView();
-  const startCoins = [packedCoin('coin-1', 0, 0.816, 1)];
-  view.applySnapshot(replaySnapshot({ coins: startCoins, elapsedSeconds: 1.5 }));
-  assert.equal(view.activeReplayId, 'turn-1');
-
-  const finalCoins = [packedCoin('coin-1', 0.4, 0.816, 2.2)];
-  view.applySnapshot(boundarySnapshot({ boundaryId: 'boundary-2', coins: finalCoins }));
-
-  assert.equal(view.activeReplayId, null);
-  assert.equal(view.boundaryId, 'boundary-2');
-  assert.equal(view.coins.get('coin-1').body.position.x, 0.4);
-  assert.equal(view.coins.get('coin-1').body.position.z, 2.2);
-});
-
-test('turn replay renders every scheduled coin, not only the first drop', () => {
-  const { view } = makeView();
-  const restY = CONFIG.board.y + 0.42 / 2 + CONFIG.coin.thickness / 2 + 0.004;
-  const startCoins = [packedCoin('bed-coin', 0, restY, -2.5)];
-
-  view.applySnapshot({
-    ...replaySnapshot({ coins: startCoins, elapsedSeconds: 0 }),
-    turn: {
-      state: 'dropping',
-      currentTurn: {
-        id: 'turn-1',
-        playerId: 'player-a',
-        number: 1,
-        coinsDropped: 5,
-        coinsWon: 0,
-        slotPlan: [0, 1, 2, 3, 4],
-        startedAt: 1_000,
-      },
-    },
-    replay: {
-      turnId: 'turn-1',
-      playerId: 'player-a',
-      coinsDropped: 5,
-      slotPlan: [0, 1, 2, 3, 4],
-      seed: 12345,
-      startedAt: 1_000,
-      elapsedSeconds: 0,
-    },
-  });
-
-  // First coin is spawned immediately; the next four are scheduled every 2s.
-  for (let frame = 0; frame < 510; frame += 1) view.update(1 / 60);
-
-  const visibleDropCount = view.order.filter((coin) => coin.id !== 'bed-coin').length;
-  assert.equal(visibleDropCount, 5);
-  assert.equal(view.instanceMesh.count, 6);
-});
-
-
-test('visual replay keeps the pusher cycling until Railway sends the final boundary', () => {
+test('browser interpolates the downloaded authoritative replay instead of simulating physics', async () => {
   const { view, pusher } = makeView();
-  const restY = CONFIG.board.y + 0.42 / 2 + CONFIG.coin.thickness / 2 + 0.004;
-  const startCoins = [packedCoin('bed-coin', 0, restY, -2.5)];
+  view.applySnapshot(recordedSnapshot({ elapsedSeconds: 0 }));
+  await view.replayLoadPromise;
 
-  view.applySnapshot(replaySnapshot({
-    coins: startCoins,
-    elapsedSeconds: 37.5,
-  }));
-
-  // The local visual controller may already have finalized by this point, but
-  // Railway still owns the active replay until it sends a boundary snapshot.
   assert.equal(view.activeReplayId, 'turn-1');
-  const startTime = view.engine.pusherTime;
-  const startZ = pusher.position.z;
+  assert.equal(view.replayPackage.id, 'turn-1');
+  assert.equal('engine' in view, false);
 
-  for (let frame = 0; frame < 90; frame += 1) view.update(1 / 60);
+  view.seekReplay(0.5, { emitEvents: false });
+  assert.equal(view.coins.get('bed-1').position.x, 1);
+  assert.equal(view.coins.get('bed-1').position.z, -0.5);
+  assert.equal(pusher.position.z, (CONFIG.pusher.rearZ + CONFIG.pusher.frontZ) / 2);
+});
 
-  assert.ok(view.engine.pusherTime > startTime + 1.4);
-  assert.notEqual(pusher.position.z, startZ);
+test('later world snapshots cannot steer recorded coin transforms', async () => {
+  const { view } = makeView();
+  view.applySnapshot(recordedSnapshot({ elapsedSeconds: 0 }));
+  await view.replayLoadPromise;
+  view.seekReplay(0.5, { emitEvents: false });
+  const before = view.coins.get('bed-1').position.clone();
+
+  view.applySnapshot(recordedSnapshot({
+    elapsedSeconds: 0.5,
+    coins: [packedCoin('bed-1', 99, 99, 99)],
+  }));
+  view.seekReplay(0.5, { emitEvents: false });
+
+  assert.deepEqual(view.coins.get('bed-1').position.toArray(), before.toArray());
+});
+
+test('mid-turn join seeks immediately and only emits future exact coin-ID events', async () => {
+  const observed = [];
+  const { view } = makeView({ events: observed });
+  view.applySnapshot(recordedSnapshot({ elapsedSeconds: 1.25 }));
+  await view.replayLoadPromise;
+
+  assert.equal(view.replayElapsed >= 1.25, true);
+  assert.equal(observed.length, 0);
+  assert.equal(view.coins.has('drop-1'), true);
+
+  view.seekReplay(1.8);
+  assert.deepEqual(observed.map((event) => [event.type, event.coinId]), [['loss', 'drop-1']]);
+});
+
+test('future payout event carries the permanent winning coin ID exactly once', async () => {
+  const observed = [];
+  const { view } = makeView({ events: observed });
+  view.applySnapshot(recordedSnapshot({ elapsedSeconds: 0 }));
+  await view.replayLoadPromise;
+
+  view.seekReplay(0.8);
+  view.seekReplay(1.2);
+
+  assert.deepEqual(observed.map((event) => event.coinId), ['bed-1']);
+  assert.equal(observed[0].type, 'payout');
+});
+
+test('final boundary replaces the replay with the authoritative handoff state', async () => {
+  const { view } = makeView();
+  view.applySnapshot(recordedSnapshot({ elapsedSeconds: 1 }));
+  await view.replayLoadPromise;
+  assert.equal(view.activeReplayId, 'turn-1');
 
   view.applySnapshot(boundarySnapshot({
     boundaryId: 'boundary-2',
-    coins: startCoins,
+    coins: [packedCoin('final-coin', 0.4, 0.816, 2.2)],
   }));
+
   assert.equal(view.activeReplayId, null);
-  assert.equal(view.engine.visualReplayActive, false);
+  assert.equal(view.boundaryId, 'boundary-2');
+  assert.deepEqual(view.coins.get('final-coin').position.toArray(), [0.4, 0.816, 2.2]);
 });
