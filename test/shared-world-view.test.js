@@ -1,9 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
-import { SharedWorldView } from '../src/network/shared-world-view.js';
+import { CONFIG } from '../src/config/machine-config.js';
+import { SharedWorldView, unpackCoinState } from '../src/network/shared-world-view.js';
 
-test('shared world view renders packed coins through one instanced mesh', () => {
+function makeView() {
   const scene = new THREE.Scene();
   const geometry = new THREE.CylinderGeometry(0.34, 0.34, 0.105, 12);
   const materials = [
@@ -18,43 +19,56 @@ test('shared world view renders packed coins through one instanced mesh', () => 
     coinMaterials: materials,
     pusherMesh: pusher,
   });
+  return { scene, view, pusher };
+}
 
-  const coins = Array.from({ length: 253 }, (_, index) => [
+function packedCoin(id, x, y, z, { sleeping = true, phase = 0, velocity = [0, 0, 0], angularVelocity = [0, 0, 0] } = {}) {
+  const base = [id, x, y, z, 0, 0, 0, 1, sleeping ? 1 : 0, phase];
+  return sleeping ? base : [...base, ...velocity, ...angularVelocity];
+}
+
+test('shared world view renders packed coins through one instanced mesh', () => {
+  const { scene, view } = makeView();
+  const coins = Array.from({ length: 135 }, (_, index) => packedCoin(
     `coin-${index}`,
-    index % 20,
-    1,
-    Math.floor(index / 20),
-    0,
-    0,
-    0,
-    1,
-  ]);
+    (index % 15) * 0.65 - 4.5,
+    0.816,
+    Math.floor(index / 15) * 0.65 - 2.5,
+  ));
 
-  view.applySnapshot({ pusherZ: -2.4, coins });
+  view.applySnapshot({ pusherTime: 0, turn: { state: 'ready' }, coins });
   view.update(1 / 60);
 
   assert.equal(view.instanceMesh.isInstancedMesh, true);
-  assert.equal(view.instanceMesh.count, 253);
+  assert.equal(view.instanceMesh.count, 135);
   assert.equal(scene.children.filter((child) => child.isInstancedMesh).length, 1);
   assert.equal(scene.children.filter((child) => child.isMesh && !child.isInstancedMesh).length, 0);
 });
 
+test('packed v3 coin state preserves phase and velocity without prediction', () => {
+  const state = unpackCoinState(packedCoin('drop-1', 1, 8, CONFIG.peg.z, {
+    sleeping: false,
+    phase: 1,
+    velocity: [0.2, -1.1, 0],
+    angularVelocity: [0, 0, 1.4],
+  }));
+
+  assert.equal(state.phase, 'peg');
+  assert.deepEqual(state.velocity, [0.2, -1.1, 0]);
+  assert.deepEqual(state.angularVelocity, [0, 0, 1.4]);
+});
+
 test('shared world view remains compatible with object-form snapshots', () => {
-  const scene = new THREE.Scene();
-  const geometry = new THREE.CylinderGeometry(0.34, 0.34, 0.105, 12);
-  const material = new THREE.MeshBasicMaterial();
-  const view = new SharedWorldView({
-    scene,
-    coinGeometry: geometry,
-    coinMaterials: material,
-    pusherMesh: null,
-  });
+  const { view } = makeView();
 
   view.applySnapshot({
+    turn: { state: 'ready' },
     coins: [{
       id: 'legacy-coin',
-      position: [1, 2, 3],
+      position: [1, 0.816, 3],
       quaternion: [0, 0, 0, 1],
+      sleeping: true,
+      phase: 'board',
     }],
   });
   view.update(1 / 60);
@@ -63,79 +77,41 @@ test('shared world view remains compatible with object-form snapshots', () => {
   assert.equal(view.coins.has('legacy-coin'), true);
 });
 
-test('shared world view linearly interpolates between server snapshots', () => {
-  const scene = new THREE.Scene();
-  const geometry = new THREE.CylinderGeometry(0.34, 0.34, 0.105, 10);
-  const material = new THREE.MeshBasicMaterial();
-  const pusher = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), material);
-  const view = new SharedWorldView({
-    scene,
-    coinGeometry: geometry,
-    coinMaterials: material,
-    pusherMesh: pusher,
-  });
-
+test('active server updates steer local physics instead of teleporting coins', () => {
+  const { view } = makeView();
   view.applySnapshot({
-    serverTime: 1_000,
-    pusherZ: -4,
-    coins: [['coin-1', 0, 1, 0, 0, 0, 0, 1]],
+    revision: 1,
+    pusherTime: 0,
+    turn: { state: 'active' },
+    coins: [packedCoin('coin-1', 0, 0.816, 1, { sleeping: false, velocity: [0, 0, 0] })],
   });
-  view.applySnapshot({
-    serverTime: 1_200,
-    pusherZ: -2,
-    coins: [['coin-1', 2, 1, 0, 0, 0, 0, 1]],
-  });
-  view.update(0.104);
 
   const coin = view.coins.get('coin-1');
-  assert.ok(coin.position.x > 0.9 && coin.position.x < 1.1);
-  assert.ok(pusher.position.z > -3.1 && pusher.position.z < -2.9);
+  const before = coin.body.position.x;
+  view.applySnapshot({
+    revision: 2,
+    pusherTime: 0.5,
+    turn: { state: 'active' },
+    coins: [packedCoin('coin-1', 1, 0.816, 1, { sleeping: false, velocity: [0, 0, 0] })],
+  });
+
+  assert.equal(coin.body.position.x, before);
+  assert.ok(coin.body.velocity.x > 0);
 });
 
-test('shared world view predicts awake v2 coins between snapshots', () => {
-  const scene = new THREE.Scene();
-  const geometry = new THREE.CylinderGeometry(0.34, 0.34, 0.105, 8);
-  const material = new THREE.MeshBasicMaterial();
-  const view = new SharedWorldView({
-    scene,
-    coinGeometry: geometry,
-    coinMaterials: material,
-    pusherMesh: null,
-  });
-
+test('local visual physics lets the flat pusher move a board coin', () => {
+  const { view } = makeView();
+  const restY = CONFIG.board.y + 0.42 / 2 + CONFIG.coin.thickness / 2 + 0.004;
   view.applySnapshot({
-    serverTime: Date.now(),
-    coins: [[
-      'moving-coin',
-      0, 1, 0,
-      0, 0, 0, 1,
-      0,
-      1, 0, 0,
-      0, 0, 0,
-    ]],
-  });
-  view.update(0.1);
-
-  assert.ok(view.coins.get('moving-coin').position.x > 0.07);
-});
-
-test('shared world view leaves sleeping v2 coins fixed', () => {
-  const scene = new THREE.Scene();
-  const geometry = new THREE.CylinderGeometry(0.34, 0.34, 0.105, 8);
-  const material = new THREE.MeshBasicMaterial();
-  const view = new SharedWorldView({
-    scene,
-    coinGeometry: geometry,
-    coinMaterials: material,
-    pusherMesh: null,
+    revision: 1,
+    pusherTime: 0,
+    turn: { state: 'active' },
+    coins: [packedCoin('coin-1', 0, restY, -3.0, { sleeping: false, velocity: [0, 0, 0] })],
   });
 
-  view.applySnapshot({
-    serverTime: Date.now(),
-    coins: [['sleeping-coin', 2, 1, 3, 0, 0, 0, 1, 1]],
-  });
-  view.update(0.2);
+  const startZ = view.coins.get('coin-1').body.position.z;
+  for (let frame = 0; frame < 180; frame += 1) view.update(1 / 60);
+  const endZ = view.coins.get('coin-1')?.body.position.z ?? startZ;
 
-  assert.equal(view.coins.get('sleeping-coin').position.x, 2);
-  assert.equal(view.coins.get('sleeping-coin').position.z, 3);
+  assert.ok(endZ > startZ + 0.15, `expected pusher movement, start=${startZ}, end=${endZ}`);
 });

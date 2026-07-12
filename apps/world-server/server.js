@@ -185,8 +185,8 @@ export async function createWorldServer({
   host = process.env.HOST || '0.0.0.0',
   dataDir = process.env.YES_PUSHER_DATA_DIR || DEFAULT_DATA_DIR,
   autoListen = true,
-  tickRate = parseRate(process.env.YES_PUSHER_TICK_RATE, 30, 20, 120),
-  broadcastRate = parseRate(process.env.YES_PUSHER_BROADCAST_RATE, 6, 2, 30),
+  tickRate = parseRate(process.env.YES_PUSHER_TICK_RATE, 60, 30, 120),
+  broadcastRate = parseRate(process.env.YES_PUSHER_BROADCAST_RATE, 2, 1, 2),
   testMode = process.env.YES_PUSHER_TEST_MODE === 'true',
   requireWallet = process.env.YES_PUSHER_REQUIRE_WALLET !== 'false'
     && process.env.YES_PUSHER_TEST_MODE !== 'true',
@@ -238,7 +238,6 @@ export async function createWorldServer({
       }
     },
   });
-  const effectiveTickRate = Math.min(tickRate, engine.physicsRate);
 
 
   async function persistConfirmedState() {
@@ -456,14 +455,15 @@ export async function createWorldServer({
         pollingClients: pollingClientCount(),
         requireWallet,
         testMode,
-        tickRate: effectiveTickRate,
-        requestedTickRate: tickRate,
+        tickRate,
         broadcastRate,
         network: {
           coinEncoding: transportSnapshot.coinEncoding,
           snapshotBytes: Buffer.byteLength(JSON.stringify(transportSnapshot)),
           physicsSolverIterations: engine.world.solver.iterations,
           physicsStepsPerSecond: engine.physicsRate,
+          checkpointBroadcastsPerSecond: broadcastRate,
+          clientVisualMode: 'local-physics-with-authoritative-checkpoints',
         },
         allowedOrigins: [...allowedOrigins],
         settlement: settlementStore.integrationStatus(),
@@ -701,7 +701,7 @@ export async function createWorldServer({
     // request automatically as soon as the prior turn has fully settled.
     startNextQueuedTurnIfReady();
     engine.advance(Math.min(elapsed, 0.05));
-  }, Math.max(4, Math.floor(1000 / effectiveTickRate)));
+  }, Math.max(4, Math.floor(1000 / tickRate)));
   tickInterval.unref?.();
 
   const broadcastInterval = setInterval(broadcast, Math.max(40, Math.floor(1000 / broadcastRate)));

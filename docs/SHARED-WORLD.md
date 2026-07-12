@@ -22,8 +22,8 @@ A browser owns only:
 
 - its anonymous local player ID
 - its selected 1–10 coin count before submitting a drop request
+- a non-authoritative local visual physics copy used only to render smooth collisions between server checkpoints
 - camera controls
-- interpolation and rendering of server snapshots
 
 The browser cannot submit coin positions, scores, chute results, timers, completed turns, lifetime totals, or milestone results.
 
@@ -38,9 +38,9 @@ The server exposes:
 - `POST /api/queue/leave` — cancel a waiting request
 - `POST /api/turn/start` — backward-compatible manual start route; normal clients do not use it
 
-The server broadcasts at the configured shared-world rate (six snapshots per second by default). Browsers interpolate coin positions, coin rotations, and the pusher position between snapshots.
+The server broadcasts compact authoritative checkpoints at no more than two per second. The browser initializes a real Cannon visual machine from the first checkpoint and advances physical coin/pusher contact locally between checkpoints. Small drift is corrected through low-speed steering; the browser does not extrapolate rendered transforms or submit its local positions back to Railway.
 
-Railway continuously advances the authoritative machine even when every browser is closed. Browsers render snapshots; they do not own machine time.
+Railway continuously advances the official machine even when every browser is closed. Railway alone decides payouts, losses, timers, queue order, final world state, and settlement. The local visual copy exists only to make the shared machine move smoothly.
 
 ## Queue rules
 

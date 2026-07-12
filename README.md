@@ -21,11 +21,13 @@ Use **Reset Machine** between layout tests. Close the PowerShell window to stop 
 
 The separate `RUN-SHARED-DEV.ps1` script keeps the normal development workflow for later wallet and Yokefellow integration testing.
 
-## Hosted performance mode
+## Hosted motion model
 
-The hosted game now separates network smoothness from physics frequency. Server snapshots are linearly interpolated across the full interval instead of making the coins chase a new target six times per second. Coins that did not move are not rewritten to the GPU every frame.
+The hosted browser no longer tries to animate coins by chasing network transforms. That approach caused visible jumping and could make the pusher appear to miss the pile.
 
-The Vercel build also uses a lower-cost visual path: one instanced coin mesh, one instanced peg mesh, no dynamic shadow pass, no transmission shaders, fewer real-time lights, reduced anisotropy, and adaptive resolution capped below full device pixel density. Railway runs the authoritative machine at 45 physics steps per second with five solver iterations; the pusher, scoring, persistence, and queue remain server-owned.
+Railway still owns the official machine, turns, scores, queue, persistence, wallet identity, and Yokefellow settlement. The browser receives an authoritative checkpoint, builds a local visual copy of the same Cannon machine, and runs real coin collisions and pusher contact between checkpoints. Railway sends two compact checkpoints per second for reconciliation rather than attempting to stream every physics frame.
+
+Normal movement is never position-extrapolated. Small differences are corrected with gentle velocity steering; exact position corrections happen when the machine is settled or after an impossible reconnect-scale divergence. The result keeps the shared-world authority while restoring actual physical pushing in the browser.
 
 ## Current build
 
@@ -177,7 +179,7 @@ Railway health reports `connections`, `streamConnections`, and `pollingClients` 
 
 ## Shared-world performance
 
-Hosted shared-world coins are rendered through one dynamic instanced mesh rather than one Three.js mesh per coin. Railway sends compact rounded transform arrays while full-precision confirmed-world saves remain unchanged. The renderer also adapts its pixel ratio under sustained frame pressure instead of forcing a high-resolution frame on every device.
+Hosted shared-world coins are rendered through one instanced mesh. The browser runs a real visual physics copy and Railway sends only compact authoritative checkpoints at up to two per second. Full-precision confirmed-world saves remain unchanged on the Railway volume. The renderer also adapts its pixel ratio under sustained frame pressure instead of forcing a high-resolution frame on every device.
 
 After deployment, `/api/health` includes:
 
@@ -197,14 +199,3 @@ The exact byte count changes as coins enter or leave the machine.
 ## CoinPusher 47 flat starting field
 
 The authoritative machine now starts with 135 non-overlapping coins in one flat layer. There are no starting towers or stacked side banks. This reduces physics load and lets pusher pressure travel through the bed more directly.
-
-## Predictive hosted renderer
-
-Hosted clients do not wait for each Railway transform before moving the machine. Railway sends authoritative transforms plus velocity for awake coins, and the browser predicts the short interval until the next correction. Sleeping coins stay fixed and cheap to render. The pusher uses authoritative pusher time for smooth local animation.
-
-Recommended Railway values:
-
-```dotenv
-YES_PUSHER_TICK_RATE=30
-YES_PUSHER_BROADCAST_RATE=6
-```

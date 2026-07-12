@@ -57,12 +57,12 @@ test('transport snapshot packs and rounds coin transforms', () => {
   const rich = engine.getNetworkSnapshot();
   const packed = engine.getNetworkSnapshot({ packed: true });
 
-  assert.equal(packed.coinEncoding, 'id-position-quaternion-velocity-v2');
+  assert.equal(packed.coinEncoding, 'id-position-quaternion-sleep-phase-velocity-v3');
   assert.equal(packed.coins.length, rich.coins.length);
-  assert.ok([9, 15].includes(packed.coins[0].length));
+  assert.ok(packed.coins[0].length >= 10);
   assert.equal(packed.coins[0][0], rich.coins[0].id);
   assert.ok(
-    Buffer.byteLength(JSON.stringify(packed)) < Buffer.byteLength(JSON.stringify(rich)) * 0.62,
-    'packed snapshots should remain substantially smaller than object snapshots',
+    Buffer.byteLength(JSON.stringify(packed)) < Buffer.byteLength(JSON.stringify(rich)) * 0.45,
+    'packed snapshots should be less than 45% of the previous payload',
   );
 });

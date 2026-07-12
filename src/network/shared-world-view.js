@@ -1,14 +1,14 @@
 import * as THREE from 'three';
+import * as CANNON from 'cannon-es';
 import { CONFIG } from '../config/machine-config.js';
+import { WorldEngine } from '../game/world-engine.js';
 
 const INITIAL_CAPACITY = 256;
-const DEFAULT_SNAPSHOT_SECONDS = 1 / 6;
-const MIN_INTERPOLATION_SECONDS = 0.055;
-const MAX_INTERPOLATION_SECONDS = 0.18;
-const MAX_PREDICTION_SECONDS = 0.22;
-const POSITION_EPSILON_SQ = 0.000025;
-const QUATERNION_EPSILON = 0.00035;
-const VELOCITY_EPSILON_SQ = 0.0004;
+const EXTREME_DRIFT_DISTANCE_SQ = 3.2 * 3.2;
+const ACTIVE_STEER_DISTANCE_SQ = 0.55 * 0.55;
+const READY_SNAP_DISTANCE_SQ = 0.12 * 0.12;
+const MISSING_SNAPSHOT_GRACE = 4;
+const MAX_STEER_SPEED = 0.16;
 
 function nextCapacity(required) {
   let capacity = INITIAL_CAPACITY;
@@ -20,25 +20,39 @@ function clamp(value, minimum, maximum) {
   return Math.max(minimum, Math.min(maximum, value));
 }
 
-function unpackCoinState(raw) {
+function phaseFromCode(code, position = null) {
+  if (code === 1 || code === 'peg') return 'peg';
+  if (code === 2 || code === 'transfer') return 'transfer';
+  if (code === 0 || code === 'board') return 'board';
+  if (position && position[1] > CONFIG.peg.exitY - 0.2 && Math.abs(position[2] - CONFIG.peg.z) < 0.85) return 'peg';
+  return 'board';
+}
+
+export function unpackCoinState(raw) {
   if (Array.isArray(raw)) {
     if (
       raw.length < 8
       || typeof raw[0] !== 'string'
       || !raw.slice(1, 8).every(Number.isFinite)
     ) return null;
-    const v2 = raw.length >= 9 && (raw[8] === 0 || raw[8] === 1);
-    const sleeping = v2 ? raw[8] === 1 : false;
+
+    const position = raw.slice(1, 4);
+    const sleeping = raw.length >= 9 && raw[8] === 1;
+    const hasV3Phase = raw.length >= 10 && Number.isInteger(raw[9]) && raw[9] >= 0 && raw[9] <= 2;
+    const phase = phaseFromCode(hasV3Phase ? raw[9] : null, position);
+    const velocityStart = hasV3Phase ? 10 : 9;
+
     return {
       id: raw[0],
-      position: raw.slice(1, 4),
+      position,
       quaternion: raw.slice(4, 8),
       sleeping,
-      velocity: !sleeping && raw.length >= 12 && raw.slice(9, 12).every(Number.isFinite)
-        ? raw.slice(9, 12)
+      phase,
+      velocity: !sleeping && raw.length >= velocityStart + 3 && raw.slice(velocityStart, velocityStart + 3).every(Number.isFinite)
+        ? raw.slice(velocityStart, velocityStart + 3)
         : [0, 0, 0],
-      angularVelocity: !sleeping && raw.length >= 15 && raw.slice(12, 15).every(Number.isFinite)
-        ? raw.slice(12, 15)
+      angularVelocity: !sleeping && raw.length >= velocityStart + 6 && raw.slice(velocityStart + 3, velocityStart + 6).every(Number.isFinite)
+        ? raw.slice(velocityStart + 3, velocityStart + 6)
         : [0, 0, 0],
     };
   }
@@ -58,26 +72,45 @@ function unpackCoinState(raw) {
     position: raw.position,
     quaternion: raw.quaternion,
     sleeping: Boolean(raw.sleeping),
-    velocity: Array.isArray(raw.velocity) && raw.velocity.length === 3
+    phase: phaseFromCode(raw.phase, raw.position),
+    velocity: Array.isArray(raw.velocity) && raw.velocity.length === 3 && raw.velocity.every(Number.isFinite)
       ? raw.velocity
       : [0, 0, 0],
-    angularVelocity: Array.isArray(raw.angularVelocity) && raw.angularVelocity.length === 3
+    angularVelocity: Array.isArray(raw.angularVelocity) && raw.angularVelocity.length === 3 && raw.angularVelocity.every(Number.isFinite)
       ? raw.angularVelocity
       : [0, 0, 0],
   };
 }
 
-function pusherZAtTime(timeSeconds) {
-  const t = ((timeSeconds % CONFIG.pusher.period) + CONFIG.pusher.period) % CONFIG.pusher.period
-    / CONFIG.pusher.period;
-  let progress;
-  if (t < 0.43) progress = t / 0.43;
-  else if (t < 0.52) progress = 1;
-  else if (t < 0.92) {
-    const u = (t - 0.52) / 0.40;
-    progress = 1 - u * u * (3 - 2 * u);
-  } else progress = 0;
-  return THREE.MathUtils.lerp(CONFIG.pusher.rearZ, CONFIG.pusher.frontZ, progress);
+function wrappedTimeDifference(target, current, period) {
+  if (!Number.isFinite(target) || !Number.isFinite(current) || !Number.isFinite(period) || period <= 0) return 0;
+  let difference = (target - current) % period;
+  if (difference > period / 2) difference -= period;
+  if (difference < -period / 2) difference += period;
+  return difference;
+}
+
+function configureCoinPhase(coin, requestedPhase) {
+  const phase = requestedPhase === 'peg' ? 'peg' : 'board';
+  const body = coin.body;
+  coin.phase = phase;
+  coin.transfer = null;
+
+  if (phase === 'peg') {
+    body.allowSleep = false;
+    body.collisionResponse = true;
+    body.linearDamping = 0.018;
+    body.angularDamping = 0.035;
+    body.linearFactor.set(1, 1, 0);
+    body.angularFactor.set(0, 0, 1);
+  } else {
+    body.allowSleep = true;
+    body.collisionResponse = true;
+    body.linearDamping = 0.12;
+    body.angularDamping = 0.26;
+    body.linearFactor.set(1, 1, 1);
+    body.angularFactor.set(0.22, 1, 0.22);
+  }
 }
 
 export class SharedWorldView {
@@ -86,33 +119,30 @@ export class SharedWorldView {
     this.coinGeometry = coinGeometry;
     this.coinMaterials = coinMaterials;
     this.pusherMesh = pusherMesh;
+    this.engine = new WorldEngine({
+      seed: 0x59455350,
+      seedMachine: false,
+      onEvent: () => {},
+    });
     this.coins = new Map();
     this.order = [];
     this.capacity = INITIAL_CAPACITY;
-    this.lastServerTime = null;
     this.hasSnapshot = false;
-    this.interpolationSeconds = DEFAULT_SNAPSHOT_SECONDS;
-    this.pusherStartZ = pusherMesh?.position.z ?? CONFIG.pusher.rearZ;
-    this.pusherTargetZ = CONFIG.pusher.rearZ;
-    this.pusherElapsed = 0;
-    this.pusherDuration = DEFAULT_SNAPSHOT_SECONDS;
-    this.pusherTimeBase = null;
-    this.pusherReceivedAt = 0;
+    this.lastRevision = 0;
+    this.turnState = 'ready';
     this.matrixObject = new THREE.Object3D();
-    this.rotationAxis = new THREE.Vector3();
-    this.rotationDelta = new THREE.Quaternion();
     this.instanceMesh = this.createInstanceMesh(this.capacity);
     this.scene.add(this.instanceMesh);
   }
 
   createInstanceMesh(capacity) {
     const mesh = new THREE.InstancedMesh(this.coinGeometry, this.coinMaterials, capacity);
-    mesh.instanceMatrix.setUsage(THREE.StreamDrawUsage);
+    mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     mesh.castShadow = false;
     mesh.receiveShadow = false;
     mesh.frustumCulled = false;
     mesh.count = 0;
-    mesh.name = 'shared-world-coins';
+    mesh.name = 'shared-world-coins-local-physics';
     return mesh;
   }
 
@@ -127,171 +157,192 @@ export class SharedWorldView {
     this.scene.add(replacement);
   }
 
-  calculateInterpolationSeconds(snapshot) {
-    const serverTime = Number(snapshot?.serverTime);
-    let interval = DEFAULT_SNAPSHOT_SECONDS;
-    if (Number.isFinite(serverTime) && Number.isFinite(this.lastServerTime)) {
-      const measured = (serverTime - this.lastServerTime) / 1000;
-      if (measured > 0 && measured < 2) interval = measured;
-    }
-    if (Number.isFinite(serverTime)) this.lastServerTime = serverTime;
-    this.interpolationSeconds = clamp(interval * 0.82, MIN_INTERPOLATION_SECONDS, MAX_INTERPOLATION_SECONDS);
-    return this.interpolationSeconds;
+  writeMatrix(index, coin) {
+    const body = coin.body;
+    this.matrixObject.position.set(body.position.x, body.position.y, body.position.z);
+    this.matrixObject.quaternion.set(body.quaternion.x, body.quaternion.y, body.quaternion.z, body.quaternion.w);
+    this.matrixObject.scale.set(1, 1, 1);
+    this.matrixObject.updateMatrix();
+    this.instanceMesh.setMatrixAt(index, this.matrixObject.matrix);
   }
 
-  writeMatrix(index, item) {
-    const matrixObject = this.matrixObject;
-    matrixObject.position.copy(item.position);
-    matrixObject.quaternion.copy(item.quaternion);
-    matrixObject.scale.set(1, 1, 1);
-    matrixObject.updateMatrix();
-    this.instanceMesh.setMatrixAt(index, matrixObject.matrix);
-  }
-
-  rebuildMatrices() {
-    for (let index = 0; index < this.order.length; index += 1) this.writeMatrix(index, this.order[index]);
+  rebuildOrder() {
+    this.order = this.engine.coins.filter((coin) => coin.body.world);
+    this.coins = new Map(this.order.map((coin) => [coin.id, coin]));
+    this.ensureCapacity(this.order.length);
     this.instanceMesh.count = this.order.length;
-    this.instanceMesh.instanceMatrix.needsUpdate = true;
+  }
+
+  createCoinFromState(state) {
+    const requestedPhase = state.phase === 'peg' ? 'peg' : 'board';
+    const coin = this.engine.createCoin({
+      x: state.position[0],
+      y: state.position[1],
+      z: state.position[2],
+      flat: requestedPhase !== 'peg',
+      rotationY: 0,
+      phase: requestedPhase,
+      id: state.id,
+      startAsleep: false,
+    });
+    configureCoinPhase(coin, requestedPhase);
+    this.applyStateDirectly(coin, state);
+    coin.missingSnapshots = 0;
+    return coin;
+  }
+
+  applyStateDirectly(coin, state) {
+    const body = coin.body;
+    const requestedPhase = state.phase === 'peg' ? 'peg' : 'board';
+    if (coin.phase !== requestedPhase) configureCoinPhase(coin, requestedPhase);
+    body.position.set(...state.position);
+    body.quaternion.set(...state.quaternion);
+    body.velocity.set(...state.velocity);
+    body.angularVelocity.set(...state.angularVelocity);
+    body.aabbNeedsUpdate = true;
+    if (state.sleeping && requestedPhase === 'board') body.sleep();
+    else body.wakeUp();
+  }
+
+  softlySteerCoin(coin, state) {
+    const body = coin.body;
+    const dx = state.position[0] - body.position.x;
+    const dy = state.position[1] - body.position.y;
+    const dz = state.position[2] - body.position.z;
+    body.velocity.x += clamp(dx * 0.10, -MAX_STEER_SPEED, MAX_STEER_SPEED);
+    body.velocity.z += clamp(dz * 0.10, -MAX_STEER_SPEED, MAX_STEER_SPEED);
+    body.velocity.y += clamp(dy * 0.04, -0.05, 0.05);
+    body.wakeUp();
+  }
+
+  reconcileCoin(coin, state, { initial = false, ready = false } = {}) {
+    const body = coin.body;
+    const requestedPhase = state.phase === 'peg' ? 'peg' : 'board';
+    const dx = state.position[0] - body.position.x;
+    const dy = state.position[1] - body.position.y;
+    const dz = state.position[2] - body.position.z;
+    const distanceSq = dx * dx + dy * dy + dz * dz;
+
+    if (initial) {
+      this.applyStateDirectly(coin, state);
+      return;
+    }
+
+    if (requestedPhase === 'peg' && coin.phase !== 'peg') {
+      this.applyStateDirectly(coin, state);
+      return;
+    }
+
+    if (ready && state.sleeping && distanceSq > READY_SNAP_DISTANCE_SQ) {
+      this.applyStateDirectly(coin, state);
+      return;
+    }
+
+    if (ready && distanceSq > 0.65 * 0.65) {
+      this.applyStateDirectly(coin, state);
+      return;
+    }
+
+    if (distanceSq > EXTREME_DRIFT_DISTANCE_SQ) {
+      // A reconnect or a locally retired payout can leave a body several machine
+      // widths away. Correct only those impossible divergences; normal motion is
+      // never position-extrapolated or snapped between network frames.
+      this.applyStateDirectly(coin, state);
+      return;
+    }
+
+    if (!ready && distanceSq > ACTIVE_STEER_DISTANCE_SQ) this.softlySteerCoin(coin, state);
+  }
+
+  syncPusher(snapshot, initial = false) {
+    const serverTime = Number(snapshot?.serverTime);
+    const snapshotAge = Number.isFinite(serverTime)
+      ? clamp((Date.now() - serverTime) / 1000, 0, 0.5)
+      : 0;
+    const targetTime = Number.isFinite(snapshot?.pusherTime)
+      ? Number(snapshot.pusherTime) + snapshotAge
+      : null;
+
+    if (targetTime === null) return;
+    if (initial) {
+      this.engine.pusherTime = targetTime;
+      this.engine.updatePusher(0.0001);
+      return;
+    }
+
+    const difference = wrappedTimeDifference(targetTime, this.engine.pusherTime, CONFIG.pusher.period);
+    if (Math.abs(difference) > 1.15) this.engine.pusherTime += difference;
+    else this.engine.pusherTime += difference * 0.16;
   }
 
   applySnapshot(snapshot) {
-    const duration = this.calculateInterpolationSeconds(snapshot);
-    const serverTime = Number(snapshot?.serverTime);
-    const ageSeconds = Number.isFinite(serverTime)
-      ? clamp((Date.now() - serverTime) / 1000, 0, MAX_PREDICTION_SECONDS)
-      : 0;
-
-    if (Number.isFinite(snapshot?.pusherTime)) {
-      this.pusherTimeBase = Number(snapshot.pusherTime) + ageSeconds;
-      this.pusherReceivedAt = performance.now();
-      if (!this.hasSnapshot && this.pusherMesh) this.pusherMesh.position.z = pusherZAtTime(this.pusherTimeBase);
-    } else {
-      const nextPusherZ = Number.isFinite(snapshot?.pusherZ) ? snapshot.pusherZ : CONFIG.pusher.rearZ;
-      if (!this.hasSnapshot && this.pusherMesh) this.pusherMesh.position.z = nextPusherZ;
-      this.pusherStartZ = this.pusherMesh?.position.z ?? nextPusherZ;
-      this.pusherTargetZ = nextPusherZ;
-      this.pusherElapsed = this.hasSnapshot ? 0 : duration;
-      this.pusherDuration = duration;
-    }
+    if (!snapshot || !Array.isArray(snapshot.coins)) return;
+    const initial = !this.hasSnapshot;
+    const ready = (snapshot.turn?.state ?? 'ready') === 'ready';
+    this.turnState = snapshot.turn?.state ?? this.turnState;
+    this.lastRevision = Number(snapshot.revision) || this.lastRevision;
+    this.syncPusher(snapshot, initial);
 
     const present = new Set();
     let membershipChanged = false;
 
-    for (const raw of snapshot.coins ?? []) {
+    for (const raw of snapshot.coins) {
       const state = unpackCoinState(raw);
       if (!state) continue;
       present.add(state.id);
 
-      let item = this.coins.get(state.id);
-      const serverPosition = new THREE.Vector3(...state.position);
-      const serverQuaternion = new THREE.Quaternion(...state.quaternion);
-      const velocity = new THREE.Vector3(...state.velocity);
-      const angularVelocity = new THREE.Vector3(...state.angularVelocity);
-      if (!state.sleeping && ageSeconds > 0) serverPosition.addScaledVector(velocity, ageSeconds);
-
-      if (!item) {
-        item = {
-          id: state.id,
-          position: serverPosition.clone(),
-          quaternion: serverQuaternion.clone(),
-          startPosition: serverPosition.clone(),
-          startQuaternion: serverQuaternion.clone(),
-          targetPosition: serverPosition.clone(),
-          targetQuaternion: serverQuaternion.clone(),
-          velocity,
-          angularVelocity,
-          sleeping: state.sleeping,
-          elapsed: duration,
-          duration,
-          correcting: false,
-        };
-        this.coins.set(state.id, item);
+      let coin = this.coins.get(state.id) ?? this.engine.coinById.get(state.id);
+      if (!coin) {
+        // Do not resurrect a payout that the server is already showing below the
+        // collection area while two snapshots cross in flight.
+        if (state.position[1] < -2.8 || state.position[2] > CONFIG.board.front + 3.0) continue;
+        coin = this.createCoinFromState(state);
         membershipChanged = true;
       } else {
-        item.startPosition.copy(item.position);
-        item.startQuaternion.copy(item.quaternion);
-        item.targetPosition.copy(serverPosition);
-        item.targetQuaternion.copy(serverQuaternion);
-        item.velocity.copy(velocity);
-        item.angularVelocity.copy(angularVelocity);
-        item.sleeping = state.sleeping;
-        item.elapsed = 0;
-        item.duration = duration;
-        const positionChanged = item.startPosition.distanceToSquared(item.targetPosition) > POSITION_EPSILON_SQ;
-        const quaternionChanged = 1 - Math.abs(item.startQuaternion.dot(item.targetQuaternion)) > QUATERNION_EPSILON;
-        item.correcting = positionChanged || quaternionChanged;
-        if (!item.correcting) {
-          item.position.copy(item.targetPosition);
-          item.quaternion.copy(item.targetQuaternion);
-        }
+        coin.missingSnapshots = 0;
+        this.reconcileCoin(coin, state, { initial, ready });
       }
     }
 
-    for (const id of [...this.coins.keys()]) {
-      if (present.has(id)) continue;
-      this.coins.delete(id);
-      membershipChanged = true;
+    for (const coin of [...this.engine.coins]) {
+      if (present.has(coin.id)) continue;
+      coin.missingSnapshots = (coin.missingSnapshots ?? 0) + 1;
+      if (ready || coin.missingSnapshots >= MISSING_SNAPSHOT_GRACE || !coin.body.world) {
+        this.engine.removeCoin(coin);
+        membershipChanged = true;
+      }
     }
 
-    if (membershipChanged) {
-      this.order = [...this.coins.values()];
-      this.ensureCapacity(this.order.length);
-      this.rebuildMatrices();
-    }
+    if (membershipChanged || initial) this.rebuildOrder();
     this.hasSnapshot = true;
   }
 
-  integrateRotation(item, dt) {
-    const speed = item.angularVelocity.length();
-    if (speed < 0.0001) return;
-    this.rotationAxis.copy(item.angularVelocity).multiplyScalar(1 / speed);
-    this.rotationDelta.setFromAxisAngle(this.rotationAxis, Math.min(speed * dt, 0.35));
-    item.quaternion.multiply(this.rotationDelta).normalize();
-  }
-
   update(dt) {
-    const safeDt = Math.max(0, Math.min(Number(dt) || 0, 0.08));
-    let matrixDirty = false;
+    if (!this.hasSnapshot) return;
+    const safeDt = clamp(Number(dt) || 0, 0, 0.05);
+    this.engine.advance(safeDt);
 
-    for (let index = 0; index < this.order.length; index += 1) {
-      const item = this.order[index];
-      let changed = false;
-      if (item.correcting) {
-        item.elapsed = Math.min(item.duration, item.elapsed + safeDt);
-        const raw = item.duration > 0 ? item.elapsed / item.duration : 1;
-        const alpha = raw * raw * (3 - 2 * raw);
-        item.position.lerpVectors(item.startPosition, item.targetPosition, alpha);
-        item.quaternion.slerpQuaternions(item.startQuaternion, item.targetQuaternion, alpha);
-        item.correcting = raw < 1;
-        changed = true;
-      } else if (!item.sleeping && item.velocity.lengthSq() > VELOCITY_EPSILON_SQ) {
-        item.position.addScaledVector(item.velocity, safeDt);
-        this.integrateRotation(item, safeDt);
-        changed = true;
-      }
-      if (!changed) continue;
-      this.writeMatrix(index, item);
-      matrixDirty = true;
+    let membershipChanged = false;
+    for (const coin of [...this.order]) {
+      if (coin.body.world) continue;
+      this.coins.delete(coin.id);
+      membershipChanged = true;
     }
+    if (membershipChanged) this.rebuildOrder();
 
-    if (matrixDirty) this.instanceMesh.instanceMatrix.needsUpdate = true;
+    for (let index = 0; index < this.order.length; index += 1) this.writeMatrix(index, this.order[index]);
+    this.instanceMesh.count = this.order.length;
+    this.instanceMesh.instanceMatrix.needsUpdate = true;
 
-    if (this.pusherMesh) {
-      if (Number.isFinite(this.pusherTimeBase)) {
-        const elapsed = Math.min((performance.now() - this.pusherReceivedAt) / 1000, 0.45);
-        this.pusherMesh.position.z = pusherZAtTime(this.pusherTimeBase + elapsed);
-      } else {
-        this.pusherElapsed = Math.min(this.pusherDuration, this.pusherElapsed + safeDt);
-        const alpha = this.pusherDuration > 0 ? this.pusherElapsed / this.pusherDuration : 1;
-        this.pusherMesh.position.z = THREE.MathUtils.lerp(this.pusherStartZ, this.pusherTargetZ, alpha);
-      }
-    }
+    if (this.pusherMesh) this.pusherMesh.position.z = this.engine.pusher.z;
   }
 
   clear() {
+    this.engine.clearCoins();
     this.coins.clear();
     this.order = [];
     this.instanceMesh.count = 0;
     this.instanceMesh.instanceMatrix.needsUpdate = true;
+    this.hasSnapshot = false;
   }
 }
