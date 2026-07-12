@@ -73,7 +73,6 @@ button { font: inherit; }
 .primary-button:disabled { opacity:.45; cursor:not-allowed; }
 .secondary-button { height:43px; padding:0 13px; border-radius:12px; font-size:10px; font-weight:800; letter-spacing:.07em; }
 .secondary-button.danger { color:#ffabb3; border-color:rgba(255,102,119,.25); }
-.hint { position:fixed; z-index:4; left:50%; bottom:122px; transform:translateX(-50%); color:#8093b0; font-size:10px; letter-spacing:.06em; text-align:center; pointer-events:none; }
 .loading-screen { position:fixed; z-index:20; inset:0; background:#050813; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:18px; letter-spacing:.15em; font-size:12px; transition:opacity .45s ease; }
 .loading-screen.hidden { opacity:0; pointer-events:none; }
 .loader { width:46px; height:46px; border-radius:50%; border:2px solid rgba(88,229,255,.15); border-top-color:var(--cyan); animation:spin 1s linear infinite; }
@@ -83,7 +82,6 @@ button { font: inherit; }
   .player-card { display:none; }
   .score-card { top:88px; }
   .controls { flex-wrap:wrap; justify-content:center; }
-  .hint { display:none; }
 }
 
 .player-metrics {

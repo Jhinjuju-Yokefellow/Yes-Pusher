@@ -16,6 +16,7 @@ import { createPusher as buildPusher } from './machine/pusher.js';
 import { SharedWorldClient } from './network/shared-world-client.js';
 import { SharedWorldView } from './network/shared-world-view.js';
 import { WalletAuthClient } from './network/wallet-auth-client.js';
+import { formatTurnSeconds } from './ui/turn-timer.js';
 import { WORLD_SERVER_IS_REMOTE, WORLD_SERVER_ORIGIN } from './network/world-server-url.js';
 
 
@@ -628,7 +629,7 @@ function renderSharedSnapshot(snapshot) {
     : `${turn?.milestoneProgress ?? 0} / ${turn?.milestoneEvery ?? 50}`;
   coinCountEl.textContent = String(snapshot.coinCount ?? snapshot.coins?.length ?? 0);
 
-  if ([TURN_STATES.DROPPING, TURN_STATES.WAITING, TURN_STATES.ACTIVE].includes(turn?.state)) turnTimerEl.textContent = Number(turn.activeSecondsRemaining ?? 0).toFixed(1);
+  if ([TURN_STATES.DROPPING, TURN_STATES.WAITING, TURN_STATES.ACTIVE].includes(turn?.state)) turnTimerEl.textContent = formatTurnSeconds(turn.activeSecondsRemaining);
   else if (turn?.state === TURN_STATES.FINISHING) turnTimerEl.textContent = 'CYCLE';
   else if (turn?.state === TURN_STATES.SETTLING) turnTimerEl.textContent = 'SETTLE';
   else turnTimerEl.textContent = '—';
@@ -847,7 +848,7 @@ function renderTurnSnapshot(snapshot, reason) {
     ? `${snapshot.pendingSkinMilestones} PENDING`
     : `${snapshot.milestoneProgress} / ${snapshot.milestoneEvery}`;
 
-  if([TURN_STATES.DROPPING,TURN_STATES.WAITING,TURN_STATES.ACTIVE].includes(snapshot.state)) turnTimerEl.textContent=snapshot.activeSecondsRemaining.toFixed(1);
+  if([TURN_STATES.DROPPING,TURN_STATES.WAITING,TURN_STATES.ACTIVE].includes(snapshot.state)) turnTimerEl.textContent=formatTurnSeconds(snapshot.activeSecondsRemaining);
   else if(snapshot.state===TURN_STATES.FINISHING) turnTimerEl.textContent='CYCLE';
   else if(snapshot.state===TURN_STATES.SETTLING) turnTimerEl.textContent='SETTLE';
   else turnTimerEl.textContent='—';
@@ -1183,18 +1184,6 @@ function assistForwardPressure(dt) {
     if(item.phase!=='board' || !item.body.world) continue;
     const b=item.body;
 
-    if(!item.tower && Math.abs(b.position.x)>3.55 &&
-       b.position.y<boardTopY+.20 && b.position.y>boardTopY-.12 &&
-       b.position.z>CONFIG.board.front-1.15 &&
-       b.position.z<CONFIG.board.front+CONFIG.coin.radius) {
-      const edgeDepth=Math.max(0,Math.min(1,
-        (b.position.z-(CONFIG.board.front-1.15))/1.15,
-      ));
-      b.position.z+=(.00031+edgeDepth*.00019)*(dt/(1/60));
-      b.aabbNeedsUpdate=true;
-      if(b.position.z>CONFIG.board.front-.08) b.wakeUp();
-    }
-
     if(Math.abs(b.position.x)>=CONFIG.pusher.width/2+CONFIG.coin.radius ||
        b.position.y>=boardTopY+.34 || b.position.y<=boardTopY-.12 ||
        b.position.z<=frontEdge-CONFIG.coin.radius*.85 || b.position.z>=frontEdge+1.05) continue;
@@ -1228,19 +1217,19 @@ function checkScoring() {
   // Register a payout when a coin has actually begun falling across the front
   // edge. The previous trigger sat half a unit beyond the board and below the
   // cabinet, so coins could visibly fall into the gap without ever being counted.
+  const frontReleaseZ=CONFIG.board.front-.025;
   const frontDropStartZ=CONFIG.board.front-CONFIG.coin.radius*.55;
   const frontDropY=coinRestY-.035;
-  const frontSpan=CONFIG.board.width/2-.18;
+  const frontSpan=CONFIG.board.width/2+CONFIG.coin.radius*.20;
 
   let removedAny=false;
   for(const item of [...coinObjects]) {
     const p=item.body.position;
+    const crossedFrontEdge=item.phase==='board' &&
+      Math.abs(p.x)<=frontSpan &&
+      (p.z>=frontReleaseZ || (p.z>frontDropStartZ && p.y<frontDropY));
 
-    if(!item.scored &&
-       item.phase==='board' &&
-       Math.abs(p.x)<frontSpan &&
-       p.z>frontDropStartZ &&
-       p.y<frontDropY) {
+    if(!item.scored && crossedFrontEdge) {
       item.scored=true;
       turnController.recordPayout(1);
 
@@ -1356,9 +1345,10 @@ function animate(now=performance.now()) {
     assistForwardPressure(dt);
     updatePegCoins(dt);
     stabilizeBoardCoins(dt);
-    updateTurn(dt);
     syncObjects();
+    // Count a front exit before the final settle frame can close the turn.
     checkScoring();
+    updateTurn(dt);
     updateConfirmedAutosave(dt);
   }
   controls.update();

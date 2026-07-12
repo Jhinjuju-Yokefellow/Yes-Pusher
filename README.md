@@ -216,3 +216,7 @@ The starting machine contains 121 unstacked coins. A localized pressure aid keep
   }
 }
 ```
+
+## CoinPusher 53
+
+Front payout exits now count at the authoritative release edge across the full playable width, including exits on the last settlement frame. The timer displays whole seconds, the bottom instructional hint has been removed, and the artificial payout-edge boost has been removed while retaining pressure directly ahead of the physical pusher.

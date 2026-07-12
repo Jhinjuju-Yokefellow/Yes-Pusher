@@ -30,7 +30,8 @@ Run this checklist before accepting any future patch.
 
 ## Scoring
 
-- [ ] A front-edge coin increments the score exactly once.
+- [ ] A front-edge coin increments the score exactly once, including at the outer front corners.
+- [ ] A coin crossing the front edge on the final settlement frame is still counted.
 - [ ] The falling payout remains visible in front of the cabinet banner.
 - [ ] A side-drain coin does not increment the score.
 - [ ] Removed coins reduce the machine coin count.
@@ -48,6 +49,7 @@ Run this checklist before accepting any future patch.
 - [ ] Current-turn score begins at zero.
 - [ ] Payouts during insertion belong to the active turn.
 - [ ] The 30-second timer starts immediately when the player confirms the turn.
+- [ ] The visible countdown uses whole seconds only.
 - [ ] Timer expiry waits for the current pusher cycle boundary.
 - [ ] Final falling coins are counted during settlement.
 - [ ] The result card matches the current-turn score.

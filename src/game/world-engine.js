@@ -309,6 +309,7 @@ export class WorldEngine {
     const body = coin.body;
     const yaw = quaternionYaw(body.quaternion);
     coin.planar = true;
+    coin.frontExit = false;
     body.allowSleep = true;
     body.collisionResponse = true;
     body.collisionFilterMask = GROUP_COIN | GROUP_PUSHER | GROUP_BOARD | GROUP_WALL;
@@ -400,6 +401,7 @@ export class WorldEngine {
       scored: false,
       slotIndex: null,
       planar: false,
+      frontExit: false,
     };
     this.coins.push(coin);
     this.coinById.set(coin.id, coin);
@@ -707,31 +709,9 @@ export class WorldEngine {
       const body = coin.body;
 
       if (coin.planar) {
-        if (
-          body.position.z > CONFIG.board.front - 0.95
-          && body.position.z < CONFIG.board.front + CONFIG.coin.radius
-        ) {
-          const edgeDepth = Math.max(0, Math.min(1,
-            (body.position.z - (CONFIG.board.front - 0.95)) / 0.95,
-          ));
-          const sideWeight = 0.32 + 0.68 * Math.pow(
-            Math.min(1, Math.abs(body.position.x) / 5.2),
-            1.35,
-          );
-          const pressureAdvance = (0.00066 + edgeDepth * 0.00038)
-            * sideWeight
-            * strokeStrength
-            * (dt / FIXED_STEP);
-          body.position.z += pressureAdvance;
-          body.aabbNeedsUpdate = true;
-
-          const edgeTargetSpeed = strokeStrength * (0.055 + edgeDepth * 0.075);
-          if (body.velocity.z < edgeTargetSpeed) {
-            body.velocity.z = Math.min(edgeTargetSpeed, body.velocity.z + 0.48 * dt);
-            body.wakeUp();
-          }
-        }
-
+        // Keep only the pressure assist directly ahead of the physical pusher.
+        // There is no invisible boost at the payout edge; coins leave because
+        // pressure travels through the bed.
         const distance = body.position.z - frontEdge;
         if (
           distance < -CONFIG.coin.radius * 0.7
@@ -803,9 +783,13 @@ export class WorldEngine {
 
         const frontReleaseZ = CONFIG.board.front - 0.025;
         const sideHalfWidth = 5.50;
-        if (body.position.z >= frontReleaseZ || Math.abs(body.position.x) >= sideHalfWidth) {
+        const frontExit = body.position.z >= frontReleaseZ
+          && Math.abs(body.position.x) <= CONFIG.board.width / 2 + CONFIG.coin.radius * 0.20;
+        const sideExit = Math.abs(body.position.x) >= sideHalfWidth;
+        if (frontExit || sideExit) {
+          coin.frontExit = frontExit;
           this.configureFreeBoardCoin(coin, { falling: true });
-          body.velocity.z = Math.max(body.velocity.z, 0.13);
+          body.velocity.z = Math.max(body.velocity.z, frontExit ? 0.13 : body.velocity.z);
           body.velocity.y = Math.min(body.velocity.y, -0.08);
         }
         continue;
@@ -818,6 +802,7 @@ export class WorldEngine {
         && body.position.z >= CONFIG.board.front - 0.10
         && Math.abs(body.position.x) < 5.48
       ) {
+        coin.frontExit = true;
         this.configureFreeBoardCoin(coin, { falling: true });
         body.velocity.z = Math.max(body.velocity.z, 0.13);
         body.velocity.y = Math.min(body.velocity.y, -0.08);
@@ -845,19 +830,22 @@ export class WorldEngine {
   }
 
   checkScoring() {
+    const frontReleaseZ = CONFIG.board.front - 0.025;
     const frontDropStartZ = CONFIG.board.front - CONFIG.coin.radius * 0.55;
     const frontDropY = this.coinRestY - 0.035;
-    const frontSpan = CONFIG.board.width / 2 - 0.18;
+    const frontSpan = CONFIG.board.width / 2 + CONFIG.coin.radius * 0.20;
 
     for (const coin of [...this.coins]) {
       const position = coin.body.position;
-      if (
-        !coin.scored &&
-        coin.phase === 'board' &&
-        Math.abs(position.x) < frontSpan &&
-        position.z > frontDropStartZ &&
-        position.y < frontDropY
-      ) {
+      const crossedFrontEdge = coin.frontExit || (
+        coin.phase === 'board'
+        && Math.abs(position.x) <= frontSpan
+        && (
+          position.z >= frontReleaseZ
+          || (position.z > frontDropStartZ && position.y < frontDropY)
+        )
+      );
+      if (!coin.scored && crossedFrontEdge) {
         coin.scored = true;
         this.turnController.recordPayout(1);
         this.configureFreeBoardCoin(coin, { falling: true });
@@ -882,11 +870,13 @@ export class WorldEngine {
     this.assistForwardPressure(dt);
     this.updatePegCoins(dt);
     this.stabilizeBoardCoins(dt);
+    // Score exits before the turn controller can close the final settle frame.
+    // A coin crossing the front edge on that frame still belongs to the turn.
+    this.checkScoring();
     this.turnController.update(dt, {
       pusherTime: this.pusherTime,
       pusherPeriod: CONFIG.pusher.period,
     });
-    this.checkScoring();
   }
 
   advance(seconds) {
