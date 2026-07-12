@@ -172,3 +172,21 @@ The Railway health endpoint reports persistence details at `/api/health`.
 The browser prefers Railway's live event stream. If a browser, proxy, or background-tab policy closes that stream, the game automatically switches to authoritative `/api/world` polling. The UI shows `FALLBACK SYNC`, keeps the queue usable, and continues retrying the live stream. Returning to the tab forces an immediate snapshot refresh so the renderer catches up to Railway's current machine.
 
 Railway health reports `connections`, `streamConnections`, and `pollingClients` so the active transport is visible.
+
+## Shared-world performance
+
+Hosted shared-world coins are rendered through one dynamic instanced mesh rather than one Three.js mesh per coin. Railway sends compact rounded transform arrays while full-precision confirmed-world saves remain unchanged. The renderer also adapts its pixel ratio under sustained frame pressure instead of forcing a high-resolution frame on every device.
+
+After deployment, `/api/health` includes:
+
+```json
+{
+  "network": {
+    "coinEncoding": "id-position-quaternion-v1",
+    "snapshotBytes": 12091,
+    "physicsSolverIterations": 8
+  }
+}
+```
+
+The exact byte count changes as coins enter or leave the machine.

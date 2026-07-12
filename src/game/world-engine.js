@@ -27,6 +27,10 @@ function lerp(a, b, t) {
   return a + (b - a) * t;
 }
 
+function transportNumber(value) {
+  return Math.round(Number(value) * 10_000) / 10_000;
+}
+
 export class WorldEngine {
   constructor({
     seed = Date.now(),
@@ -79,7 +83,7 @@ export class WorldEngine {
       allowSleep: true,
     });
     world.broadphase = new CANNON.SAPBroadphase(world);
-    world.solver.iterations = 12;
+    world.solver.iterations = 8;
     world.solver.tolerance = 0.002;
     world.defaultContactMaterial.friction = 0.25;
     world.defaultContactMaterial.restitution = 0.02;
@@ -738,8 +742,20 @@ export class WorldEngine {
     if (steps >= 6) this.accumulator = 0;
   }
 
-  serializeCoin(coin, { compact = false } = {}) {
+  serializeCoin(coin, { compact = false, packed = false } = {}) {
     const body = coin.body;
+    if (packed) {
+      return [
+        coin.id,
+        transportNumber(body.position.x),
+        transportNumber(body.position.y),
+        transportNumber(body.position.z),
+        transportNumber(body.quaternion.x),
+        transportNumber(body.quaternion.y),
+        transportNumber(body.quaternion.z),
+        transportNumber(body.quaternion.w),
+      ];
+    }
     const base = {
       id: coin.id,
       tower: coin.tower,
@@ -763,13 +779,16 @@ export class WorldEngine {
     };
   }
 
-  getNetworkSnapshot() {
+  getNetworkSnapshot({ packed = false } = {}) {
     return {
-      pusherTime: this.pusherTime,
-      pusherZ: this.pusher.z,
+      pusherTime: packed ? transportNumber(this.pusherTime) : this.pusherTime,
+      pusherZ: packed ? transportNumber(this.pusher.z) : this.pusher.z,
       activeSlotIndex: this.activeSlotIndex,
       coinCount: this.coins.length,
-      coins: this.coins.map((coin) => this.serializeCoin(coin, { compact: true })),
+      coinEncoding: packed ? 'id-position-quaternion-v1' : 'object-v1',
+      coins: this.coins.map((coin) => this.serializeCoin(coin, packed
+        ? { packed: true }
+        : { compact: true })),
       turn: this.turnController.getSnapshot(),
     };
   }

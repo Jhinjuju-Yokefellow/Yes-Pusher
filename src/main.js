@@ -94,10 +94,15 @@ camera.position.set(0, 10.65, 18.35);
 const defaultCamera = { position: camera.position.clone(), target: new THREE.Vector3(0, 4.28, -0.72) };
 
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false, powerPreference: 'high-performance' });
-renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
+const MAX_RENDER_PIXEL_RATIO = 1.1;
+const MIN_RENDER_PIXEL_RATIO = 0.72;
+let renderPixelRatio = Math.min(devicePixelRatio || 1, MAX_RENDER_PIXEL_RATIO);
+let qualitySampleSeconds = 0;
+let qualitySampleFrames = 0;
+renderer.setPixelRatio(renderPixelRatio);
 renderer.setSize(innerWidth, innerHeight);
 renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.shadowMap.type = THREE.PCFShadowMap;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.22;
@@ -115,7 +120,7 @@ controls.maxAzimuthAngle = 0.34;
 
 const world = new CANNON.World({ gravity: new CANNON.Vec3(0, -9.82, 0), allowSleep: true });
 world.broadphase = new CANNON.SAPBroadphase(world);
-world.solver.iterations = 12;
+world.solver.iterations = 8;
 world.solver.tolerance = 0.002;
 world.defaultContactMaterial.friction = 0.25;
 world.defaultContactMaterial.restitution = 0.02;
@@ -157,7 +162,7 @@ async function loadTextures() {
   ]);
   for (const texture of [cabinet, pegboard, coinFront, coinBack]) {
     texture.colorSpace = THREE.SRGBColorSpace;
-    texture.anisotropy = renderer.capabilities.getMaxAnisotropy();
+    texture.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
   }
   return { cabinet, pegboard, coinFront, coinBack };
 }
@@ -1253,6 +1258,34 @@ function syncObjects() {
   for(const {mesh,body} of dynamicObjects) { mesh.position.copy(body.position); mesh.quaternion.copy(body.quaternion); }
 }
 
+function applyRenderSize() {
+  renderer.setPixelRatio(renderPixelRatio);
+  renderer.setSize(innerWidth, innerHeight, false);
+}
+
+function updateAdaptiveRenderQuality(dt) {
+  if (document.visibilityState === 'hidden' || dt <= 0) return;
+  qualitySampleSeconds += dt;
+  qualitySampleFrames += 1;
+  if (qualitySampleSeconds < 2.5) return;
+
+  const averageFrameSeconds = qualitySampleSeconds / Math.max(1, qualitySampleFrames);
+  const maximum = Math.min(devicePixelRatio || 1, MAX_RENDER_PIXEL_RATIO);
+  let next = renderPixelRatio;
+  if (averageFrameSeconds > 0.024 && renderPixelRatio > MIN_RENDER_PIXEL_RATIO) {
+    next = Math.max(MIN_RENDER_PIXEL_RATIO, renderPixelRatio - 0.1);
+  } else if (averageFrameSeconds < 0.0175 && renderPixelRatio < maximum) {
+    next = Math.min(maximum, renderPixelRatio + 0.05);
+  }
+
+  if (Math.abs(next - renderPixelRatio) > 0.001) {
+    renderPixelRatio = next;
+    applyRenderSize();
+  }
+  qualitySampleSeconds = 0;
+  qualitySampleFrames = 0;
+}
+
 async function init() {
   textures = await loadTextures();
   coinMats = [
@@ -1315,10 +1348,11 @@ function animate(now=performance.now()) {
     updateConfirmedAutosave(dt);
   }
   controls.update();
+  updateAdaptiveRenderQuality(dt);
   renderer.render(scene,camera);
 }
 
-addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight);renderer.setPixelRatio(Math.min(devicePixelRatio,1.5));});
+addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderPixelRatio=Math.min(renderPixelRatio,Math.min(devicePixelRatio||1,MAX_RENDER_PIXEL_RATIO));applyRenderSize();});
 addEventListener('pagehide',(event)=>{
   if(event.persisted) return;
   if(sharedMode) sharedClient?.close();

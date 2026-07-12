@@ -8,7 +8,7 @@ export function createSceneHelpers({ scene, world, materials }) {
     const key = new THREE.DirectionalLight(0xffffff, 2.7);
     key.position.set(2, 13, 10);
     key.castShadow = true;
-    key.shadow.mapSize.set(1536, 1536);
+    key.shadow.mapSize.set(1024, 1024);
     key.shadow.camera.left = -12;
     key.shadow.camera.right = 12;
     key.shadow.camera.top = 14;

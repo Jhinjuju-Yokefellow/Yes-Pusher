@@ -292,15 +292,14 @@ export async function createWorldServer({
     return anonymousIdentity(fallbackId, fallbackLabel);
   }
 
-  function publicSnapshot(playerId = null, identity = null) {
-    const world = engine.getNetworkSnapshot();
+  function publicSnapshot(playerId = null, identity = null, world = engine.getNetworkSnapshot({ packed: true })) {
     world.turn = progressStore.decorateTurnSnapshot(world.turn, playerId);
     const activePlayerId = queue.activeId();
     const player = playerId ? queue.getPlayer(playerId) : null;
     const position = playerId ? queue.positionOf(playerId) : null;
     return {
       kind: 'yes-pusher-shared-world',
-      protocolVersion: 1,
+      protocolVersion: 2,
       revision,
       serverTime: Date.now(),
       authoritative: true,
@@ -355,10 +354,11 @@ export async function createWorldServer({
   function broadcast() {
     queue.prune({ preserveActive: engine.turnController.getSnapshot().state !== TURN_STATES.READY });
     revision += 1;
+    const world = engine.getNetworkSnapshot({ packed: true });
     for (const [playerId, responses] of connections) {
       for (const response of responses) {
         const identity = connectionIdentities.get(response) ?? anonymousIdentity(playerId, queue.getPlayer(playerId)?.label ?? '');
-        const payload = publicSnapshot(playerId, identity);
+        const payload = publicSnapshot(playerId, identity, world);
         try {
           sendEvent(response, 'world', payload);
         } catch {
@@ -443,6 +443,7 @@ export async function createWorldServer({
     }
 
     if (request.method === 'GET' && pathname === '/api/health') {
+      const transportSnapshot = engine.getNetworkSnapshot({ packed: true });
       writeJson(response, 200, {
         ok: true,
         authoritative: true,
@@ -456,6 +457,11 @@ export async function createWorldServer({
         testMode,
         tickRate,
         broadcastRate,
+        network: {
+          coinEncoding: transportSnapshot.coinEncoding,
+          snapshotBytes: Buffer.byteLength(JSON.stringify(transportSnapshot)),
+          physicsSolverIterations: engine.world.solver.iterations,
+        },
         allowedOrigins: [...allowedOrigins],
         settlement: settlementStore.integrationStatus(),
         persistence: {

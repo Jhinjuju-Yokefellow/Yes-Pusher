@@ -51,3 +51,18 @@ test('front-bank pressure pays one coin once without lifting it', () => {
   assert.equal(turn.currentTurn.coinsWon, 1);
   assert.ok(maximumY < engine.boardTopY + 0.30);
 });
+
+test('transport snapshot packs and rounds coin transforms', () => {
+  const engine = new WorldEngine({ seed: 46 });
+  const rich = engine.getNetworkSnapshot();
+  const packed = engine.getNetworkSnapshot({ packed: true });
+
+  assert.equal(packed.coinEncoding, 'id-position-quaternion-v1');
+  assert.equal(packed.coins.length, rich.coins.length);
+  assert.equal(packed.coins[0].length, 8);
+  assert.equal(packed.coins[0][0], rich.coins[0].id);
+  assert.ok(
+    Buffer.byteLength(JSON.stringify(packed)) < Buffer.byteLength(JSON.stringify(rich)) * 0.45,
+    'packed snapshots should be less than 45% of the previous payload',
+  );
+});
