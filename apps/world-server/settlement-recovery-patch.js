@@ -73,6 +73,19 @@ patchPrototype(SettlementOutbox.prototype, 'process', (original) => async functi
   return reconcile(this) || changed;
 });
 
+patchPrototype(SettlementOutbox.prototype, 'submitCredit', (original) => async function patchedSubmitCredit(record, ...args) {
+  const changed = await original.call(this, record, ...args);
+  if (changed && record?.creditResponse?.granted === false) {
+    const message = record.creditResponse?.error?.message
+      || record.creditResponse?.error
+      || 'Yokefellow did not confirm the participant credit grant.';
+    record.creditStatus = 'failed';
+    record.creditError = String(message);
+    throw new Error(String(message));
+  }
+  return changed;
+});
+
 patchPrototype(WalletAuthStore.prototype, 'readRequest', (original) => function patchedReadRequest(...args) {
   registerAuth(this);
   return original.apply(this, args);
