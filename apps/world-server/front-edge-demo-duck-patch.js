@@ -45,12 +45,8 @@ export function seedFrontEdgeDemoDuck(engine) {
   const existing = engine.toyById?.get(FRONT_EDGE_DEMO_DUCK_ID);
   if (existing) return existing;
 
-  const activeToys = Array.isArray(engine.toys)
-    ? engine.toys.filter((toy) => toy?.body?.world && !toy.scored).length
-    : 0;
-  const configuredMaximum = Math.max(1, Math.floor(Number(process.env.YES_PUSHER_MAX_TOYS) || 8));
-  if (activeToys >= configuredMaximum) return null;
-
+  // This is a one-time operator demonstration, not a normal player toy spawn.
+  // It must still appear even when the persistent machine has reached its toy cap.
   const boardTopY = CONFIG.board.y + 0.42 / 2;
   return engine.createRubberDuckToy?.({
     id: FRONT_EDGE_DEMO_DUCK_ID,
