@@ -89,10 +89,11 @@ function installFrontEdgeDemoDuckPatch() {
 
     const index = testDuckIndex(id);
     const xPositions = [-2.15, 0, 2.15, -3.15, 3.15, 0.95];
+    const fallbackX = Number.isFinite(Number(options.x)) ? Number(options.x) : 0;
     const boardTopY = CONFIG.board.y + 0.42 / 2;
     const toy = createRubberDuckToy.call(this, {
       ...options,
-      x: xPositions[index - 1] ?? Number(options.x) || 0,
+      x: xPositions[index - 1] ?? fallbackX,
       y: boardTopY + 0.72,
       z: CONFIG.board.front - (0.82 + (index % 2) * 0.08),
       rotationY: Math.PI * (0.08 + index * 0.13),
