@@ -3,6 +3,11 @@ import assert from 'node:assert/strict';
 import { CONFIG } from '../src/config/machine-config.js';
 import { WorldEngine } from '../src/game/world-engine.js';
 import { simulateRecordedTurn } from '../src/game/replay-package.js';
+import {
+  optimizeRecordedReplayPhysics,
+  REPLAY_FREE_COIN_SEGMENTS,
+  REPLAY_SETTLED_COIN_SEGMENTS,
+} from '../src/game/replay-physics.js';
 
 test('authoritative replay records exact payout coin IDs and a final handoff world', async () => {
   const source = new WorldEngine({ seedMachine: false });
@@ -40,4 +45,21 @@ test('authoritative replay records exact payout coin IDs and a final handoff wor
   assert.equal(replay.frames.length > 100, true);
   assert.equal(replay.finalWorld.kind, 'yes-pusher-confirmed-world');
   assert.equal(replay.finalWorld.turnProgress.turnNumber, 2);
+});
+
+
+test('recorded replay uses lightweight settled collisions without changing free coins', () => {
+  const rawEngine = new WorldEngine({ seed: 1234 });
+  const free = rawEngine.createCoin({ phase: 'peg', flat: false, y: 8 });
+  const engine = optimizeRecordedReplayPhysics(rawEngine);
+  const settled = engine.coins.find((coin) => coin.planar);
+  assert.ok(settled);
+  assert.ok(free);
+  assert.equal(settled.replayCollisionSegments, REPLAY_SETTLED_COIN_SEGMENTS);
+  assert.equal(free.replayCollisionSegments, REPLAY_FREE_COIN_SEGMENTS);
+
+  engine.configureFreeBoardCoin(settled, { falling: true });
+  assert.equal(settled.replayCollisionSegments, REPLAY_FREE_COIN_SEGMENTS);
+  engine.configurePlanarBoardCoin(settled);
+  assert.equal(settled.replayCollisionSegments, REPLAY_SETTLED_COIN_SEGMENTS);
 });
