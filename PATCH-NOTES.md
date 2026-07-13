@@ -1,32 +1,21 @@
-# CoinPusher 57 — authoritative simulation and recorded replay
+# CoinPusher 58 — Unblock automatic queued turns
 
-## Replaced
+## Fixed
 
-- Removed the shared-mode browser physics simulation.
-- Removed the second, competing live Railway/browser result path.
-- Replaced seed-and-boundary reconstruction with one recorded authoritative replay.
+`Drop Coins` already placed the player into the server-owned queue and Railway already advanced queued turns automatically. The apparent turn-system stall was the authoritative preparation simulation becoming progressively more expensive as the persistent machine filled with settled coins.
 
-## Added
+- Recorded-turn preparation now uses a lightweight collision hull for settled flat board coins.
+- Falling, peg-field, transfer, and freely rolling coins keep the full collision hull.
+- Rendered coin geometry is unchanged.
+- The authoritative result, exact coin IDs, payout events, replay package, and final-state handoff remain unchanged.
+- Preparation yields back to the Railway server more frequently, keeping queue requests, world polling, SSE updates, and health checks responsive while the turn is simulated.
 
-- Visible `Preparing turn…` state while Railway simulates the complete turn in fast-forward.
-- Replay packages stored under `/data/replays/<turn-id>.json`.
-- Exact permanent coin-ID payout and loss events.
-- Browser-only frame interpolation with no Cannon physics in shared mode.
-- Mid-turn replay download and seeking.
-- Final-world promotion after replay completion.
-- Active replay pointer persistence for Railway restarts.
-- `GET /api/replays/:turnId`.
-- `YES_PUSHER_REPLAY_FRAME_RATE` configuration.
+## Turn flow
 
-## Preserved
+1. The player presses **Drop Coins** once.
+2. The request enters the line with its selected coin count.
+3. Railway automatically prepares and starts that turn when it reaches the front.
+4. Railway plays the recorded replay and commits its final state.
+5. Railway automatically moves to the next queued request.
 
-- CoinPusher 56 machine geometry and physics behavior.
-- Queue and wallet identity.
-- Yokefellow YES credit and random skin triggers.
-- Player progress and scoring rules.
-- Confirmed-world persistence.
-
-## Validation
-
-- `npm test` — 48 tests pass.
-- `npm run build` — production Vite build passes.
+There is no second player Start action.
