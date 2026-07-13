@@ -78,3 +78,37 @@ test('authenticated manual skin retry confirms the same milestone once', async (
   const idempotencyKeys = keys.filter(Boolean);
   assert.deepEqual(idempotencyKeys, [idempotencyKeys[0], idempotencyKeys[0]]);
 });
+
+test('credit response must explicitly avoid a negative grant result', async () => {
+  const playerId = 'wallet:0x2222222222222222222222222222222222222222';
+  const settlement = new SettlementOutbox(null, {
+    config: {
+      apiBaseUrl: 'https://yf.example/api/sdk/v1',
+      appKey: 'secret',
+      bucketId: 'bucket-1',
+      creditGrantUrl: 'https://yf.example/api/sdk/v1/buckets/bucket-1/credit-grants',
+      yesPerCoinRaw: '1',
+      appSlug: 'yes-pusher',
+      eventType: 'coin_drop_completed',
+      skinDropTriggerKey: 'coin_pusher.random_skin_drop',
+      skinDropOfferingName: 'Random Coin Skin Drop',
+      eventSubmissionEnabled: true,
+      creditSubmissionEnabled: true,
+    },
+    fetchImpl: async () => jsonResponse({ ok: true, granted: false, error: { message: 'grant still processing' } }),
+  });
+  settlement.enqueue({
+    id: 'turn-credit',
+    playerId,
+    number: 1,
+    coinsDropped: 1,
+    coinsWon: 1,
+    coinsLost: 0,
+    lifetimeCoinsWon: 1,
+    skinDropEarned: 0,
+  });
+  await settlement.process();
+  const record = settlement.get('turn-credit');
+  assert.equal(record.creditStatus, 'failed');
+  assert.equal(record.creditError, 'grant still processing');
+});
