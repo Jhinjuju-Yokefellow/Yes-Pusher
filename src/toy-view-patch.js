@@ -213,7 +213,7 @@ function installToyViewPatch() {
   prototype.loadBoundary = function loadBoundaryWithToys(snapshot) {
     const loaded = loadBoundary.call(this, snapshot);
     if (!loaded) return loaded;
-    this.syncToyBoundary(snapshot?.toys ?? []);
+    if (Array.isArray(snapshot?.toys)) this.syncToyBoundary(snapshot.toys);
     this.renderToys();
     return loaded;
   };
