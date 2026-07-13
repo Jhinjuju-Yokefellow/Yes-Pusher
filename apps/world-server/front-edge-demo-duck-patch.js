@@ -7,8 +7,8 @@ import {
   RUBBER_DUCK_TOY_KEY,
 } from './rubber-duck-toy-patch.js';
 
-export const FRONT_EDGE_DEMO_DUCK_ID = 'toy-rubber-duck-front-edge-demo-v1';
-export const FRONT_EDGE_DEMO_MARKER = 'front-edge-demo-duck-v1.done';
+export const FRONT_EDGE_DEMO_DUCK_ID = 'toy-rubber-duck-front-edge-demo-v2';
+export const FRONT_EDGE_DEMO_MARKER = 'front-edge-demo-duck-v2.done';
 
 function enabled(value = process.env.YES_PUSHER_FRONT_EDGE_DEMO_DUCK) {
   const normalized = String(value ?? 'true').trim().toLowerCase();
@@ -54,7 +54,7 @@ export function seedFrontEdgeDemoDuck(engine) {
   const boardTopY = CONFIG.board.y + 0.42 / 2;
   return engine.createRubberDuckToy?.({
     id: FRONT_EDGE_DEMO_DUCK_ID,
-    sourceTurnId: 'front-edge-power-demo',
+    sourceTurnId: 'front-edge-vacuum-demo',
     sourcePlayerId: null,
     spawnedBySkinId: RUBBER_DUCK_SKIN_ID,
     x: 0.35,
