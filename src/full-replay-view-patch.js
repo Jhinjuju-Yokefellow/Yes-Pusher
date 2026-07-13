@@ -4,6 +4,19 @@ function nowMs() {
   return globalThis.performance?.now?.() ?? Date.now();
 }
 
+function copyBoundarySnapshot(snapshot) {
+  return {
+    ...snapshot,
+    turn: snapshot?.turn ? {
+      ...snapshot.turn,
+      currentTurn: snapshot.turn.currentTurn ? { ...snapshot.turn.currentTurn } : null,
+      lastResult: snapshot.turn.lastResult ? { ...snapshot.turn.lastResult } : null,
+    } : snapshot?.turn,
+    coins: Array.isArray(snapshot?.coins) ? [...snapshot.coins] : snapshot?.coins,
+    toys: Array.isArray(snapshot?.toys) ? [...snapshot.toys] : snapshot?.toys,
+  };
+}
+
 function installFullReplayViewPatch() {
   const prototype = SharedWorldView.prototype;
   if (prototype.fullReplayViewPatchInstalled) return;
@@ -78,7 +91,10 @@ function installFullReplayViewPatch() {
       const duration = Number(this.replayDurationSeconds || this.replayPackage.durationSeconds) || 0;
       const elapsed = this.currentReplayElapsed();
       if (duration > 0 && elapsed < duration - 0.02) {
-        this.pendingBoundarySnapshot = snapshot;
+        this.pendingBoundarySnapshot = copyBoundarySnapshot(snapshot);
+        if (snapshot?.turn?.lastResult) {
+          snapshot.turn = { ...snapshot.turn, lastResult: null };
+        }
         return;
       }
     }
@@ -123,4 +139,4 @@ function installFullReplayViewPatch() {
 
 installFullReplayViewPatch();
 
-export { installFullReplayViewPatch };
+export { copyBoundarySnapshot, installFullReplayViewPatch };
