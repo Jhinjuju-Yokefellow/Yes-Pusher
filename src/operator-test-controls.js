@@ -22,8 +22,10 @@ async function parseResponse(response) {
 async function runOperatorTestReset(button) {
   const token = sessionToken();
   if (!token) throw new Error('Connect and sign with the operator wallet first.');
+  if (button.dataset.operatorTestResetBusy === 'true') return null;
 
   const oldText = button.textContent;
+  button.dataset.operatorTestResetBusy = 'true';
   button.disabled = true;
   button.textContent = 'RESETTING…';
   try {
@@ -41,17 +43,18 @@ async function runOperatorTestReset(button) {
     button.textContent = `TEST READY • ${payload.toyCount ?? 3} TOYS`;
     button.title = 'Machine, local game statistics, and test settlement records were reset. Existing on-chain NFTs and YES remain untouched.';
     setTimeout(() => {
-      button.textContent = 'RESET TEST';
+      if (button.dataset.operatorTestResetBusy !== 'true') button.textContent = 'RESET TEST';
     }, 2200);
     return payload;
   } catch (error) {
     button.textContent = 'RESET FAILED';
     button.title = error instanceof Error ? error.message : String(error);
     setTimeout(() => {
-      button.textContent = oldText || 'RESET TEST';
+      if (button.dataset.operatorTestResetBusy !== 'true') button.textContent = oldText || 'RESET TEST';
     }, 2600);
     throw error;
   } finally {
+    button.dataset.operatorTestResetBusy = 'false';
     button.disabled = false;
   }
 }
@@ -63,9 +66,10 @@ function installOperatorTestControls() {
     if (!button) return;
 
     const token = sessionToken();
+    const busy = button.dataset.operatorTestResetBusy === 'true';
     button.hidden = false;
-    button.disabled = !token;
-    button.textContent = 'RESET TEST';
+    button.disabled = busy || !token;
+    if (!busy) button.textContent = 'RESET TEST';
     button.title = token
       ? 'Reset the shared test machine, zero game statistics, clear test settlement records, and place three Rubber Ducks at the payout edge.'
       : 'Connect and sign with the operator wallet to use the test reset.';
