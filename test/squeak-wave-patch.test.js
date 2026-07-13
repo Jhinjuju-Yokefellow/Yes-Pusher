@@ -4,8 +4,11 @@ import { CONFIG } from '../src/config/machine-config.js';
 import { WorldEngine } from '../src/game/world-engine.js';
 import {
   SQUEAK_MAX_COINS,
+  SQUEAK_PULSE_TIMES,
+  activatePendingWave,
   activateWave,
   maxToyCount,
+  queueDuckPower,
   updateWaves,
 } from '../apps/world-server/squeak-wave-patch.js';
 
@@ -33,7 +36,7 @@ test('Rubber Duck turns respect the configurable machine toy cap and spawn visib
   }
 });
 
-test('Squeak Wave selects at most six nearby front-edge coins and applies three controlled pulses', () => {
+test('Squeak Wave chooses the six closest edge coins and gives them a visible forward pull', () => {
   const engine = new WorldEngine({ seedMachine: false, seed: 11 });
   engine.initializeEmptyMachine();
   const boardTopY = CONFIG.board.y + 0.42 / 2;
@@ -45,7 +48,7 @@ test('Squeak Wave selects at most six nearby front-edge coins and applies three 
       id: `edge-${index}`,
       x: (index - 3.5) * 0.26,
       y: coinRestY,
-      z: CONFIG.board.front - 0.65 - (index % 2) * 0.08,
+      z: CONFIG.board.front - 0.42 - index * 0.05,
       flat: true,
       phase: 'board',
       planar: true,
@@ -68,23 +71,50 @@ test('Squeak Wave selects at most six nearby front-edge coins and applies three 
     z: CONFIG.board.front - 0.08,
     emitSpawn: false,
   });
-  const before = new Map(coins.map((coin) => [coin.id, coin.body.velocity.clone()]));
   const wave = activateWave(engine, duck, 3.5);
 
   assert.ok(wave);
   assert.equal(wave.coinIds.length, SQUEAK_MAX_COINS);
   assert.equal(wave.coinIds.includes('far-coin'), false);
   assert.equal(wave.coinIds.every((id) => engine.coinById.has(id)), true);
-  assert.equal(wave.coinIds.some((id) => {
-    const coin = engine.coinById.get(id);
-    const initial = before.get(id);
-    return coin.body.velocity.distanceTo(initial) > 0;
-  }), true);
+  assert.equal(wave.coinIds.every((id) => engine.coinById.get(id).body.velocity.z >= 0.95), true);
 
-  updateWaves(engine, 0.21);
-  assert.equal(wave.nextPulseIndex, 2);
-  updateWaves(engine, 0.21);
-  assert.equal(wave.nextPulseIndex, 3);
-  updateWaves(engine, 0.20);
+  for (let index = 1; index < SQUEAK_PULSE_TIMES.length; index += 1) updateWaves(engine, 0.23);
+  assert.equal(wave.nextPulseIndex, SQUEAK_PULSE_TIMES.length);
+  updateWaves(engine, 0.35);
   assert.equal(engine.activeSqueakWaves.length, 0);
+});
+
+test('a scored duck queues its power until settlement activation', () => {
+  const engine = new WorldEngine({ seedMachine: false, seed: 12 });
+  engine.initializeEmptyMachine();
+  const boardTopY = CONFIG.board.y + 0.42 / 2;
+  const coinRestY = boardTopY + CONFIG.coin.thickness / 2 + 0.004;
+  engine.createCoin({
+    id: 'edge-pull',
+    x: 0.4,
+    y: coinRestY,
+    z: CONFIG.board.front - 0.35,
+    flat: true,
+    phase: 'board',
+    planar: true,
+  });
+  const duck = engine.createRubberDuckToy({
+    id: 'toy-deferred-duck',
+    x: 0.2,
+    y: coinRestY,
+    z: CONFIG.board.front - 0.08,
+    emitSpawn: false,
+  });
+
+  const queued = queueDuckPower(engine, duck, 4.2);
+  assert.ok(queued);
+  assert.equal(engine.activeSqueakWaves.length, 0);
+  assert.equal(engine.pendingSqueakPowers.length, 1);
+
+  const wave = activatePendingWave(engine);
+  assert.ok(wave);
+  assert.equal(engine.pendingSqueakPowers.length, 0);
+  assert.equal(engine.activeSqueakWaves.length, 1);
+  assert.equal(wave.coinIds.includes('edge-pull'), true);
 });

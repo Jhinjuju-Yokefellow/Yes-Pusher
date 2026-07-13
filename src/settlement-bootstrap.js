@@ -4,5 +4,6 @@ import './toy-view-patch.js';
 import './full-replay-view-patch.js';
 import './squeak-wave-view-patch.js';
 import './skin-ui.js';
+import './toy-reward-ui-patch.js';
 import './turn-result-modal.js';
 import './main.js';
