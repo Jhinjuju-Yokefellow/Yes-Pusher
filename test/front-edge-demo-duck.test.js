@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import * as CANNON from 'cannon-es';
 
 const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'yes-pusher-demo-duck-'));
 process.env.YES_PUSHER_DATA_DIR = dataDir;
@@ -32,6 +33,25 @@ test('seeds one visible rubber duck immediately behind the payout trigger', () =
   assert.ok(duck.body.position.z > CONFIG.board.front - 0.35);
   assert.ok(duck.body.velocity.z >= 0.24);
   assert.equal(demoAlreadyCompleted(), false);
+});
+
+test('operator test reset ducks remain three visible sleeping bodies until contacted', () => {
+  const engine = new WorldEngine({ seedMachine: false });
+  engine.initializeEmptyMachine();
+  engine.clearToys();
+
+  const ducks = [1, 2, 3].map((index) => engine.createRubberDuckToy({
+    id: `toy-test-edge-test-${index}`,
+    sourceTurnId: 'operator-test-reset',
+    emitSpawn: false,
+  }));
+
+  assert.equal(ducks.filter(Boolean).length, 3);
+  assert.deepEqual(ducks.map((duck) => Number(duck.body.position.x.toFixed(2))), [-2.15, 0, 2.15]);
+  assert.equal(ducks.every((duck) => duck.body.position.z <= CONFIG.board.front - 0.82), true);
+  assert.equal(ducks.every((duck) => duck.body.position.z > CONFIG.board.front - 1.0), true);
+  assert.equal(ducks.every((duck) => duck.body.sleepState === CANNON.Body.SLEEPING), true);
+  assert.equal(ducks.every((duck) => duck.body.velocity.lengthSquared() === 0), true);
 });
 
 test('marks the demo complete after the duck scores so it does not respawn', () => {
