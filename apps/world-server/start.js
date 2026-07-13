@@ -1,7 +1,10 @@
 import './load-env.js';
 import http from 'node:http';
 import path from 'node:path';
-import { mkdir, rename } from 'node:fs/promises';
+import { mkdir, rename, unlink, writeFile } from 'node:fs/promises';
+import { CONFIG } from '../../src/config/machine-config.js';
+
+const DEFAULT_OPERATOR_WALLET = '0x50e2b2f2be3c8c444c89263275e5a8d26c473357';
 
 function parsePort(value, fallback = 8787) {
   const port = Number(value);
@@ -127,6 +130,102 @@ function personalizeCachedWorld(instance, cachedWorld, identity) {
       queuedCoins: position !== null ? player?.requestedCoins ?? 5 : null,
     } : null,
     turn,
+  };
+}
+
+function normalizeWallet(value) {
+  const wallet = String(value ?? '').trim().toLowerCase();
+  return /^0x[a-f0-9]{40}$/.test(wallet) ? wallet : '';
+}
+
+function operatorWallets() {
+  const configured = [
+    process.env.YES_PUSHER_OPERATOR_WALLETS,
+    process.env.YES_PUSHER_OPERATOR_WALLET,
+    DEFAULT_OPERATOR_WALLET,
+  ]
+    .filter(Boolean)
+    .join(',');
+  return new Set(configured.split(',').map(normalizeWallet).filter(Boolean));
+}
+
+function operatorAuthorized(identity) {
+  return Boolean(identity?.authenticated && operatorWallets().has(normalizeWallet(identity.wallet)));
+}
+
+async function readJsonBody(request, limit = 16_000) {
+  let size = 0;
+  const chunks = [];
+  for await (const chunk of request) {
+    size += chunk.length;
+    if (size > limit) throw new Error('Request body is too large');
+    chunks.push(chunk);
+  }
+  if (!chunks.length) return {};
+  return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+}
+
+async function saveJsonAtomic(filePath, value) {
+  await mkdir(path.dirname(filePath), { recursive: true });
+  const temporary = `${filePath}.tmp`;
+  await writeFile(temporary, `${JSON.stringify(value)}\n`, 'utf8');
+  await rename(temporary, filePath);
+}
+
+function machineIsIdle(snapshot) {
+  return Boolean(
+    snapshot
+    && !snapshot.prepare
+    && !snapshot.replay
+    && String(snapshot.turn?.state ?? '').toLowerCase() === 'ready'
+  );
+}
+
+async function resetTestMachine(instance, dataDir, { toyCount = 3, resetStats = true, resetSettlements = true } = {}) {
+  const count = Math.max(1, Math.min(6, Math.floor(Number(toyCount) || 3)));
+
+  instance.queue.queue.length = 0;
+  instance.queue.players.clear();
+  if (resetStats) instance.progressStore.players.clear();
+  if (resetSettlements) instance.settlementStore.records.clear();
+
+  instance.engine.resetMachine();
+  instance.engine.clearToys?.();
+
+  const boardTopY = CONFIG.board.y + 0.42 / 2;
+  const stamp = Date.now().toString(36);
+  const spread = count === 1 ? [0] : Array.from({ length: count }, (_, index) => {
+    const t = index / (count - 1);
+    return -2.35 + t * 4.70;
+  });
+
+  const toys = spread.map((x, index) => instance.engine.createRubberDuckToy?.({
+    id: `toy-test-edge-${stamp}-${index + 1}`,
+    sourceTurnId: 'operator-test-reset',
+    sourcePlayerId: null,
+    x,
+    y: boardTopY + 0.49,
+    z: CONFIG.board.front - (0.21 + index * 0.10),
+    rotationY: Math.PI * (0.08 + index * 0.17),
+    velocity: [0, 0, 0.025 + index * 0.008],
+    angularVelocity: [0.02, 0.10 + index * 0.04, -0.02],
+    emitSpawn: false,
+  })).filter(Boolean);
+
+  await Promise.all([
+    saveJsonAtomic(path.join(dataDir, 'confirmed-world.json'), instance.engine.exportConfirmedWorld()),
+    saveJsonAtomic(path.join(dataDir, 'player-progress.json'), instance.progressStore.serialize()),
+    saveJsonAtomic(path.join(dataDir, 'settlements.json'), instance.settlementStore.serialize()),
+    unlink(path.join(dataDir, 'active-replay.json')).catch(() => {}),
+    unlink(path.join(dataDir, 'active-replay.json.tmp')).catch(() => {}),
+  ]);
+
+  return {
+    toyCount: toys.length,
+    toyIds: toys.map((toy) => toy.id),
+    coinCount: instance.engine.coins.length,
+    resetStats: Boolean(resetStats),
+    resetSettlements: Boolean(resetSettlements),
   };
 }
 
@@ -263,7 +362,7 @@ try {
   snapshotRefreshInterval.unref?.();
 
   bootstrapServer.removeAllListeners('request');
-  bootstrapServer.on('request', (request, response) => {
+  bootstrapServer.on('request', async (request, response) => {
     let requestUrl = null;
     try {
       requestUrl = new URL(request.url || '/', `http://${request.headers.host || 'localhost'}`);
@@ -283,6 +382,43 @@ try {
           ok: false,
           authoritative: true,
           error: error instanceof Error ? error.message : 'Could not build the shared-world response.',
+        }, request);
+      }
+      return;
+    }
+
+    if (request.method === 'POST' && requestUrl?.pathname === '/api/operator/test-setup') {
+      try {
+        const identity = requestIdentity(instance, request, requestUrl);
+        if (!identity?.authenticated) {
+          writeJson(response, 401, { ok: false, error: 'Connect and sign with the operator wallet first.' }, request);
+          return;
+        }
+        if (!operatorAuthorized(identity)) {
+          writeJson(response, 403, { ok: false, error: 'This wallet is not allowed to reset the shared test machine.' }, request);
+          return;
+        }
+        if (!machineIsIdle(cachedWorld)) {
+          writeJson(response, 409, { ok: false, error: 'Wait for the current turn and settlement replay to finish before resetting.' }, request);
+          return;
+        }
+
+        const body = await readJsonBody(request);
+        const result = await resetTestMachine(instance, dataDir, body);
+        cachedWorld = instance.publicSnapshot(null);
+        const personalized = personalizeCachedWorld(instance, cachedWorld, identity);
+        writeJson(response, 200, {
+          ok: true,
+          ...result,
+          snapshot: personalized,
+        }, request);
+        console.log(`[yes-pusher] operator test reset by ${identity.wallet}; ${result.toyCount} toys placed at the payout edge`);
+      } catch (error) {
+        console.error('[yes-pusher] operator test reset failed');
+        console.error(errorText(error));
+        writeJson(response, 500, {
+          ok: false,
+          error: error instanceof Error ? error.message : 'Could not reset the shared test machine.',
         }, request);
       }
       return;
