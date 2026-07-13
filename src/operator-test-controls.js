@@ -1,13 +1,33 @@
 import { worldServerUrl, WORLD_SERVER_IS_REMOTE } from './network/world-server-url.js';
 
 const SESSION_TOKEN_KEY = 'yes-pusher:wallet-session-token:v1';
+const AUTO_RESET_MARKER_KEY = 'yes-pusher:operator-test-auto-reset:v2';
 const BUTTON_ID = 'resetMachine';
+
+let attemptedAutoResetToken = '';
+let autoResetTimer = null;
 
 function sessionToken() {
   try {
     return globalThis.sessionStorage?.getItem(SESSION_TOKEN_KEY) || '';
   } catch {
     return '';
+  }
+}
+
+function completedAutoResetToken() {
+  try {
+    return globalThis.sessionStorage?.getItem(AUTO_RESET_MARKER_KEY) || '';
+  } catch {
+    return '';
+  }
+}
+
+function markAutoResetComplete(token) {
+  try {
+    globalThis.sessionStorage?.setItem(AUTO_RESET_MARKER_KEY, token);
+  } catch {
+    // The manual reset button still works when session storage is unavailable.
   }
 }
 
@@ -41,7 +61,8 @@ async function runOperatorTestReset(button) {
     });
     const payload = await parseResponse(response);
     button.textContent = `TEST READY • ${payload.toyCount ?? 3} TOYS`;
-    button.title = 'Machine, local game statistics, and test settlement records were reset. Existing on-chain NFTs and YES remain untouched.';
+    button.title = 'Machine, game statistics, and test settlement records were reset. Existing on-chain NFTs and YES remain untouched.';
+    globalThis.dispatchEvent?.(new CustomEvent('yes-pusher:test-reset-complete', { detail: payload }));
     setTimeout(() => {
       if (button.dataset.operatorTestResetBusy !== 'true') button.textContent = 'RESET TEST';
     }, 2200);
@@ -59,6 +80,24 @@ async function runOperatorTestReset(button) {
   }
 }
 
+function scheduleAutomaticOperatorReset(button, token) {
+  if (!token || token === completedAutoResetToken() || token === attemptedAutoResetToken) return;
+  if (button.dataset.operatorTestResetBusy === 'true' || autoResetTimer) return;
+  attemptedAutoResetToken = token;
+  autoResetTimer = setTimeout(() => {
+    autoResetTimer = null;
+    if (sessionToken() !== token) return;
+    void runOperatorTestReset(button)
+      .then((payload) => {
+        if (!payload) return;
+        markAutoResetComplete(token);
+      })
+      .catch((error) => {
+        console.error('Automatic operator test reset failed', error);
+      });
+  }, 500);
+}
+
 function installOperatorTestControls() {
   if (!WORLD_SERVER_IS_REMOTE || typeof document === 'undefined') return;
   const install = () => {
@@ -69,22 +108,25 @@ function installOperatorTestControls() {
     const busy = button.dataset.operatorTestResetBusy === 'true';
     button.hidden = false;
     button.disabled = busy || !token;
-    if (!busy) button.textContent = 'RESET TEST';
+    if (!busy && !/^TEST READY/.test(button.textContent || '')) button.textContent = 'RESET TEST';
     button.title = token
-      ? 'Reset the shared test machine, zero game statistics, clear test settlement records, and place three Rubber Ducks at the payout edge.'
+      ? 'Reset the shared test machine, zero game statistics, clear test settlement records, and place exactly three Rubber Ducks at the payout edge.'
       : 'Connect and sign with the operator wallet to use the test reset.';
 
-    if (button.dataset.operatorTestResetInstalled === 'true') return;
-    button.dataset.operatorTestResetInstalled = 'true';
-    button.onclick = () => {
-      void runOperatorTestReset(button).catch((error) => {
-        console.error('Operator test reset failed', error);
-      });
-    };
+    if (button.dataset.operatorTestResetInstalled !== 'true') {
+      button.dataset.operatorTestResetInstalled = 'true';
+      button.onclick = () => {
+        void runOperatorTestReset(button).catch((error) => {
+          console.error('Operator test reset failed', error);
+        });
+      };
+    }
+
+    if (token) scheduleAutomaticOperatorReset(button, token);
   };
 
   install();
-  const interval = setInterval(install, 500);
+  const interval = setInterval(install, 100);
   interval.unref?.();
   globalThis.addEventListener?.('pageshow', install);
   globalThis.addEventListener?.('focus', install);
@@ -92,4 +134,8 @@ function installOperatorTestControls() {
 
 installOperatorTestControls();
 
-export { installOperatorTestControls, runOperatorTestReset };
+export {
+  installOperatorTestControls,
+  runOperatorTestReset,
+  scheduleAutomaticOperatorReset,
+};
