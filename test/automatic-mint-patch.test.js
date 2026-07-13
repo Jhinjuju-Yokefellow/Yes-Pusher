@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { SettlementOutbox } from '../apps/world-server/settlement-outbox.js';
-import '../apps/world-server/automatic-mint-patch.js';
+import { AUTOMATIC_MINT_ATTEMPT_VERSION } from '../apps/world-server/automatic-mint-patch.js';
 
 function config() {
   return {
@@ -59,6 +59,7 @@ test('queued earned NFT is automatically minted and replaces its queue marker', 
   assert.equal(record.skinDropSelection.mintId, '77');
   assert.equal(record.skinDropSelection.mintStatus, 'completed');
   assert.equal(record.skinDropSelection.mintTxHash, '0xabc');
+  assert.equal(record.skinDropSelection.automaticMintAttemptVersion, AUTOMATIC_MINT_ATTEMPT_VERSION);
 });
 
 test('automatic mint failure preserves the operator queue fallback without repeated attempts', async () => {
@@ -83,4 +84,28 @@ test('automatic mint failure preserves the operator queue fallback without repea
   assert.equal(record.skinDropSelection.mintJobId, 'job-1');
   assert.equal(record.skinDropSelection.mintId, null);
   assert.equal(record.skinDropSelection.automaticMintError, 'issuer not approved');
+});
+
+test('a queued reward attempted before the backend deployed is retried by the current attempt version', async () => {
+  let calls = 0;
+  const outbox = new SettlementOutbox(null, {
+    config: config(),
+    fetchImpl: async () => {
+      calls += 1;
+      return new Response(JSON.stringify({
+        ok: true,
+        results: [{ jobId: 'job-1', attempted: true, minted: true, status: 'completed', tokenId: '88', txHash: '0xdef' }],
+      }), { status: 200, headers: { 'content-type': 'application/json' } });
+    },
+    now: () => 2000,
+  });
+  const record = submittedRecord();
+  record.skinDropSelection.automaticMintAttempted = true;
+  record.skinDropSelection.automaticMintError = 'Automatic mint did not complete.';
+  outbox.records.set(record.id, record);
+
+  assert.equal(await outbox.process(), true);
+  assert.equal(calls, 1);
+  assert.equal(record.skinDropSelection.mintId, '88');
+  assert.equal(record.skinDropSelection.automaticMintAttemptVersion, AUTOMATIC_MINT_ATTEMPT_VERSION);
 });

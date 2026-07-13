@@ -1,5 +1,7 @@
 import { SettlementOutbox } from './settlement-outbox.js';
 
+export const AUTOMATIC_MINT_ATTEMPT_VERSION = 2;
+
 function clean(value) {
   return String(value ?? '').trim();
 }
@@ -11,9 +13,14 @@ function installAutomaticMintPatch() {
   prototype.submitQueuedSkinMint = async function submitQueuedSkinMint(record) {
     const selection = record?.skinDropSelection;
     const jobId = clean(selection?.mintJobId);
-    if (!jobId || selection?.mintId || selection?.automaticMintAttempted) return false;
+    if (
+      !jobId
+      || selection?.mintId
+      || selection?.automaticMintAttemptVersion === AUTOMATIC_MINT_ATTEMPT_VERSION
+    ) return false;
 
     selection.automaticMintAttempted = true;
+    selection.automaticMintAttemptVersion = AUTOMATIC_MINT_ATTEMPT_VERSION;
     selection.automaticMintAttemptedAt = new Date(this.now()).toISOString();
     try {
       const response = await this.fetchImpl(`${this.config.apiBaseUrl}/queues/mint`, {
@@ -21,7 +28,7 @@ function installAutomaticMintPatch() {
         headers: {
           'content-type': 'application/json',
           'x-yf-app-key': this.config.appKey,
-          'x-idempotency-key': `${record.skinDropExternalRef || record.id}:automatic-mint`,
+          'x-idempotency-key': `${record.skinDropExternalRef || record.id}:automatic-mint:v${AUTOMATIC_MINT_ATTEMPT_VERSION}`,
         },
         body: JSON.stringify({
           bucketId: this.config.bucketId,
@@ -69,7 +76,7 @@ function installAutomaticMintPatch() {
         record.skinDropStatus === 'submitted'
         && record.skinDropSelection?.mintJobId
         && !record.skinDropSelection?.mintId
-        && !record.skinDropSelection?.automaticMintAttempted
+        && record.skinDropSelection?.automaticMintAttemptVersion !== AUTOMATIC_MINT_ATTEMPT_VERSION
       ))
       .slice(0, limit);
 
