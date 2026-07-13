@@ -1,33 +1,13 @@
 import { worldServerUrl, WORLD_SERVER_IS_REMOTE } from './network/world-server-url.js';
 
 const SESSION_TOKEN_KEY = 'yes-pusher:wallet-session-token:v1';
-const AUTO_RESET_MARKER_KEY = 'yes-pusher:operator-test-auto-reset:v2';
 const BUTTON_ID = 'resetMachine';
-
-let attemptedAutoResetToken = '';
-let autoResetTimer = null;
 
 function sessionToken() {
   try {
     return globalThis.sessionStorage?.getItem(SESSION_TOKEN_KEY) || '';
   } catch {
     return '';
-  }
-}
-
-function completedAutoResetToken() {
-  try {
-    return globalThis.sessionStorage?.getItem(AUTO_RESET_MARKER_KEY) || '';
-  } catch {
-    return '';
-  }
-}
-
-function markAutoResetComplete(token) {
-  try {
-    globalThis.sessionStorage?.setItem(AUTO_RESET_MARKER_KEY, token);
-  } catch {
-    // The manual reset button still works when session storage is unavailable.
   }
 }
 
@@ -80,24 +60,6 @@ async function runOperatorTestReset(button) {
   }
 }
 
-function scheduleAutomaticOperatorReset(button, token) {
-  if (!token || token === completedAutoResetToken() || token === attemptedAutoResetToken) return;
-  if (button.dataset.operatorTestResetBusy === 'true' || autoResetTimer) return;
-  attemptedAutoResetToken = token;
-  autoResetTimer = setTimeout(() => {
-    autoResetTimer = null;
-    if (sessionToken() !== token) return;
-    void runOperatorTestReset(button)
-      .then((payload) => {
-        if (!payload) return;
-        markAutoResetComplete(token);
-      })
-      .catch((error) => {
-        console.error('Automatic operator test reset failed', error);
-      });
-  }, 500);
-}
-
 function installOperatorTestControls() {
   if (!WORLD_SERVER_IS_REMOTE || typeof document === 'undefined') return;
   const install = () => {
@@ -110,23 +72,20 @@ function installOperatorTestControls() {
     button.disabled = busy || !token;
     if (!busy && !/^TEST READY/.test(button.textContent || '')) button.textContent = 'RESET TEST';
     button.title = token
-      ? 'Reset the shared test machine, zero game statistics, clear test settlement records, and place exactly three Rubber Ducks at the payout edge.'
+      ? 'Manually reset the shared test machine and place three Rubber Ducks at the payout edge.'
       : 'Connect and sign with the operator wallet to use the test reset.';
 
-    if (button.dataset.operatorTestResetInstalled !== 'true') {
-      button.dataset.operatorTestResetInstalled = 'true';
-      button.onclick = () => {
-        void runOperatorTestReset(button).catch((error) => {
-          console.error('Operator test reset failed', error);
-        });
-      };
-    }
-
-    if (token) scheduleAutomaticOperatorReset(button, token);
+    if (button.dataset.operatorTestResetInstalled === 'true') return;
+    button.dataset.operatorTestResetInstalled = 'true';
+    button.onclick = () => {
+      void runOperatorTestReset(button).catch((error) => {
+        console.error('Operator test reset failed', error);
+      });
+    };
   };
 
   install();
-  const interval = setInterval(install, 100);
+  const interval = setInterval(install, 500);
   interval.unref?.();
   globalThis.addEventListener?.('pageshow', install);
   globalThis.addEventListener?.('focus', install);
@@ -134,8 +93,4 @@ function installOperatorTestControls() {
 
 installOperatorTestControls();
 
-export {
-  installOperatorTestControls,
-  runOperatorTestReset,
-  scheduleAutomaticOperatorReset,
-};
+export { installOperatorTestControls, runOperatorTestReset };
