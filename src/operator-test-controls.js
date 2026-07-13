@@ -128,8 +128,6 @@ function installOperatorTestControls() {
   install();
   const interval = setInterval(install, 100);
   interval.unref?.();
-  const observer = new MutationObserver(install);
-  observer.observe(document.documentElement, { subtree: true, attributes: true, attributeFilter: ['disabled', 'hidden'] });
   globalThis.addEventListener?.('pageshow', install);
   globalThis.addEventListener?.('focus', install);
 }
