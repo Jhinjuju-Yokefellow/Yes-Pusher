@@ -143,6 +143,17 @@ try {
     instance = await createWorldServer({ port, host, autoListen: false, dataDir });
   }
 
+  const initialPublicSnapshot = instance.publicSnapshot(null);
+  if (!initialPublicSnapshot.replay && Number(initialPublicSnapshot.coinCount || 0) === 0) {
+    instance.engine.resetMachine();
+    startup.recovery = {
+      ...(startup.recovery ?? {}),
+      machineReseededAt: new Date().toISOString(),
+      machineReseedReason: 'Saved machine boundary contained zero coins.',
+    };
+    console.warn('[yes-pusher] saved machine contained zero coins; rebuilt the standard shared machine');
+  }
+
   const requestListeners = instance.server.listeners('request');
   if (!requestListeners.length) throw new Error('Authoritative server did not register an HTTP request handler');
 

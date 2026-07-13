@@ -6,5 +6,6 @@ import './squeak-wave-view-patch.js';
 import './skin-ui.js';
 import './toy-reward-ui-patch.js';
 import './connection-stability-patch.js';
+import './remote-polling-patch.js';
 import './turn-result-modal.js';
 import './main.js';
