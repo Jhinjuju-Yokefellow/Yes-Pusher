@@ -44,6 +44,7 @@ export function encodeReplayFrame(engine) {
     coinsWon: Math.max(0, Math.floor(turn.currentTurn?.coinsWon ?? turn.lastResult?.coinsWon ?? 0)),
     coinsLost: Math.max(0, Math.floor(turn.currentTurn?.coinsLost ?? turn.lastResult?.coinsLost ?? 0)),
     coins: network.coins,
+    toys: Array.isArray(network.toys) ? network.toys : [],
   };
 }
 
@@ -134,17 +135,35 @@ export async function simulateRecordedTurn({
     initialSnapshot: initialWorld,
     seedMachine: false,
     onEvent: (event) => {
-      if (event?.type !== 'coin-payout' && event?.type !== 'coin-loss') return;
+      const coinEvent = event?.type === 'coin-payout' || event?.type === 'coin-loss';
+      const toyEvent = event?.type === 'toy-spawn' || event?.type === 'toy-payout' || event?.type === 'toy-loss';
+      if (!coinEvent && !toyEvent) return;
+      if (coinEvent) {
+        events.push({
+          id: `${event.turnId ?? turnId}:${event.type}:${event.coinId}:${events.length + 1}`,
+          type: event.type === 'coin-payout' ? 'payout' : 'loss',
+          turnId: event.turnId ?? turnId,
+          playerId: event.playerId ?? playerId ?? null,
+          coinId: event.coinId,
+          at: rounded(event.elapsedSeconds, 4),
+          value: 1,
+          position: Array.isArray(event.coin?.position) ? event.coin.position.map((value) => rounded(value, 4)) : null,
+          quaternion: Array.isArray(event.coin?.quaternion) ? event.coin.quaternion.map((value) => rounded(value, 5)) : null,
+        });
+        return;
+      }
       events.push({
-        id: `${event.turnId ?? turnId}:${event.type}:${event.coinId}:${events.length + 1}`,
-        type: event.type === 'coin-payout' ? 'payout' : 'loss',
+        id: `${event.turnId ?? turnId}:${event.type}:${event.toyId}:${events.length + 1}`,
+        type: event.type,
         turnId: event.turnId ?? turnId,
         playerId: event.playerId ?? playerId ?? null,
-        coinId: event.coinId,
+        toyId: event.toyId,
+        toyKey: event.toyKey,
+        sourceTurnId: event.sourceTurnId ?? event.toy?.sourceTurnId ?? null,
+        sourcePlayerId: event.sourcePlayerId ?? event.toy?.sourcePlayerId ?? null,
         at: rounded(event.elapsedSeconds, 4),
-        value: 1,
-        position: Array.isArray(event.coin?.position) ? event.coin.position.map((value) => rounded(value, 4)) : null,
-        quaternion: Array.isArray(event.coin?.quaternion) ? event.coin.quaternion.map((value) => rounded(value, 5)) : null,
+        position: Array.isArray(event.toy?.position) ? event.toy.position.map((value) => rounded(value, 4)) : null,
+        quaternion: Array.isArray(event.toy?.quaternion) ? event.toy.quaternion.map((value) => rounded(value, 5)) : null,
       });
     },
   });

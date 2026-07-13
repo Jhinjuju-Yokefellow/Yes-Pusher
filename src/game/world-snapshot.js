@@ -16,6 +16,11 @@ function wholeNumber(value, fallback = 0) {
   return Number.isFinite(value) ? Math.max(0, Math.floor(value)) : fallback;
 }
 
+function text(value) {
+  const normalized = String(value ?? '').trim();
+  return normalized || null;
+}
+
 function normalizeCoin(raw) {
   if (!raw || typeof raw !== 'object') return null;
   for (const [field, length] of Object.entries(VECTOR_LENGTHS)) {
@@ -43,6 +48,34 @@ function normalizeCoin(raw) {
   };
 }
 
+function normalizeToy(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  for (const [field, length] of Object.entries(VECTOR_LENGTHS)) {
+    if (!finiteArray(raw[field], length)) return null;
+  }
+  const id = text(raw.id);
+  const toyKey = text(raw.toyKey);
+  if (!id || !toyKey) return null;
+  return {
+    id,
+    kind: 'toy',
+    toyKey,
+    sourceTurnId: text(raw.sourceTurnId),
+    sourcePlayerId: text(raw.sourcePlayerId),
+    spawnedBySkinId: text(raw.spawnedBySkinId),
+    scored: Boolean(raw.scored),
+    frontExit: Boolean(raw.frontExit),
+    position: [...raw.position],
+    quaternion: [...raw.quaternion],
+    velocity: [...raw.velocity],
+    angularVelocity: [...raw.angularVelocity],
+    sleeping: Boolean(raw.sleeping),
+    spawnedAtSimulationSeconds: Number.isFinite(raw.spawnedAtSimulationSeconds)
+      ? Math.max(0, raw.spawnedAtSimulationSeconds)
+      : 0,
+  };
+}
+
 export function createConfirmedWorldSnapshot({
   pusherTime,
   pusherZ,
@@ -50,6 +83,7 @@ export function createConfirmedWorldSnapshot({
   nextCoinId,
   turnProgress,
   coins,
+  toys,
   savedAt = Date.now(),
 } = {}) {
   return {
@@ -68,6 +102,7 @@ export function createConfirmedWorldSnapshot({
       turnNumber: Math.max(1, wholeNumber(turnProgress?.turnNumber, 1)),
     },
     coins: Array.isArray(coins) ? coins.map(normalizeCoin).filter(Boolean) : [],
+    toys: Array.isArray(toys) ? toys.map(normalizeToy).filter(Boolean) : [],
   };
 }
 
