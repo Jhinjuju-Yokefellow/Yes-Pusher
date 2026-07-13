@@ -158,7 +158,28 @@ try {
   if (!requestListeners.length) throw new Error('Authoritative server did not register an HTTP request handler');
 
   bootstrapServer.removeAllListeners('request');
-  for (const listener of requestListeners) bootstrapServer.on('request', listener);
+  bootstrapServer.on('request', (request, response) => {
+    let requestUrl = null;
+    try {
+      requestUrl = new URL(request.url || '/', `http://${request.headers.host || 'localhost'}`);
+    } catch {
+      requestUrl = null;
+    }
+    if (request.method === 'GET' && requestUrl?.pathname === '/events' && !requestUrl.searchParams.get('playerId')) {
+      response.writeHead(200, {
+        'content-type': 'application/json; charset=utf-8',
+        'cache-control': 'no-store',
+      });
+      response.end(JSON.stringify({
+        ok: true,
+        authoritative: true,
+        ready: true,
+        transport: 'event-stream',
+      }));
+      return;
+    }
+    for (const listener of requestListeners) listener.call(instance.server, request, response);
+  });
 
   startup.phase = 'ready';
   startup.readyAt = new Date().toISOString();
