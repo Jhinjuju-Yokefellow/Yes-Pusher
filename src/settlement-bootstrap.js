@@ -9,3 +9,4 @@ import './connection-stability-patch.js';
 import './remote-polling-patch.js';
 import './turn-result-modal.js';
 import './main.js';
+import './operator-test-controls.js';
