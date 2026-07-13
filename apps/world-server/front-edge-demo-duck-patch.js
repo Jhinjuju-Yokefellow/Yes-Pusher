@@ -9,6 +9,7 @@ import {
 
 export const FRONT_EDGE_DEMO_DUCK_ID = 'toy-rubber-duck-front-edge-demo-v2';
 export const FRONT_EDGE_DEMO_MARKER = 'front-edge-demo-duck-v2.done';
+const TEST_EDGE_DUCK_PREFIX = 'toy-test-edge-';
 
 function enabled(value = process.env.YES_PUSHER_FRONT_EDGE_DEMO_DUCK) {
   const normalized = String(value ?? 'true').trim().toLowerCase();
@@ -39,6 +40,20 @@ function markDemoCompleted() {
   }
 }
 
+function testDuckIndex(id) {
+  const match = /-(\d+)$/.exec(String(id ?? ''));
+  return match ? Math.max(1, Math.min(6, Number(match[1]) || 1)) : 1;
+}
+
+function stabilizeOperatorTestDuck(toy) {
+  if (!toy?.body) return toy;
+  toy.body.velocity.set(0, 0, 0);
+  toy.body.angularVelocity.set(0, 0, 0);
+  toy.body.aabbNeedsUpdate = true;
+  toy.body.sleep();
+  return toy;
+}
+
 export function seedFrontEdgeDemoDuck(engine) {
   if (!enabled() || demoAlreadyCompleted()) return null;
   engine.ensureToyState?.();
@@ -66,6 +81,27 @@ export function seedFrontEdgeDemoDuck(engine) {
 function installFrontEdgeDemoDuckPatch() {
   const prototype = WorldEngine.prototype;
   if (prototype.frontEdgeDemoDuckPatchInstalled) return;
+
+  const createRubberDuckToy = prototype.createRubberDuckToy;
+  prototype.createRubberDuckToy = function createRubberDuckToyWithStableTestEdge(options = {}) {
+    const id = String(options?.id ?? '');
+    if (!id.startsWith(TEST_EDGE_DUCK_PREFIX)) return createRubberDuckToy.call(this, options);
+
+    const index = testDuckIndex(id);
+    const xPositions = [-2.15, 0, 2.15, -3.15, 3.15, 0.95];
+    const boardTopY = CONFIG.board.y + 0.42 / 2;
+    const toy = createRubberDuckToy.call(this, {
+      ...options,
+      x: xPositions[index - 1] ?? Number(options.x) || 0,
+      y: boardTopY + 0.72,
+      z: CONFIG.board.front - (0.82 + (index % 2) * 0.08),
+      rotationY: Math.PI * (0.08 + index * 0.13),
+      velocity: [0, 0, 0],
+      angularVelocity: [0, 0, 0],
+      emitSpawn: false,
+    });
+    return stabilizeOperatorTestDuck(toy);
+  };
 
   const initializeEmptyMachine = prototype.initializeEmptyMachine;
   prototype.initializeEmptyMachine = function initializeEmptyMachineWithDemoDuck(...args) {
@@ -113,4 +149,5 @@ export {
   installFrontEdgeDemoDuckPatch,
   markDemoCompleted,
   markerPath as frontEdgeDemoDuckMarkerPath,
+  stabilizeOperatorTestDuck,
 };
