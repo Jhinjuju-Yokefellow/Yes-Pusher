@@ -33,6 +33,103 @@ function configuredDataDir() {
   return configured ? path.resolve(configured) : path.resolve(process.cwd(), '.world-data');
 }
 
+function anonymousIdentity(playerId, label = '') {
+  const requestedId = String(playerId ?? '').trim();
+  if (!requestedId) return null;
+  const id = requestedId.startsWith('wallet:')
+    ? `guest:${requestedId.slice('wallet:'.length)}`
+    : requestedId;
+  return {
+    playerId: id,
+    label: String(label ?? ''),
+    wallet: null,
+    authenticated: false,
+  };
+}
+
+function requestIdentity(instance, request, requestUrl) {
+  const session = instance.authStore.readRequest(request);
+  if (session) {
+    return {
+      playerId: session.playerId,
+      label: session.label,
+      wallet: session.wallet,
+      authenticated: true,
+    };
+  }
+  return anonymousIdentity(
+    requestUrl?.searchParams.get('playerId'),
+    requestUrl?.searchParams.get('label') ?? '',
+  );
+}
+
+function writeJson(response, statusCode, payload, request = null) {
+  const body = JSON.stringify(payload);
+  const origin = String(request?.headers?.origin ?? '').trim();
+  response.writeHead(statusCode, {
+    'content-type': 'application/json; charset=utf-8',
+    'content-length': Buffer.byteLength(body),
+    'cache-control': 'no-store',
+    vary: 'origin',
+    ...(origin ? {
+      'access-control-allow-origin': origin,
+      'access-control-allow-credentials': 'true',
+    } : {}),
+  });
+  response.end(body);
+}
+
+function personalizeCachedWorld(instance, cachedWorld, identity) {
+  const playerId = identity?.playerId ?? null;
+  const queue = instance.queue.publicQueue();
+  const activePlayerId = instance.queue.activeId();
+  const player = playerId ? instance.queue.getPlayer(playerId) : null;
+  const position = playerId ? instance.queue.positionOf(playerId) : null;
+
+  let turn = cachedWorld.turn;
+  try {
+    turn = instance.progressStore.decorateTurnSnapshot(cachedWorld.turn, playerId);
+  } catch (error) {
+    console.error('[yes-pusher] could not decorate cached turn snapshot');
+    console.error(errorText(error));
+  }
+
+  let settlement = cachedWorld.settlement;
+  if (playerId) {
+    try {
+      settlement = instance.settlementStore.viewForPlayer(playerId);
+    } catch (error) {
+      console.error(`[yes-pusher] could not personalize settlement for ${playerId}`);
+      console.error(errorText(error));
+    }
+  }
+
+  return {
+    ...cachedWorld,
+    serverTime: Date.now(),
+    activePlayerId,
+    queue,
+    auth: {
+      requireWallet: Boolean(cachedWorld.auth?.requireWallet),
+      testMode: Boolean(cachedWorld.auth?.testMode),
+      authenticated: Boolean(identity?.authenticated),
+      wallet: identity?.wallet ?? null,
+    },
+    settlement,
+    self: playerId ? {
+      id: playerId,
+      label: player?.label ?? identity?.label ?? `PLAYER ${playerId.slice(-4).toUpperCase()}`,
+      wallet: identity?.wallet ?? null,
+      authenticated: Boolean(identity?.authenticated),
+      queued: position !== null,
+      queuePosition: position,
+      isActive: activePlayerId === playerId,
+      queuedCoins: position !== null ? player?.requestedCoins ?? 5 : null,
+    } : null,
+    turn,
+  };
+}
+
 async function archiveMachineBoundary(dataDir) {
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
   const recoveryDir = path.join(dataDir, 'startup-recovery', stamp);
@@ -83,12 +180,7 @@ const bootstrapServer = http.createServer((request, response) => {
     try { return new URL(request.url || '/', 'http://bootstrap').pathname; } catch { return '/'; }
   })();
   const statusCode = failed ? 503 : pathname === '/api/world' || pathname === '/events' ? 503 : 200;
-  response.writeHead(statusCode, {
-    'content-type': 'application/json; charset=utf-8',
-    'cache-control': 'no-store',
-    'retry-after': '1',
-  });
-  response.end(JSON.stringify(payload));
+  writeJson(response, statusCode, payload, request);
 });
 
 await listen(bootstrapServer, port, host);
@@ -125,6 +217,7 @@ for (const modulePath of OPTIONAL_PATCHES) {
 }
 
 let instance = null;
+let snapshotRefreshInterval = null;
 const dataDir = configuredDataDir();
 try {
   startup.phase = 'initializing-world';
@@ -144,9 +237,10 @@ try {
     instance = await createWorldServer({ port, host, autoListen: false, dataDir });
   }
 
-  const initialPublicSnapshot = instance.publicSnapshot(null);
-  if (!initialPublicSnapshot.replay && Number(initialPublicSnapshot.coinCount || 0) === 0) {
+  let cachedWorld = instance.publicSnapshot(null);
+  if (!cachedWorld.replay && Number(cachedWorld.coinCount || 0) === 0) {
     instance.engine.resetMachine();
+    cachedWorld = instance.publicSnapshot(null);
     startup.recovery = {
       ...(startup.recovery ?? {}),
       machineReseededAt: new Date().toISOString(),
@@ -158,6 +252,16 @@ try {
   const requestListeners = instance.server.listeners('request');
   if (!requestListeners.length) throw new Error('Authoritative server did not register an HTTP request handler');
 
+  snapshotRefreshInterval = setInterval(() => {
+    try {
+      cachedWorld = instance.publicSnapshot(null);
+    } catch (error) {
+      console.error('[yes-pusher] cached shared-world refresh failed; keeping the last valid snapshot');
+      console.error(errorText(error));
+    }
+  }, 500);
+  snapshotRefreshInterval.unref?.();
+
   bootstrapServer.removeAllListeners('request');
   bootstrapServer.on('request', (request, response) => {
     let requestUrl = null;
@@ -166,19 +270,34 @@ try {
     } catch {
       requestUrl = null;
     }
+
+    if (request.method === 'GET' && requestUrl?.pathname === '/api/world') {
+      try {
+        const identity = requestIdentity(instance, request, requestUrl);
+        if (identity?.playerId) instance.queue.touch(identity.playerId, identity.label);
+        writeJson(response, 200, personalizeCachedWorld(instance, cachedWorld, identity), request);
+      } catch (error) {
+        console.error('[yes-pusher] /api/world snapshot response failed');
+        console.error(errorText(error));
+        writeJson(response, 500, {
+          ok: false,
+          authoritative: true,
+          error: error instanceof Error ? error.message : 'Could not build the shared-world response.',
+        }, request);
+      }
+      return;
+    }
+
     if (request.method === 'GET' && requestUrl?.pathname === '/events' && !requestUrl.searchParams.get('playerId')) {
-      response.writeHead(200, {
-        'content-type': 'application/json; charset=utf-8',
-        'cache-control': 'no-store',
-      });
-      response.end(JSON.stringify({
+      writeJson(response, 200, {
         ok: true,
         authoritative: true,
         ready: true,
         transport: 'event-stream',
-      }));
+      }, request);
       return;
     }
+
     for (const listener of requestListeners) listener.call(instance.server, request, response);
   });
 
@@ -193,6 +312,7 @@ try {
 }
 
 const shutdown = async () => {
+  if (snapshotRefreshInterval) clearInterval(snapshotRefreshInterval);
   await instance?.close?.().catch(() => {});
   await new Promise((resolve) => bootstrapServer.close(() => resolve()));
   process.exit(0);
