@@ -20,7 +20,7 @@ test.after(() => {
   fs.rmSync(dataDir, { recursive: true, force: true });
 });
 
-test('seeds one visible rubber duck just behind the payout edge', () => {
+test('seeds one visible rubber duck immediately behind the payout trigger', () => {
   const engine = new WorldEngine({ seedMachine: false });
   engine.initializeEmptyMachine();
 
@@ -29,7 +29,8 @@ test('seeds one visible rubber duck just behind the payout edge', () => {
   assert.equal(duck.toyKey, 'rubber_duck');
   assert.equal(engine.toys.filter((toy) => toy.id === FRONT_EDGE_DEMO_DUCK_ID).length, 1);
   assert.ok(duck.body.position.z < CONFIG.board.front - 0.16);
-  assert.ok(duck.body.position.z > CONFIG.board.front - 0.8);
+  assert.ok(duck.body.position.z > CONFIG.board.front - 0.35);
+  assert.ok(duck.body.velocity.z >= 0.24);
   assert.equal(demoAlreadyCompleted(), false);
 });
 
