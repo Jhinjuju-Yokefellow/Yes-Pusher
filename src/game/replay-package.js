@@ -137,7 +137,10 @@ export async function simulateRecordedTurn({
     onEvent: (event) => {
       const coinEvent = event?.type === 'coin-payout' || event?.type === 'coin-loss';
       const toyEvent = event?.type === 'toy-spawn' || event?.type === 'toy-payout' || event?.type === 'toy-loss';
-      if (!coinEvent && !toyEvent) return;
+      const powerEvent = event?.type === 'squeak-wave-start'
+        || event?.type === 'squeak-wave-pulse'
+        || event?.type === 'squeak-wave-end';
+      if (!coinEvent && !toyEvent && !powerEvent) return;
       if (coinEvent) {
         events.push({
           id: `${event.turnId ?? turnId}:${event.type}:${event.coinId}:${events.length + 1}`,
@@ -149,6 +152,21 @@ export async function simulateRecordedTurn({
           value: 1,
           position: Array.isArray(event.coin?.position) ? event.coin.position.map((value) => rounded(value, 4)) : null,
           quaternion: Array.isArray(event.coin?.quaternion) ? event.coin.quaternion.map((value) => rounded(value, 5)) : null,
+        });
+        return;
+      }
+      if (powerEvent) {
+        events.push({
+          id: `${event.turnId ?? turnId}:${event.type}:${event.toyId ?? 'duck'}:${event.pulseIndex ?? events.length + 1}`,
+          type: event.type,
+          turnId: event.turnId ?? turnId,
+          playerId: event.playerId ?? playerId ?? null,
+          toyId: event.toyId ?? null,
+          toyKey: event.toyKey ?? null,
+          at: rounded(event.elapsedSeconds, 4),
+          pulseIndex: Number.isInteger(event.pulseIndex) ? event.pulseIndex : null,
+          affectedCoinIds: Array.isArray(event.affectedCoinIds) ? [...event.affectedCoinIds] : [],
+          position: Array.isArray(event.origin) ? event.origin.map((value) => rounded(value, 4)) : null,
         });
         return;
       }
@@ -211,6 +229,19 @@ export async function simulateRecordedTurn({
   const lastFrame = frames.at(-1);
   if (!lastFrame || Math.abs(finite(lastFrame.t) - durationSeconds) > 0.0001) frames.push(encodeReplayFrame(engine));
 
+  const toyPayouts = events
+    .filter((event) => event.type === 'toy-payout')
+    .map((event) => ({
+      toyId: event.toyId,
+      toyKey: event.toyKey,
+      turnId: event.turnId,
+      playerId: event.playerId,
+      sourceTurnId: event.sourceTurnId,
+      sourcePlayerId: event.sourcePlayerId,
+      at: event.at,
+      position: event.position,
+    }));
+
   return {
     kind: 'yes-pusher-recorded-replay',
     version: REPLAY_PACKAGE_VERSION,
@@ -234,7 +265,7 @@ export async function simulateRecordedTurn({
     startWorld: startBoundary,
     frames,
     events,
-    result: { ...finalTurn.lastResult, slotPlan: [...finalTurn.lastResult.slotPlan] },
+    result: { ...finalTurn.lastResult, slotPlan: [...finalTurn.lastResult.slotPlan], toyPayouts },
     finalWorld: engine.exportConfirmedWorld(),
   };
 }
