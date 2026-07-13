@@ -114,7 +114,7 @@ test('a delayed first snapshot still begins the recorded turn at frame zero', as
   assert.equal(view.coins.get('coin-1').position.z, -2);
 });
 
-test('the final boundary waits until the local viewer has seen the complete replay', async () => {
+test('the final boundary and result wait until the local viewer has seen the complete replay', async () => {
   const { view, pkg } = makeView();
   view.applySnapshot({
     syncMode: 'recorded-replay',
@@ -136,12 +136,18 @@ test('the final boundary waits until the local viewer has seen the complete repl
     syncMode: 'boundary',
     boundaryId: 'boundary-2',
     pusherZ: CONFIG.pusher.rearZ,
-    turn: { state: 'ready', nextTurnNumber: 2 },
+    turn: {
+      state: 'ready',
+      nextTurnNumber: 2,
+      lastResult: { id: pkg.id, playerId: 'player-a', coinsWon: 0 },
+    },
     coins: [packedCoin('final-coin', 0, 0.816, 2.4)],
   };
   view.applySnapshot(finalBoundary);
   assert.equal(view.activeReplayId, pkg.id);
-  assert.equal(view.pendingBoundarySnapshot, finalBoundary);
+  assert.equal(view.pendingBoundarySnapshot.boundaryId, 'boundary-2');
+  assert.equal(view.pendingBoundarySnapshot.turn.lastResult.id, pkg.id);
+  assert.equal(finalBoundary.turn.lastResult, null);
 
   view.replayAnchorElapsed = pkg.durationSeconds;
   view.replayAnchorLocalMs = globalThis.performance?.now?.() ?? Date.now();
