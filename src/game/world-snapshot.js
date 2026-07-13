@@ -25,6 +25,7 @@ function normalizeCoin(raw) {
   const phase = ['board', 'peg', 'transfer'].includes(raw.phase) ? raw.phase : 'board';
   return {
     id: typeof raw.id === 'string' && raw.id ? raw.id : null,
+    skinId: typeof raw.skinId === 'string' && raw.skinId.trim() ? raw.skinId.trim() : null,
     tower: Boolean(raw.tower),
     phase,
     scored: Boolean(raw.scored),
