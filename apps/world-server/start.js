@@ -1,5 +1,7 @@
 import './load-env.js';
 import http from 'node:http';
+import path from 'node:path';
+import { mkdir, rename } from 'node:fs/promises';
 
 function parsePort(value, fallback = 8787) {
   const port = Number(value);
@@ -22,6 +24,36 @@ function listen(server, port, host) {
   });
 }
 
+function errorText(error) {
+  return error instanceof Error ? error.stack || error.message : String(error);
+}
+
+function configuredDataDir() {
+  const configured = String(process.env.YES_PUSHER_DATA_DIR || '').trim();
+  return configured ? path.resolve(configured) : path.resolve(process.cwd(), '.world-data');
+}
+
+async function archiveMachineBoundary(dataDir) {
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const recoveryDir = path.join(dataDir, 'startup-recovery', stamp);
+  await mkdir(recoveryDir, { recursive: true });
+  const archived = [];
+  for (const filename of [
+    'confirmed-world.json',
+    'confirmed-world.json.tmp',
+    'active-replay.json',
+    'active-replay.json.tmp',
+  ]) {
+    try {
+      await rename(path.join(dataDir, filename), path.join(recoveryDir, filename));
+      archived.push(filename);
+    } catch (error) {
+      if (error?.code !== 'ENOENT') throw error;
+    }
+  }
+  return { recoveryDir, archived };
+}
+
 const port = parsePort(process.env.PORT);
 const host = '0.0.0.0';
 const startup = {
@@ -30,18 +62,31 @@ const startup = {
   readyAt: null,
   loadedPatches: [],
   failedPatches: [],
+  recovery: null,
   error: null,
 };
 
 const bootstrapServer = http.createServer((request, response) => {
+  const failed = startup.phase === 'failed';
+  const initializing = startup.phase !== 'ready' && !failed;
   const payload = {
-    ok: startup.phase !== 'failed',
-    authoritative: startup.phase === 'ready',
+    ok: !failed,
+    authoritative: false,
+    error: failed
+      ? startup.error || 'The authoritative shared world failed to initialize.'
+      : initializing
+        ? 'The authoritative shared world is initializing.'
+        : null,
     startup: { ...startup },
   };
-  response.writeHead(200, {
+  const pathname = (() => {
+    try { return new URL(request.url || '/', 'http://bootstrap').pathname; } catch { return '/'; }
+  })();
+  const statusCode = failed ? 503 : pathname === '/api/world' || pathname === '/events' ? 503 : 200;
+  response.writeHead(statusCode, {
     'content-type': 'application/json; charset=utf-8',
     'cache-control': 'no-store',
+    'retry-after': '1',
   });
   response.end(JSON.stringify(payload));
 });
@@ -71,7 +116,7 @@ for (const modulePath of OPTIONAL_PATCHES) {
     startup.loadedPatches.push(modulePath);
     console.log(`[yes-pusher] loaded ${modulePath}`);
   } catch (error) {
-    const message = error instanceof Error ? error.stack || error.message : String(error);
+    const message = errorText(error);
     startup.failedPatches.push({ modulePath, error: message });
     console.error(`[yes-pusher] optional patch failed: ${modulePath}`);
     console.error(message);
@@ -79,10 +124,24 @@ for (const modulePath of OPTIONAL_PATCHES) {
 }
 
 let instance = null;
+const dataDir = configuredDataDir();
 try {
   startup.phase = 'initializing-world';
   const { createWorldServer } = await import('./server.js');
-  instance = await createWorldServer({ port, host, autoListen: false });
+  try {
+    instance = await createWorldServer({ port, host, autoListen: false, dataDir });
+  } catch (firstError) {
+    const firstMessage = errorText(firstError);
+    console.error('[yes-pusher] saved shared-world boundary failed to restore; archiving machine boundary and retrying');
+    console.error(firstMessage);
+    const recovery = await archiveMachineBoundary(dataDir);
+    startup.recovery = {
+      attemptedAt: new Date().toISOString(),
+      reason: firstMessage,
+      ...recovery,
+    };
+    instance = await createWorldServer({ port, host, autoListen: false, dataDir });
+  }
 
   const requestListeners = instance.server.listeners('request');
   if (!requestListeners.length) throw new Error('Authoritative server did not register an HTTP request handler');
@@ -95,7 +154,7 @@ try {
   console.log(`YES Pusher authoritative world server running on http://${host}:${port}`);
 } catch (error) {
   startup.phase = 'failed';
-  startup.error = error instanceof Error ? error.stack || error.message : String(error);
+  startup.error = errorText(error);
   console.error('[yes-pusher] authoritative server failed to initialize');
   console.error(startup.error);
 }
