@@ -2,8 +2,8 @@ import * as CANNON from 'cannon-es';
 import { CONFIG } from '../config/machine-config.js';
 import { WorldEngine } from './world-engine.js';
 
-export const REPLAY_FREE_COIN_SEGMENTS = 10;
-export const REPLAY_SETTLED_COIN_SEGMENTS = 6;
+export const REPLAY_FREE_COIN_SEGMENTS = 8;
+export const REPLAY_SETTLED_COIN_SEGMENTS = 5;
 
 function replaceCoinShape(coin, segments) {
   if (!coin?.body || coin.replayCollisionSegments === segments) return;
@@ -59,6 +59,6 @@ export function optimizeRecordedReplayPhysics(engine) {
 }
 
 // Railway loads this module with Node's --import flag before the world server.
-// That makes every authoritative simulation use the lighter settled-coin hulls
-// without changing browser rendering or serialized machine state.
+// That makes every authoritative simulation use lighter collision hulls without
+// changing browser rendering, permanent coin IDs, or serialized machine state.
 installRecordedReplayPhysicsOptimization();
