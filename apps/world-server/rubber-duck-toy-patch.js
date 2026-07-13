@@ -312,10 +312,10 @@ function installRubberDuckToyPatch() {
     return turn;
   };
 
-  const fixedStep = prototype.fixedStep;
-  prototype.fixedStep = function fixedStepWithToys(dt) {
-    const result = fixedStep.call(this, dt);
-    this.checkToyExits(this.simulationSeconds);
+  const checkScoring = prototype.checkScoring;
+  prototype.checkScoring = function checkScoringWithToys(elapsedSeconds = this.simulationSeconds) {
+    const result = checkScoring.call(this, elapsedSeconds);
+    this.checkToyExits(elapsedSeconds);
     return result;
   };
 
