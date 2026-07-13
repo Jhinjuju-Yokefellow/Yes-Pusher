@@ -1,6 +1,8 @@
 import './settlement-ui.js';
 import './skin-view-patch.js';
 import './toy-view-patch.js';
+import './full-replay-view-patch.js';
+import './squeak-wave-view-patch.js';
 import './skin-ui.js';
 import './turn-result-modal.js';
 import './main.js';
