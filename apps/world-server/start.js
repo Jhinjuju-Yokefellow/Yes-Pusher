@@ -101,6 +101,7 @@ const OPTIONAL_PATCHES = Object.freeze([
   './direct-offering-resolution-patch.js',
   './automatic-mint-patch.js',
   './toy-reward-settlement-patch.js',
+  './toy-reward-startup-fix.js',
   './skin-loadout-patch.js',
   './rubber-duck-toy-patch.js',
   './squeak-wave-patch.js',
