@@ -34,7 +34,8 @@ patchMethod(WalletAuthStore.prototype, 'readRequest', (original) => function rea
 patchMethod(WorldEngine.prototype, 'startTurn', (original) => function startSkinnedTurn(request = {}) {
   const wallet = walletFromPlayerId(request.playerId);
   const loadout = wallet ? bridge.loadouts.get(wallet) : null;
-  this.activeTurnSkinId = loadout?.owned ? loadout.skinId : null;
+  const activeSkin = loadout?.owned ? getCoinSkin(loadout.skinId) : null;
+  this.activeTurnSkinId = activeSkin?.id ?? null;
   const turn = original.call(this, request);
   if (this.dropSequence) this.dropSequence.skinId = this.activeTurnSkinId;
   return this.activeTurnSkinId ? { ...turn, skinId: this.activeTurnSkinId } : turn;
@@ -43,7 +44,9 @@ patchMethod(WorldEngine.prototype, 'startTurn', (original) => function startSkin
 patchMethod(WorldEngine.prototype, 'createCoin', (original) => function createSkinnedCoin(options = {}) {
   const coin = original.call(this, options);
   const requested = clean(options.skinId || this.__restoringSkinId);
-  const turnSkin = this.dropSequence && options.phase === 'peg' ? clean(this.activeTurnSkinId) : '';
+  const turnSkin = options.phase === 'peg'
+    ? clean(options.skinId || this.dropSequence?.skinId || this.activeTurnSkinId)
+    : '';
   coin.skinId = getCoinSkin(requested || turnSkin)?.id ?? null;
   return coin;
 });
