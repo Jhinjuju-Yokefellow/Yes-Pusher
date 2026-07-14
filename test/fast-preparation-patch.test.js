@@ -7,10 +7,10 @@ import {
   PREPARATION_SOLVER_ITERATIONS,
 } from '../apps/world-server/fast-preparation-patch.js';
 
-test('authoritative preparation caps replay recording at ten frames per second', () => {
+test('authoritative preparation records only five frames per second', () => {
   assert.equal(cappedPreparationReplayFrameRate(30), MAX_PREPARATION_REPLAY_FRAME_RATE);
   assert.equal(cappedPreparationReplayFrameRate(15), MAX_PREPARATION_REPLAY_FRAME_RATE);
-  assert.equal(cappedPreparationReplayFrameRate(8), 8);
+  assert.equal(cappedPreparationReplayFrameRate(8), MAX_PREPARATION_REPLAY_FRAME_RATE);
   assert.equal(cappedPreparationReplayFrameRate(2), 5);
 });
 

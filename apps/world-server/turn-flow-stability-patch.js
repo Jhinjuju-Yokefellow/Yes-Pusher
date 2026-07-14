@@ -1,8 +1,8 @@
 import { PlayerQueue } from './player-queue.js';
 import { WalletAuthStore } from './wallet-auth.js';
 
-export const QUEUE_JOIN_RESPONSE_GRACE_MS = 175;
-export const TURN_RESULT_HOLD_MS = 4_000;
+export const QUEUE_JOIN_RESPONSE_GRACE_MS = 1_500;
+export const TURN_RESULT_HOLD_MS = 6_000;
 
 function enabled(value) {
   return String(value ?? '').trim().toLowerCase() === 'true';

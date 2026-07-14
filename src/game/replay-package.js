@@ -124,7 +124,7 @@ export async function simulateRecordedTurn({
   turnId = null,
   frameRate = DEFAULT_REPLAY_FRAME_RATE,
   maximumSeconds = DEFAULT_REPLAY_MAX_SECONDS,
-  yieldEverySteps = 12,
+  yieldEverySteps = 1,
   onProgress = () => {},
 } = {}) {
   if (!initialWorld) throw new Error('A confirmed starting world is required');

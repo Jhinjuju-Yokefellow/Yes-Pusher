@@ -7,9 +7,10 @@ import {
   RUBBER_DUCK_TOY_KEY,
 } from './rubber-duck-toy-patch.js';
 
-export const FRONT_EDGE_DEMO_DUCK_ID = 'toy-rubber-duck-front-edge-demo-v2';
-export const FRONT_EDGE_DEMO_MARKER = 'front-edge-demo-duck-v2.done';
+export const FRONT_EDGE_DEMO_DUCK_ID = 'toy-rubber-duck-front-edge-demo-v3';
+export const FRONT_EDGE_DEMO_MARKER = 'front-edge-demo-duck-v3.done';
 const TEST_EDGE_DUCK_PREFIX = 'toy-test-edge-';
+const OLD_DEMO_PREFIX = 'toy-rubber-duck-front-edge-demo-';
 
 function enabled(value = process.env.YES_PUSHER_FRONT_EDGE_DEMO_DUCK) {
   const normalized = String(value ?? 'true').trim().toLowerCase();
@@ -40,11 +41,6 @@ function markDemoCompleted() {
   }
 }
 
-function testDuckIndex(id) {
-  const match = /-(\d+)$/.exec(String(id ?? ''));
-  return match ? Math.max(1, Math.min(6, Number(match[1]) || 1)) : 1;
-}
-
 function stabilizeOperatorTestDuck(toy) {
   if (!toy?.body) return toy;
   toy.body.velocity.set(0, 0, 0);
@@ -54,28 +50,39 @@ function stabilizeOperatorTestDuck(toy) {
   return toy;
 }
 
+function removeOldDemoToys(engine) {
+  engine.ensureToyState?.();
+  for (const toy of [...(engine.toys ?? [])]) {
+    const id = String(toy?.id ?? '');
+    if (id === FRONT_EDGE_DEMO_DUCK_ID) continue;
+    if (id.startsWith(TEST_EDGE_DUCK_PREFIX) || id.startsWith(OLD_DEMO_PREFIX)) {
+      engine.removeToy?.(toy);
+    }
+  }
+}
+
 export function seedFrontEdgeDemoDuck(engine) {
   if (!enabled() || demoAlreadyCompleted()) return null;
   engine.ensureToyState?.();
+  removeOldDemoToys(engine);
   const existing = engine.toyById?.get(FRONT_EDGE_DEMO_DUCK_ID);
-  if (existing) return existing;
+  if (existing) return stabilizeOperatorTestDuck(existing);
 
-  // This is a one-time operator demonstration, not a normal player toy spawn.
-  // It must still appear even when the persistent machine has reached its toy cap.
   const boardTopY = CONFIG.board.y + 0.42 / 2;
-  return engine.createRubberDuckToy?.({
+  const toy = engine.createRubberDuckToy?.({
     id: FRONT_EDGE_DEMO_DUCK_ID,
-    sourceTurnId: 'front-edge-vacuum-demo',
+    sourceTurnId: 'front-edge-vacuum-demo-v3',
     sourcePlayerId: null,
     spawnedBySkinId: RUBBER_DUCK_SKIN_ID,
-    x: 0.35,
-    y: boardTopY + 0.48,
-    z: CONFIG.board.front - 0.24,
-    rotationY: Math.PI * 0.18,
-    velocity: [0, 0, 0.24],
-    angularVelocity: [0.04, 0.14, -0.03],
+    x: 0,
+    y: boardTopY + 0.72,
+    z: CONFIG.board.front - 0.18,
+    rotationY: Math.PI * 0.12,
+    velocity: [0, 0, 0],
+    angularVelocity: [0, 0, 0],
     emitSpawn: false,
   }) ?? null;
+  return stabilizeOperatorTestDuck(toy);
 }
 
 function installFrontEdgeDemoDuckPatch() {
@@ -83,20 +90,22 @@ function installFrontEdgeDemoDuckPatch() {
   if (prototype.frontEdgeDemoDuckPatchInstalled) return;
 
   const createRubberDuckToy = prototype.createRubberDuckToy;
-  prototype.createRubberDuckToy = function createRubberDuckToyWithStableTestEdge(options = {}) {
+  prototype.createRubberDuckToy = function createRubberDuckToyWithSingleTestEdge(options = {}) {
     const id = String(options?.id ?? '');
     if (!id.startsWith(TEST_EDGE_DUCK_PREFIX)) return createRubberDuckToy.call(this, options);
 
-    const index = testDuckIndex(id);
-    const xPositions = [-2.15, 0, 2.15, -3.15, 3.15, 0.95];
-    const fallbackX = Number.isFinite(Number(options.x)) ? Number(options.x) : 0;
+    const indexMatch = /-(\d+)$/.exec(id);
+    const index = indexMatch ? Number(indexMatch[1]) : 1;
+    if (index > 1) return null;
+
+    removeOldDemoToys(this);
     const boardTopY = CONFIG.board.y + 0.42 / 2;
     const toy = createRubberDuckToy.call(this, {
       ...options,
-      x: xPositions[index - 1] ?? fallbackX,
+      x: 0,
       y: boardTopY + 0.72,
-      z: CONFIG.board.front - (0.82 + (index % 2) * 0.08),
-      rotationY: Math.PI * (0.08 + index * 0.13),
+      z: CONFIG.board.front - 0.18,
+      rotationY: Math.PI * 0.12,
       velocity: [0, 0, 0],
       angularVelocity: [0, 0, 0],
       emitSpawn: false,
@@ -150,5 +159,6 @@ export {
   installFrontEdgeDemoDuckPatch,
   markDemoCompleted,
   markerPath as frontEdgeDemoDuckMarkerPath,
+  removeOldDemoToys,
   stabilizeOperatorTestDuck,
 };
