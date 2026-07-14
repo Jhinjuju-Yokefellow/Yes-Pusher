@@ -67,6 +67,7 @@ function installBoundaryNetworkCachePatch() {
     'removeToy',
     'clearToys',
     'createRubberDuckToy',
+    'createCucumberSliceToy',
   ]) {
     wrapInvalidator(prototype, methodName);
   }
