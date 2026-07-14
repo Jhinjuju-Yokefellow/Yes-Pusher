@@ -26,10 +26,14 @@ function vector(value, length, fallback) {
     : [...fallback];
 }
 
-function cucumberReward(engine) {
-  const random = typeof engine.randomDuringTurn === 'function' ? engine.randomDuringTurn() : 0.5;
+export function cucumberRewardForToyId(toyId) {
+  let hash = 2166136261;
+  for (const character of clean(toyId)) {
+    hash ^= character.charCodeAt(0);
+    hash = Math.imul(hash, 16777619) >>> 0;
+  }
   const span = CUCUMBER_REWARD_MAX - CUCUMBER_REWARD_MIN + 1;
-  return CUCUMBER_REWARD_MIN + Math.min(span - 1, Math.floor(Math.max(0, Math.min(0.999999, random)) * span));
+  return CUCUMBER_REWARD_MIN + (hash % span);
 }
 
 function cucumberCrossedFront(toy) {
@@ -167,7 +171,7 @@ function installCucumberSliceToyPatch() {
 
     for (const toy of [...this.toys]) {
       if (toy.toyKey !== CUCUMBER_SLICE_TOY_KEY || !cucumberCrossedFront(toy)) continue;
-      const rewardCoins = cucumberReward(this);
+      const rewardCoins = cucumberRewardForToyId(toy.id);
       if (!this.turnController.recordPayout(rewardCoins)) continue;
 
       toy.frontExit = true;
@@ -203,6 +207,5 @@ installCucumberSliceToyPatch();
 
 export {
   cucumberCrossedFront,
-  cucumberReward,
   installCucumberSliceToyPatch,
 };
