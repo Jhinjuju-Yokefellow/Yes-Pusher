@@ -8,6 +8,7 @@ for (const modulePath of patchModules) await import(modulePath);
 const options = workerData?.options ?? {};
 const activeTurnSkinId = String(options.activeTurnSkinId ?? '').trim();
 const playerId = String(options.playerId ?? '').trim().toLowerCase();
+const deltaReplayEnabled = process.env.YES_PUSHER_REPLAY_DELTA !== 'false';
 
 if (activeTurnSkinId && playerId.startsWith('wallet:') && patchModules.includes('./skin-loadout-patch.js')) {
   const { bridge } = await import('./skin-loadout-store.js');
@@ -32,7 +33,9 @@ try {
       parentPort.postMessage({ type: 'progress', progress });
     },
   });
-  const replayPackage = compressRecordedReplayCoins(fullReplayPackage);
+  const replayPackage = deltaReplayEnabled
+    ? compressRecordedReplayCoins(fullReplayPackage)
+    : fullReplayPackage;
   parentPort.postMessage({ type: 'result', replayPackage });
 } catch (error) {
   parentPort.postMessage({
