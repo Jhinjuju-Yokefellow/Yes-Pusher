@@ -22,15 +22,17 @@ if (activeTurnSkinId && playerId.startsWith('wallet:') && patchModules.includes(
 }
 
 const { simulateRecordedTurn } = await import('../../src/game/replay-package.js');
+const { compressRecordedReplayCoins } = await import('../../src/game/replay-coin-delta.js');
 
 try {
-  const replayPackage = await simulateRecordedTurn({
+  const fullReplayPackage = await simulateRecordedTurn({
     ...options,
     __runInWorker: true,
     onProgress: (progress) => {
       parentPort.postMessage({ type: 'progress', progress });
     },
   });
+  const replayPackage = compressRecordedReplayCoins(fullReplayPackage);
   parentPort.postMessage({ type: 'result', replayPackage });
 } catch (error) {
   parentPort.postMessage({
