@@ -46,6 +46,13 @@ test('cucumber payout adds one deterministic 6-10 coin reward to the active turn
 
 test('cucumber toy survives confirmed-world export and restore', () => {
   const first = new WorldEngine({ seed: 3, seedMachine: false });
+  first.createCoin({
+    id: 'coin-persistence-anchor',
+    x: 0,
+    y: CONFIG.board.y + 0.40,
+    z: CONFIG.board.front - 2.4,
+    startAsleep: true,
+  });
   first.createCucumberSliceToy({
     id: 'toy-cucumber-persistent',
     x: -0.8,
