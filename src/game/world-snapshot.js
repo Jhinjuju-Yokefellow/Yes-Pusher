@@ -31,6 +31,7 @@ function normalizeCoin(raw) {
   return {
     id: typeof raw.id === 'string' && raw.id ? raw.id : null,
     skinId: typeof raw.skinId === 'string' && raw.skinId.trim() ? raw.skinId.trim() : null,
+    skinImageUrl: text(raw.skinImageUrl),
     tower: Boolean(raw.tower),
     phase,
     scored: Boolean(raw.scored),
