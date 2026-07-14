@@ -1,9 +1,9 @@
 import { Worker } from 'node:worker_threads';
 import { WorldEngine } from '../../src/game/world-engine.js';
-import { bridge } from './skin-loadout-store.js';
 
 const WORKER_URL = new URL('./replay-worker.js', import.meta.url);
 const WORKER_HOOK = '__YES_PUSHER_RECORDED_TURN_WORKER__';
+const SKIN_BRIDGE_KEY = Symbol.for('yes-pusher:skin-loadout-bridge');
 
 const PATCH_MODULES = Object.freeze([
   {
@@ -44,7 +44,7 @@ function walletFromPlayerId(playerId) {
 function activeTurnSkinId(playerId) {
   const wallet = walletFromPlayerId(playerId);
   if (!wallet) return null;
-  const loadout = bridge.loadouts.get(wallet);
+  const loadout = globalThis[SKIN_BRIDGE_KEY]?.loadouts?.get(wallet);
   return loadout?.owned ? String(loadout.skinId ?? '').trim() || null : null;
 }
 
