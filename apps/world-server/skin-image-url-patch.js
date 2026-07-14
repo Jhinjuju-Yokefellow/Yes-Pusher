@@ -1,3 +1,4 @@
+import './skin-loadout-patch.js';
 import { getCoinSkin } from '../../src/config/skin-catalog.js';
 import { WorldEngine } from '../../src/game/world-engine.js';
 import { bridge, clean, normalizeWallet } from './skin-loadout-store.js';
