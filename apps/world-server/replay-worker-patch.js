@@ -15,6 +15,10 @@ const PATCH_MODULES = Object.freeze([
     active: () => Boolean(WorldEngine.prototype.createCoin?.__skinLoadoutPatched),
   },
   {
+    modulePath: './skin-image-url-patch.js',
+    active: () => Boolean(WorldEngine.prototype.skinImageUrlPatchInstalled),
+  },
+  {
     modulePath: './rubber-duck-toy-patch.js',
     active: () => Boolean(WorldEngine.prototype.rubberDuckToyPatchInstalled),
   },
@@ -41,11 +45,15 @@ function walletFromPlayerId(playerId) {
   return value.startsWith('wallet:') ? value.slice('wallet:'.length) : '';
 }
 
-function activeTurnSkinId(playerId) {
+function activeTurnSkin(playerId) {
   const wallet = walletFromPlayerId(playerId);
-  if (!wallet) return null;
+  if (!wallet) return { skinId: null, skinImageUrl: null };
   const loadout = globalThis[SKIN_BRIDGE_KEY]?.loadouts?.get(wallet);
-  return loadout?.owned ? String(loadout.skinId ?? '').trim() || null : null;
+  if (!loadout?.owned) return { skinId: null, skinImageUrl: null };
+  return {
+    skinId: String(loadout.skinId ?? '').trim() || null,
+    skinImageUrl: String(loadout.imageUrl ?? '').trim() || null,
+  };
 }
 
 function activePatchModules() {
@@ -69,6 +77,7 @@ function errorFromWorker(payload) {
 function prepareRecordedTurnInWorker(options = {}) {
   const onProgress = typeof options.onProgress === 'function' ? options.onProgress : () => {};
   const { onProgress: _ignored, ...serializableOptions } = options;
+  const activeSkin = activeTurnSkin(serializableOptions.playerId);
 
   return new Promise((resolve, reject) => {
     let settled = false;
@@ -78,7 +87,8 @@ function prepareRecordedTurnInWorker(options = {}) {
       workerData: {
         options: {
           ...serializableOptions,
-          activeTurnSkinId: activeTurnSkinId(serializableOptions.playerId),
+          activeTurnSkinId: activeSkin.skinId,
+          activeTurnSkinImageUrl: activeSkin.skinImageUrl,
         },
         patchModules: activePatchModules(),
       },
@@ -121,6 +131,6 @@ if (typeof globalThis[WORKER_HOOK] !== 'function') {
 
 export {
   activePatchModules,
-  activeTurnSkinId,
+  activeTurnSkin,
   prepareRecordedTurnInWorker,
 };
