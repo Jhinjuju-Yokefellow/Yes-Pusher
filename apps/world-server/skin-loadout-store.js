@@ -31,6 +31,25 @@ function safeObject(value) {
   return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
 }
 
+function parsedObject(value) {
+  if (value && typeof value === 'object' && !Array.isArray(value)) return value;
+  if (typeof value !== 'string' || !value.trim()) return {};
+  try {
+    const parsed = JSON.parse(value);
+    return safeObject(parsed);
+  } catch {
+    return {};
+  }
+}
+
+function metadataForHolding(value) {
+  return {
+    ...parsedObject(value?.metadataJson),
+    ...parsedObject(value?.metadata),
+    ...parsedObject(value?.meta),
+  };
+}
+
 function copyLoadout(value) {
   if (!value) return null;
   return {
@@ -64,7 +83,7 @@ function skinFromValues(...values) {
 }
 
 function normalizeHolding(value) {
-  const meta = safeObject(value?.meta);
+  const meta = metadataForHolding(value);
   const skin = skinFromValues(
     value?.classSlug,
     value?.classKey,
@@ -79,7 +98,7 @@ function normalizeHolding(value) {
     holdingId: clean(value.id),
     skinId: skin.id,
     name: skin.name,
-    imageUrl: clean(meta.imageUrl || value?.imageUrl || skin.imageUrl) || skin.imageUrl,
+    imageUrl: clean(meta.imageUrl || meta.image || value?.imageUrl || value?.image || skin.imageUrl) || skin.imageUrl,
     classId: clean(value?.classId) || null,
     classSlug: clean(value?.classSlug || value?.classKey) || skin.id,
     tokenId: clean(value?.tokenId) || null,
@@ -87,6 +106,49 @@ function normalizeHolding(value) {
     quantity: Math.max(1, Math.floor(Number(value?.quantity) || 1)),
     status: clean(value?.status) || 'current',
     mintedAt: value?.createdAt ?? null,
+  };
+}
+
+function attributeValue(attributes, traitType) {
+  if (!Array.isArray(attributes)) return '';
+  const target = clean(traitType).toLowerCase();
+  const match = attributes.find((attribute) => clean(attribute?.trait_type || attribute?.traitType).toLowerCase() === target);
+  return clean(match?.value);
+}
+
+function normalizeToyHolding(value) {
+  const meta = metadataForHolding(value);
+  const classKey = clean(value?.classKey || value?.classSlug || meta.classKey);
+  const objectType = clean(meta.objectType || value?.objectType).toLowerCase();
+  const toyClass = /^yes[_-]pusher\.toy\./i.test(classKey);
+  if (objectType !== 'machine_toy_reward' && !toyClass) return null;
+  if (meta.walletEligible === false || clean(meta.walletEligible).toLowerCase() === 'false') return null;
+
+  const holdingId = clean(value?.id);
+  if (!holdingId) return null;
+  const attributes = Array.isArray(meta.attributes) ? meta.attributes : [];
+  const classParts = classKey.split('.').filter(Boolean);
+  const toyKey = clean(meta.toyKey || attributeValue(attributes, 'Toy') || classParts.at(-2)).toLowerCase().replace(/\s+/g, '_');
+  const sizeTier = clean(meta.sizeTier || attributeValue(attributes, 'Size') || classParts.at(-1)).toLowerCase();
+
+  return {
+    holdingId,
+    name: clean(value?.className || value?.name || meta.name || `${toyKey || 'YES Pusher'} Toy`),
+    imageUrl: clean(meta.imageUrl || meta.image || value?.imageUrl || value?.image),
+    classId: clean(value?.classId) || null,
+    classKey: classKey || null,
+    tokenId: clean(value?.tokenId) || null,
+    contractAddress: clean(value?.contractAddress) || null,
+    quantity: Math.max(1, Math.floor(Number(value?.quantity) || 1)),
+    status: clean(value?.status) || 'current',
+    mintedAt: value?.createdAt ?? null,
+    objectType: 'machine_toy_reward',
+    toyKey: toyKey || null,
+    sizeTier: sizeTier || null,
+    powerKey: clean(meta.powerKey) || null,
+    craftFamily: clean(meta.craftFamily) || null,
+    craftTier: Number.isFinite(Number(meta.craftTier)) ? Number(meta.craftTier) : null,
+    walletEligible: true,
   };
 }
 
@@ -171,14 +233,20 @@ async function fetchInventory(wallet, fetchImpl = globalThis.fetch) {
     throw new Error(clean(payload?.error?.message || payload?.error || payload?.message)
       || `Yokefellow skin inventory failed (${response.status}).`);
   }
-  const owned = (Array.isArray(payload?.walletState?.ownedMints) ? payload.walletState.ownedMints : [])
-    .map(normalizeHolding)
-    .filter(Boolean);
+  const rawOwned = Array.isArray(payload?.walletState?.ownedMints) ? payload.walletState.ownedMints : [];
+  const owned = rawOwned.map(normalizeHolding).filter(Boolean);
+  const toys = rawOwned.map(normalizeToyHolding).filter(Boolean);
   return {
     wallet: normalized,
     owned,
+    toys,
     queued: Array.isArray(payload?.walletState?.queuedMintJobs) ? payload.walletState.queuedMintJobs : [],
-    counts: payload?.walletState?.counts ?? { owned: owned.length, queued: 0 },
+    counts: {
+      ...(payload?.walletState?.counts ?? {}),
+      skins: owned.length,
+      toys: toys.length,
+      queued: Array.isArray(payload?.walletState?.queuedMintJobs) ? payload.walletState.queuedMintJobs.length : 0,
+    },
   };
 }
 
@@ -217,7 +285,9 @@ export {
   copyLoadout,
   equippedForWallet,
   fetchInventory,
+  metadataForHolding,
   normalizeHolding,
+  normalizeToyHolding,
   normalizeWallet,
   queueSave,
   refreshWallet,
