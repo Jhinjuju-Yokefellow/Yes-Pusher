@@ -1,6 +1,7 @@
 import './skin-ui.css';
 import { SharedWorldClient } from './network/shared-world-client.js';
 import { worldServerUrl } from './network/world-server-url.js';
+import { renderToyShowcase } from './toy-showcase-ui.js';
 
 const playerCard = document.querySelector('.player-card');
 const playerMetrics = document.querySelector('.player-metrics');
@@ -82,7 +83,11 @@ function setBusy(value) {
 function renderInventory(value, message = '') {
   inventory = value;
   const owned = Array.isArray(value?.owned) ? value.owned : [];
+  const toys = Array.isArray(value?.toys) ? value.toys : [];
   const equipped = value?.equipped ?? null;
+
+  renderToyShowcase(toys, !currentWallet ? 'CONNECT WALLET TO LOAD TOYS' : '');
+
   if (select) {
     select.replaceChildren();
     const starter = document.createElement('option');
@@ -120,7 +125,7 @@ function renderInventory(value, message = '') {
 async function getInventory({ quiet = false } = {}) {
   if (!activeClient || !currentWallet || pending) return null;
   setBusy(true);
-  if (!quiet && status) status.textContent = 'LOADING YOKEFELLOW SKINS';
+  if (!quiet && status) status.textContent = 'LOADING YOKEFELLOW SKINS AND TOYS';
   try {
     const url = worldServerUrl('/api/skins/self');
     const response = await fetch(url, {
@@ -179,7 +184,7 @@ if (!originalAcceptSnapshot.__skinUiPatched) {
       setPanel(false);
     } else if (wallet !== currentWallet) {
       currentWallet = wallet;
-      renderInventory(null, 'LOADING YOKEFELLOW SKINS');
+      renderInventory(null, 'LOADING YOKEFELLOW SKINS AND TOYS');
       queueMicrotask(() => void getInventory({ quiet: true }));
     }
     return accepted;
