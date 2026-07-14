@@ -31,7 +31,10 @@ export function normalizePackedReplayCoin(raw) {
       ...(finiteVector(raw.angularVelocity, 3) ? raw.angularVelocity : [0, 0, 0]),
     );
   }
-  if (typeof raw.skinId === 'string' && raw.skinId) packed.push(raw.skinId);
+  if (typeof raw.skinId === 'string' && raw.skinId) {
+    packed.push(raw.skinId);
+    if (typeof raw.skinImageUrl === 'string' && raw.skinImageUrl) packed.push(raw.skinImageUrl);
+  }
   return packed;
 }
 
