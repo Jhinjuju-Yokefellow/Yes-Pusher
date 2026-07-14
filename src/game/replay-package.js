@@ -126,7 +126,25 @@ export async function simulateRecordedTurn({
   maximumSeconds = DEFAULT_REPLAY_MAX_SECONDS,
   yieldEverySteps = 1,
   onProgress = () => {},
+  __runInWorker = false,
 } = {}) {
+  const workerDelegate = globalThis.__YES_PUSHER_RECORDED_TURN_WORKER__;
+  if (!__runInWorker && typeof workerDelegate === 'function') {
+    return workerDelegate({
+      initialWorld,
+      startBoundary,
+      playerId,
+      playerLabel,
+      coinsDropped,
+      seed,
+      turnId,
+      frameRate,
+      maximumSeconds,
+      yieldEverySteps,
+      onProgress,
+    });
+  }
+
   if (!initialWorld) throw new Error('A confirmed starting world is required');
   const normalizedFrameRate = Math.max(5, Math.min(30, Math.floor(frameRate)));
   const normalizedMaximum = Math.max(10, Math.min(90, finite(maximumSeconds, DEFAULT_REPLAY_MAX_SECONDS)));
