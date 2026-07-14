@@ -1,14 +1,60 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import '../apps/world-server/rubber-duck-toy-patch.js';
+import '../apps/world-server/skin-loadout-patch.js';
+import { bridge } from '../apps/world-server/skin-loadout-store.js';
 import {
   CUCUMBER_REWARD_MAX,
   CUCUMBER_REWARD_MIN,
+  CUCUMBER_SLICE_SKIN_ID,
   CUCUMBER_SLICE_TOY_KEY,
   cucumberRewardForToyId,
 } from '../apps/world-server/cucumber-slice-toy-patch.js';
 import { CONFIG } from '../src/config/machine-config.js';
 import { WorldEngine } from '../src/game/world-engine.js';
+
+const cucumberWallet = '00000000000000000000000000000000000000c1';
+const cucumberPlayerId = `wallet:${cucumberWallet}`;
+
+test('equipped Cucumber Slice skins every dropped coin and inserts one cucumber for the turn', () => {
+  bridge.loadouts.set(cucumberWallet, {
+    wallet: cucumberWallet,
+    holdingId: 'holding-cucumber-skin',
+    skinId: CUCUMBER_SLICE_SKIN_ID,
+    owned: true,
+    verifiedAt: Date.now(),
+  });
+
+  try {
+    const events = [];
+    const engine = new WorldEngine({ seed: 17, seedMachine: false, onEvent: (event) => events.push(event) });
+    const turn = engine.startTurn({
+      id: 'turn-cucumber-skin',
+      playerId: cucumberPlayerId,
+      coinsDropped: 3,
+      seed: 117,
+    });
+
+    engine.dropSequence.elapsed = 10;
+    engine.spawnScheduledCoins();
+
+    assert.equal(turn.skinId, CUCUMBER_SLICE_SKIN_ID);
+    assert.equal(engine.coins.length, 3);
+    assert.equal(engine.coins.every((coin) => coin.skinId === CUCUMBER_SLICE_SKIN_ID), true);
+
+    const cucumbers = engine.toys.filter((toy) => toy.toyKey === CUCUMBER_SLICE_TOY_KEY);
+    assert.equal(cucumbers.length, 1);
+    assert.equal(cucumbers[0].sourceTurnId, turn.id);
+    assert.equal(cucumbers[0].sourcePlayerId, cucumberPlayerId);
+    assert.equal(cucumbers[0].spawnedBySkinId, CUCUMBER_SLICE_SKIN_ID);
+    assert.equal(events.some((event) => event.type === 'toy-spawn' && event.reason === 'cucumber-slice-skin'), true);
+
+    engine.spawnCucumberForTurn(turn);
+    assert.equal(engine.toys.filter((toy) => toy.toyKey === CUCUMBER_SLICE_TOY_KEY).length, 1);
+  } finally {
+    bridge.loadouts.delete(cucumberWallet);
+  }
+});
 
 test('cucumber payout adds one deterministic 6-10 coin reward to the active turn', () => {
   const events = [];
@@ -67,4 +113,5 @@ test('cucumber toy survives confirmed-world export and restore', () => {
   const toy = restored.toyById.get('toy-cucumber-persistent');
   assert.ok(toy);
   assert.equal(toy.toyKey, CUCUMBER_SLICE_TOY_KEY);
+  assert.equal(toy.spawnedBySkinId, CUCUMBER_SLICE_SKIN_ID);
 });

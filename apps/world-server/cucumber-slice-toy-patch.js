@@ -2,6 +2,7 @@ import * as CANNON from 'cannon-es';
 import { CONFIG } from '../../src/config/machine-config.js';
 import { WorldEngine } from '../../src/game/world-engine.js';
 
+export const CUCUMBER_SLICE_SKIN_ID = 'yes_drop.cucumber_slice';
 export const CUCUMBER_SLICE_TOY_KEY = 'cucumber_slice';
 export const CUCUMBER_REWARD_MIN = 6;
 export const CUCUMBER_REWARD_MAX = 10;
@@ -24,6 +25,14 @@ function vector(value, length, fallback) {
   return Array.isArray(value) && value.length === length && value.every(Number.isFinite)
     ? [...value]
     : [...fallback];
+}
+
+function safeToyId(turnId) {
+  const suffix = clean(turnId)
+    .replace(/[^a-zA-Z0-9._-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 96);
+  return `toy-cucumber-slice-${suffix || 'turn'}`;
 }
 
 export function cucumberRewardForToyId(toyId) {
@@ -61,6 +70,7 @@ function installCucumberSliceToyPatch() {
     id,
     sourceTurnId = null,
     sourcePlayerId = null,
+    spawnedBySkinId = CUCUMBER_SLICE_SKIN_ID,
     x = 0,
     y = 2.58,
     z = 0.12,
@@ -107,7 +117,7 @@ function installCucumberSliceToyPatch() {
       toyKey: CUCUMBER_SLICE_TOY_KEY,
       sourceTurnId: clean(sourceTurnId) || null,
       sourcePlayerId: clean(sourcePlayerId) || null,
-      spawnedBySkinId: null,
+      spawnedBySkinId: clean(spawnedBySkinId) || CUCUMBER_SLICE_SKIN_ID,
       spawnedAtSimulationSeconds: finite(spawnedAtSimulationSeconds),
       scored: Boolean(scored),
       frontExit: Boolean(frontExit),
@@ -119,7 +129,7 @@ function installCucumberSliceToyPatch() {
     if (emitSpawn) {
       this.onEvent({
         type: 'toy-spawn',
-        reason: 'cucumber-slice-toy',
+        reason: 'cucumber-slice-skin',
         turnId: toy.sourceTurnId,
         playerId: toy.sourcePlayerId,
         toyId: toy.id,
@@ -131,6 +141,28 @@ function installCucumberSliceToyPatch() {
     return toy;
   };
 
+  prototype.spawnCucumberForTurn = function spawnCucumberForTurn(turn) {
+    if (!turn?.id) return null;
+    const id = safeToyId(turn.id);
+    if (this.toyById?.has(id)) return this.toyById.get(id);
+    const x = (this.randomDuringTurn() - 0.5) * 4.2;
+    const z = 0.18 + this.randomDuringTurn() * 0.34;
+    const yaw = this.randomDuringTurn() * Math.PI * 2;
+    const drift = (this.randomDuringTurn() - 0.5) * 0.14;
+    return this.createCucumberSliceToy({
+      id,
+      sourceTurnId: turn.id,
+      sourcePlayerId: turn.playerId,
+      spawnedBySkinId: CUCUMBER_SLICE_SKIN_ID,
+      x,
+      y: 3.05,
+      z,
+      rotationY: yaw,
+      velocity: [drift, -0.22, 0.04],
+      angularVelocity: [0.10 * (this.randomDuringTurn() - 0.5), 0.55 * (this.randomDuringTurn() - 0.5), 0.12 * (this.randomDuringTurn() - 0.5)],
+    });
+  };
+
   const restoreToy = prototype.restoreToy;
   prototype.restoreToy = function restoreToyWithCucumber(saved) {
     const restored = restoreToy.call(this, saved);
@@ -140,6 +172,7 @@ function installCucumberSliceToyPatch() {
       id: saved.id,
       sourceTurnId: saved.sourceTurnId,
       sourcePlayerId: saved.sourcePlayerId,
+      spawnedBySkinId: saved.spawnedBySkinId,
       x: saved.position?.[0],
       y: saved.position?.[1],
       z: saved.position?.[2],
@@ -162,6 +195,14 @@ function installCucumberSliceToyPatch() {
     if (saved.sleeping) toy.body.sleep();
     else toy.body.wakeUp();
     return toy;
+  };
+
+  const startTurn = prototype.startTurn;
+  prototype.startTurn = function startTurnWithCucumber(request = {}) {
+    const turn = startTurn.call(this, request);
+    const skinId = clean(turn?.skinId || this.activeTurnSkinId || this.dropSequence?.skinId);
+    if (skinId === CUCUMBER_SLICE_SKIN_ID) this.spawnCucumberForTurn(turn);
+    return turn;
   };
 
   const checkToyExits = prototype.checkToyExits;
@@ -208,4 +249,5 @@ installCucumberSliceToyPatch();
 export {
   cucumberCrossedFront,
   installCucumberSliceToyPatch,
+  safeToyId,
 };
