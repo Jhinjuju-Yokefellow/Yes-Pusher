@@ -21,7 +21,7 @@ test.after(() => {
   fs.rmSync(dataDir, { recursive: true, force: true });
 });
 
-test('seeds one visible rubber duck immediately behind the payout trigger', () => {
+test('seeds exactly one sleeping duck directly behind the payout trigger', () => {
   const engine = new WorldEngine({ seedMachine: false });
   engine.initializeEmptyMachine();
 
@@ -29,13 +29,15 @@ test('seeds one visible rubber duck immediately behind the payout trigger', () =
   assert.ok(duck);
   assert.equal(duck.toyKey, 'rubber_duck');
   assert.equal(engine.toys.filter((toy) => toy.id === FRONT_EDGE_DEMO_DUCK_ID).length, 1);
+  assert.equal(Number(duck.body.position.x.toFixed(2)), 0);
   assert.ok(duck.body.position.z < CONFIG.board.front - 0.16);
-  assert.ok(duck.body.position.z > CONFIG.board.front - 0.35);
-  assert.ok(duck.body.velocity.z >= 0.24);
+  assert.ok(duck.body.position.z >= CONFIG.board.front - 0.19);
+  assert.equal(duck.body.sleepState, CANNON.Body.SLEEPING);
+  assert.equal(duck.body.velocity.lengthSquared(), 0);
   assert.equal(demoAlreadyCompleted(), false);
 });
 
-test('operator test reset ducks remain three visible sleeping bodies until contacted', () => {
+test('operator test reset requests collapse to one edge duck', () => {
   const engine = new WorldEngine({ seedMachine: false });
   engine.initializeEmptyMachine();
   engine.clearToys();
@@ -46,12 +48,13 @@ test('operator test reset ducks remain three visible sleeping bodies until conta
     emitSpawn: false,
   }));
 
-  assert.equal(ducks.filter(Boolean).length, 3);
-  assert.deepEqual(ducks.map((duck) => Number(duck.body.position.x.toFixed(2))), [-2.15, 0, 2.15]);
-  assert.equal(ducks.every((duck) => duck.body.position.z <= CONFIG.board.front - 0.82), true);
-  assert.equal(ducks.every((duck) => duck.body.position.z > CONFIG.board.front - 1.0), true);
-  assert.equal(ducks.every((duck) => duck.body.sleepState === CANNON.Body.SLEEPING), true);
-  assert.equal(ducks.every((duck) => duck.body.velocity.lengthSquared() === 0), true);
+  assert.equal(ducks.filter(Boolean).length, 1);
+  assert.equal(engine.toys.length, 1);
+  const duck = ducks.find(Boolean);
+  assert.equal(Number(duck.body.position.x.toFixed(2)), 0);
+  assert.ok(duck.body.position.z < CONFIG.board.front - 0.16);
+  assert.ok(duck.body.position.z >= CONFIG.board.front - 0.19);
+  assert.equal(duck.body.sleepState, CANNON.Body.SLEEPING);
 });
 
 test('marks the demo complete after the duck scores so it does not respawn', () => {
