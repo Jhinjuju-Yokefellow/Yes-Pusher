@@ -6,7 +6,6 @@ const patchModules = Array.isArray(workerData?.patchModules) ? workerData.patchM
 for (const modulePath of patchModules) await import(modulePath);
 if (patchModules.includes('./rubber-duck-toy-patch.js')) {
   await import('./cucumber-slice-toy-patch.js');
-  await import('./cucumber-demo-seed-patch.js');
 }
 
 const options = workerData?.options ?? {};
