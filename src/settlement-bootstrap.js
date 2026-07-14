@@ -8,6 +8,7 @@ import './toy-reward-ui-patch.js';
 import './connection-stability-patch.js';
 import './remote-polling-patch.js';
 import './network/queue-join-ack-patch.js';
+import './network/replay-delta-view-patch.js';
 import './turn-result-modal.js';
 import './main.js';
 import './operator-test-controls.js';
