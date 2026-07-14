@@ -108,6 +108,16 @@ function starter() {
   return { skinId: null, name: 'Starter YES Coin', imageUrl: '/assets/coin-face.svg' };
 }
 
+function inventoryPayload(inventory, equipped) {
+  return {
+    starter: starter(),
+    owned: inventory.owned,
+    toys: inventory.toys,
+    queued: inventory.queued,
+    equipped,
+  };
+}
+
 async function handleSkinRoute(request, response) {
   const pathname = new URL(request.url ?? '/', `http://${request.headers.host ?? 'localhost'}`).pathname;
   if (request.method === 'OPTIONS' && pathname.startsWith('/api/skins/')) {
@@ -128,12 +138,7 @@ async function handleSkinRoute(request, response) {
     const inventory = await refreshWallet(session.wallet);
     writeJson(response, 200, {
       ok: true,
-      skins: {
-        starter: starter(),
-        owned: inventory.owned,
-        queued: inventory.queued,
-        equipped: equippedForWallet(session.wallet, inventory),
-      },
+      skins: inventoryPayload(inventory, equippedForWallet(session.wallet, inventory)),
     });
     return true;
   }
@@ -147,7 +152,7 @@ async function handleSkinRoute(request, response) {
       await queueSave();
       writeJson(response, 200, {
         ok: true,
-        skins: { starter: starter(), owned: inventory.owned, queued: inventory.queued, equipped: null },
+        skins: inventoryPayload(inventory, null),
       });
       return true;
     }
@@ -168,12 +173,7 @@ async function handleSkinRoute(request, response) {
     await queueSave();
     writeJson(response, 200, {
       ok: true,
-      skins: {
-        starter: starter(),
-        owned: inventory.owned,
-        queued: inventory.queued,
-        equipped: copyLoadout(saved),
-      },
+      skins: inventoryPayload(inventory, copyLoadout(saved)),
     });
     return true;
   }
