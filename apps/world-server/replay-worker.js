@@ -4,6 +4,9 @@ if (!parentPort) throw new Error('Recorded turn worker requires a parent thread'
 
 const patchModules = Array.isArray(workerData?.patchModules) ? workerData.patchModules : [];
 for (const modulePath of patchModules) await import(modulePath);
+if (patchModules.includes('./rubber-duck-toy-patch.js')) {
+  await import('./cucumber-slice-toy-patch.js');
+}
 
 const options = workerData?.options ?? {};
 const activeTurnSkinId = String(options.activeTurnSkinId ?? '').trim();
