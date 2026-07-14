@@ -63,7 +63,8 @@ function skinMeshState(view, skinId, required) {
 function rebuildReplayLayout(view) {
   view.ensureSkinRendering?.();
   const starter = [];
-  const skinned = new Map();
+  const requestedSkins = new Map();
+  const resolvedSkins = [];
 
   for (const coin of view.coins.values()) {
     const skinId = coin.skinId ?? '';
@@ -71,37 +72,39 @@ function rebuildReplayLayout(view) {
       starter.push(coin);
       continue;
     }
-    const list = skinned.get(skinId) ?? [];
+    const list = requestedSkins.get(skinId) ?? [];
     list.push(coin);
-    skinned.set(skinId, list);
+    requestedSkins.set(skinId, list);
   }
 
-  for (const state of view.skinMeshes?.values?.() ?? []) state.mesh.count = 0;
+  for (const [skinId, coins] of requestedSkins) {
+    const state = skinMeshState(view, skinId, coins.length);
+    if (state) resolvedSkins.push({ skinId, coins, state });
+    else starter.push(...coins);
+  }
+
+  for (const state of view.skinMeshes?.values?.() ?? []) {
+    state.mesh.count = 0;
+    state.mesh.instanceMatrix.clearUpdateRanges?.();
+  }
   view.ensureCapacity(starter.length);
+  view.instanceMesh.instanceMatrix.clearUpdateRanges?.();
   view.deltaReplaySlots = new Map();
 
   for (let index = 0; index < starter.length; index += 1) {
     const coin = starter[index];
-    view.deltaReplaySlots.set(coin.id, { mesh: view.instanceMesh, index, skinId: '' });
+    view.deltaReplaySlots.set(coin.id, {
+      mesh: view.instanceMesh,
+      index,
+      skinId: coin.skinId ?? '',
+    });
     writeCoinMatrix(view, view.instanceMesh, index, coin);
   }
   view.instanceMesh.count = starter.length;
   view.instanceMesh.instanceMatrix.needsUpdate = true;
 
-  for (const [skinId, coins] of skinned) {
-    const state = skinMeshState(view, skinId, coins.length);
-    if (!state) {
-      const offset = view.instanceMesh.count;
-      view.ensureCapacity(offset + coins.length);
-      for (let index = 0; index < coins.length; index += 1) {
-        const coin = coins[index];
-        const slot = offset + index;
-        view.deltaReplaySlots.set(coin.id, { mesh: view.instanceMesh, index: slot, skinId: '' });
-        writeCoinMatrix(view, view.instanceMesh, slot, coin);
-      }
-      view.instanceMesh.count = offset + coins.length;
-      continue;
-    }
+  for (const { skinId, coins, state } of resolvedSkins) {
+    state.mesh.instanceMatrix.clearUpdateRanges?.();
     for (let index = 0; index < coins.length; index += 1) {
       const coin = coins[index];
       view.deltaReplaySlots.set(coin.id, { mesh: state.mesh, index, skinId });
