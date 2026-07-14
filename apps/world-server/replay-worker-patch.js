@@ -88,6 +88,7 @@ function prepareRecordedTurnInWorker(options = {}) {
       if (settled) return;
       settled = true;
       worker.removeAllListeners();
+      void worker.terminate().catch(() => {});
       callback(value);
     };
 
