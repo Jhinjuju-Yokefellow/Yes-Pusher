@@ -12,7 +12,7 @@ const PATCH_MODULES = Object.freeze([
   },
   {
     modulePath: './skin-loadout-patch.js',
-    active: () => Boolean(WorldEngine.prototype.startTurn?.__skinLoadoutPatched),
+    active: () => Boolean(WorldEngine.prototype.createCoin?.__skinLoadoutPatched),
   },
   {
     modulePath: './rubber-duck-toy-patch.js',
