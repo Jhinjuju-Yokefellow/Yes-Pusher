@@ -3,12 +3,19 @@ import http from 'node:http';
 import path from 'node:path';
 import { mkdir, rename, unlink, writeFile } from 'node:fs/promises';
 import { CONFIG } from '../../src/config/machine-config.js';
+import { fastQueueJoin } from './fast-queue-join.js';
 
 const DEFAULT_OPERATOR_WALLET = '0x50e2b2f2be3c8c444c89263275e5a8d26c473357';
+const WORLD_CACHE_MAX_AGE_MS = 750;
 
 function parsePort(value, fallback = 8787) {
   const port = Number(value);
   return Number.isInteger(port) && port > 0 && port < 65536 ? port : fallback;
+}
+
+function parseBroadcastRate(value, fallback = 1) {
+  const rate = Number(value);
+  return Number.isFinite(rate) && rate >= 1 && rate <= 2 ? rate : fallback;
 }
 
 function listen(server, port, host) {
@@ -50,7 +57,7 @@ function anonymousIdentity(playerId, label = '') {
   };
 }
 
-function requestIdentity(instance, request, requestUrl) {
+function requestIdentity(instance, request, requestUrl, fallback = {}) {
   const session = instance.authStore.readRequest(request);
   if (session) {
     return {
@@ -61,8 +68,8 @@ function requestIdentity(instance, request, requestUrl) {
     };
   }
   return anonymousIdentity(
-    requestUrl?.searchParams.get('playerId'),
-    requestUrl?.searchParams.get('label') ?? '',
+    requestUrl?.searchParams.get('playerId') ?? fallback.playerId,
+    requestUrl?.searchParams.get('label') ?? fallback.label ?? '',
   );
 }
 
@@ -252,6 +259,7 @@ async function archiveMachineBoundary(dataDir) {
 
 const port = parsePort(process.env.PORT);
 const host = '0.0.0.0';
+const broadcastRate = parseBroadcastRate(process.env.YES_PUSHER_BROADCAST_RATE, 1);
 const startup = {
   phase: 'booting',
   startedAt: new Date().toISOString(),
@@ -316,13 +324,12 @@ for (const modulePath of OPTIONAL_PATCHES) {
 }
 
 let instance = null;
-let snapshotRefreshInterval = null;
 const dataDir = configuredDataDir();
 try {
   startup.phase = 'initializing-world';
   const { createWorldServer } = await import('./server.js');
   try {
-    instance = await createWorldServer({ port, host, autoListen: false, dataDir });
+    instance = await createWorldServer({ port, host, autoListen: false, dataDir, broadcastRate });
   } catch (firstError) {
     const firstMessage = errorText(firstError);
     console.error('[yes-pusher] saved shared-world boundary failed to restore; archiving machine boundary and retrying');
@@ -333,13 +340,38 @@ try {
       reason: firstMessage,
       ...recovery,
     };
-    instance = await createWorldServer({ port, host, autoListen: false, dataDir });
+    instance = await createWorldServer({ port, host, autoListen: false, dataDir, broadcastRate });
   }
 
   let cachedWorld = instance.publicSnapshot(null);
+  let cachedWorldAt = Date.now();
+  let cacheRefreshScheduled = false;
+
+  const refreshCachedWorld = () => {
+    cachedWorld = instance.publicSnapshot(null);
+    cachedWorldAt = Date.now();
+    return cachedWorld;
+  };
+
+  const scheduleCachedWorldRefresh = ({ force = false } = {}) => {
+    if (cacheRefreshScheduled) return;
+    if (!force && Date.now() - cachedWorldAt < WORLD_CACHE_MAX_AGE_MS) return;
+    cacheRefreshScheduled = true;
+    setImmediate(() => {
+      try {
+        refreshCachedWorld();
+      } catch (error) {
+        console.error('[yes-pusher] cached shared-world refresh failed; keeping the last valid snapshot');
+        console.error(errorText(error));
+      } finally {
+        cacheRefreshScheduled = false;
+      }
+    });
+  };
+
   if (!cachedWorld.replay && Number(cachedWorld.coinCount || 0) === 0) {
     instance.engine.resetMachine();
-    cachedWorld = instance.publicSnapshot(null);
+    refreshCachedWorld();
     startup.recovery = {
       ...(startup.recovery ?? {}),
       machineReseededAt: new Date().toISOString(),
@@ -350,16 +382,6 @@ try {
 
   const requestListeners = instance.server.listeners('request');
   if (!requestListeners.length) throw new Error('Authoritative server did not register an HTTP request handler');
-
-  snapshotRefreshInterval = setInterval(() => {
-    try {
-      cachedWorld = instance.publicSnapshot(null);
-    } catch (error) {
-      console.error('[yes-pusher] cached shared-world refresh failed; keeping the last valid snapshot');
-      console.error(errorText(error));
-    }
-  }, 500);
-  snapshotRefreshInterval.unref?.();
 
   bootstrapServer.removeAllListeners('request');
   bootstrapServer.on('request', async (request, response) => {
@@ -375,6 +397,7 @@ try {
         const identity = requestIdentity(instance, request, requestUrl);
         if (identity?.playerId) instance.queue.touch(identity.playerId, identity.label);
         writeJson(response, 200, personalizeCachedWorld(instance, cachedWorld, identity), request);
+        scheduleCachedWorldRefresh();
       } catch (error) {
         console.error('[yes-pusher] /api/world snapshot response failed');
         console.error(errorText(error));
@@ -382,6 +405,27 @@ try {
           ok: false,
           authoritative: true,
           error: error instanceof Error ? error.message : 'Could not build the shared-world response.',
+        }, request);
+      }
+      return;
+    }
+
+    if (request.method === 'POST' && requestUrl?.pathname === '/api/queue/join') {
+      try {
+        const body = await readJsonBody(request);
+        const identity = requestIdentity(instance, request, requestUrl, body);
+        const result = fastQueueJoin({
+          queue: instance.queue,
+          identity,
+          requireWallet: Boolean(cachedWorld.auth?.requireWallet),
+          requestedCoins: body.coins,
+        });
+        writeJson(response, result.status, result.payload, request);
+        if (result.status === 200) scheduleCachedWorldRefresh({ force: true });
+      } catch (error) {
+        writeJson(response, 400, {
+          ok: false,
+          error: error instanceof Error ? error.message : 'Could not join the shared queue.',
         }, request);
       }
       return;
@@ -405,7 +449,7 @@ try {
 
         const body = await readJsonBody(request);
         const result = await resetTestMachine(instance, dataDir, body);
-        cachedWorld = instance.publicSnapshot(null);
+        refreshCachedWorld();
         const personalized = personalizeCachedWorld(instance, cachedWorld, identity);
         writeJson(response, 200, {
           ok: true,
@@ -435,6 +479,7 @@ try {
     }
 
     for (const listener of requestListeners) listener.call(instance.server, request, response);
+    scheduleCachedWorldRefresh({ force: true });
   });
 
   startup.phase = 'ready';
@@ -448,7 +493,6 @@ try {
 }
 
 const shutdown = async () => {
-  if (snapshotRefreshInterval) clearInterval(snapshotRefreshInterval);
   await instance?.close?.().catch(() => {});
   await new Promise((resolve) => bootstrapServer.close(() => resolve()));
   process.exit(0);
