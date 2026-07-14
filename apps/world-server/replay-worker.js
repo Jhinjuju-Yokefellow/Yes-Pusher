@@ -10,6 +10,7 @@ if (patchModules.includes('./rubber-duck-toy-patch.js')) {
 
 const options = workerData?.options ?? {};
 const activeTurnSkinId = String(options.activeTurnSkinId ?? '').trim();
+const activeTurnSkinImageUrl = String(options.activeTurnSkinImageUrl ?? '').trim();
 const playerId = String(options.playerId ?? '').trim().toLowerCase();
 const deltaReplayEnabled = process.env.YES_PUSHER_REPLAY_DELTA !== 'false';
 
@@ -19,6 +20,7 @@ if (activeTurnSkinId && playerId.startsWith('wallet:') && patchModules.includes(
   bridge.loadouts.set(wallet, {
     wallet,
     skinId: activeTurnSkinId,
+    imageUrl: activeTurnSkinImageUrl || null,
     owned: true,
     verifiedAt: Date.now(),
     updatedAt: new Date().toISOString(),
