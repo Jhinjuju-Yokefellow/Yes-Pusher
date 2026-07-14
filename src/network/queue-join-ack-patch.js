@@ -2,11 +2,19 @@ import { SharedWorldClient } from './shared-world-client.js';
 
 const PATCH_KEY = Symbol.for('yes-pusher:queue-join-ack-patch');
 
+function normalizeCoinCount(value, fallback = 5) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  return Math.max(1, Math.min(10, Math.floor(numeric)));
+}
+
 function applyQueueJoinAck(client, payload, requestedCoins) {
   if (!payload?.ok || !payload?.queued || !client?.snapshot?.self) return false;
 
-  const normalizedCoins = Math.max(1, Math.min(10, Math.floor(Number(payload.requestedCoins ?? requestedCoins) || 5)));
-  const position = Number.isInteger(Number(payload.position)) ? Number(payload.position) : 1;
+  const normalizedCoins = normalizeCoinCount(payload.requestedCoins, normalizeCoinCount(requestedCoins));
+  const position = Number.isInteger(Number(payload.position)) && Number(payload.position) > 0
+    ? Number(payload.position)
+    : 1;
   const existingQueue = Array.isArray(client.snapshot.queue) ? client.snapshot.queue : [];
   const selfId = client.snapshot.self.id;
   const selfLabel = client.snapshot.self.label ?? client.playerLabel;
@@ -25,12 +33,10 @@ function applyQueueJoinAck(client, payload, requestedCoins) {
   const snapshot = {
     ...client.snapshot,
     queue: nextQueue,
-    activePlayerId: position === 1 ? selfId : client.snapshot.activePlayerId,
     self: {
       ...client.snapshot.self,
       queued: true,
       queuePosition: position,
-      isActive: position === 1,
       queuedCoins: normalizedCoins,
     },
   };
@@ -60,4 +66,4 @@ function installQueueJoinAckPatch() {
 
 installQueueJoinAckPatch();
 
-export { applyQueueJoinAck, installQueueJoinAckPatch };
+export { applyQueueJoinAck, installQueueJoinAckPatch, normalizeCoinCount };
