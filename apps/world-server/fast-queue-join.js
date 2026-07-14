@@ -13,6 +13,7 @@ export function fastQueueJoin({ queue, identity, requireWallet = true, requested
   }
 
   const position = queue.join(identity.playerId, identity.label ?? '', requestedCoins);
+  const normalizedRequestedCoins = queue.getPlayer?.(identity.playerId)?.requestedCoins ?? 5;
   return {
     status: 200,
     payload: {
@@ -20,6 +21,7 @@ export function fastQueueJoin({ queue, identity, requireWallet = true, requested
       accepted: true,
       queued: true,
       position,
+      requestedCoins: normalizedRequestedCoins,
     },
   };
 }
