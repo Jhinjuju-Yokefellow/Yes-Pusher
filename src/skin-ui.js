@@ -1,7 +1,6 @@
 import './skin-ui.css';
 import { SharedWorldClient } from './network/shared-world-client.js';
 import { worldServerUrl } from './network/world-server-url.js';
-import { renderToyShowcase } from './toy-showcase-ui.js';
 
 const playerCard = document.querySelector('.player-card');
 const playerMetrics = document.querySelector('.player-metrics');
@@ -13,6 +12,14 @@ let pending = false;
 
 function clean(value) {
   return String(value ?? '').trim();
+}
+
+function publishToyInventory(toys = []) {
+  const owned = Array.isArray(toys) ? toys.map((toy) => ({ ...toy })) : [];
+  globalThis.__yesPusherOwnedToys = owned;
+  globalThis.dispatchEvent?.(new CustomEvent('yes-pusher:toy-inventory', {
+    detail: { toys: owned },
+  }));
 }
 
 function createLocker() {
@@ -86,7 +93,7 @@ function renderInventory(value, message = '') {
   const toys = Array.isArray(value?.toys) ? value.toys : [];
   const equipped = value?.equipped ?? null;
 
-  renderToyShowcase(toys, !currentWallet ? 'CONNECT WALLET TO LOAD TOYS' : '');
+  publishToyInventory(toys);
 
   if (select) {
     select.replaceChildren();
@@ -194,3 +201,5 @@ if (!originalAcceptSnapshot.__skinUiPatched) {
 }
 
 renderInventory(null);
+
+export { publishToyInventory };
