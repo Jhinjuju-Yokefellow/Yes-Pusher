@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#03050b" />
+    <title>YES Pusher Rebuild</title>
+  </head>
+  <body>
+    <canvas id="rebuildCanvas"></canvas>
+
+    <section class="panel status-panel">
+      <span class="eyebrow">ISOLATED RAILWAY REBUILD</span>
+      <strong id="connectionStatus">CONNECTING</strong>
+      <div class="metrics">
+        <span>ACTIVE <b id="activePlayer">NONE</b></span>
+        <span>QUEUE <b id="queueCount">0</b></span>
+        <span>OBJECTS <b id="objectCount">0</b></span>
+        <span>PLAYS <b id="completedPlays">0</b></span>
+      </div>
+    </section>
+
+    <section id="eventLog" class="panel" aria-live="polite"></section>
+
+    <section class="panel controls-panel">
+      <label>
+        Coins
+        <input id="coinsInput" type="number" min="1" max="10" value="5" />
+      </label>
+      <label>
+        Browser visual key
+        <select id="skinSelect"></select>
+      </label>
+      <button id="dropButton" type="button">DROP COINS</button>
+    </section>
+
+    <script type="module" src="/src/rebuild/client/main.js"></script>
+  </body>
+</html>
