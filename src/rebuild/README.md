@@ -4,7 +4,7 @@ This directory is the clean replacement path. It is intentionally isolated from 
 
 ## Non-negotiable boundaries
 
-- The machine core never imports wallet, NFT, HTTP, Railway, Vercel, settlement, replay, or Yokefellow modules.
+- The machine core never imports wallet, NFT, HTTP, Railway, settlement, replay, or Yokefellow modules.
 - The physical pusher continues moving even when no player owns a scoring session.
 - DROP becomes a local command accepted by the core immediately.
 - Physics objects carry compact visual keys, never image URLs or NFT JSON.
@@ -30,7 +30,7 @@ This directory is the clean replacement path. It is intentionally isolated from 
 
 3. **Browser renderer**
    - Interpolation only; no authoritative physics.
-   - Visual registry for coin skins and toy models.
+   - Browser-side visual registry for coin skins and toy models.
    - Both physical cabinets show the active player's owned toy NFTs.
 
 4. **External workers**
@@ -45,11 +45,41 @@ This directory is the clean replacement path. It is intentionally isolated from 
    - Delayed inventory and failed mint fault tests.
    - Ten consecutive players and 100 consecutive plays without a freeze.
 
+## Current branch entrypoints
+
+- Browser: `rebuild.html`
+- Server: `apps/rebuild-server.js`
+- Health: `/healthz`
+- Boundary: `/api/rebuild/state`
+- Live stream: `/api/rebuild/events`
+- DROP: `POST /api/rebuild/drop`
+
+The server serves the built browser files itself. There is no separate frontend deployment.
+
 ## Commands
 
 ```bash
+npm ci
 npm run test:rebuild
-npm run stress:rebuild
+npm run stress:rebuild -- 100
+npm run build
+npm run start:rebuild
 ```
 
-The stress command defaults to 100 one-coin plays. A different count may be supplied as the first argument.
+## Railway service
+
+Create a separate Railway service from the rebuild branch until hosted acceptance is complete.
+
+```text
+Build command: npm ci && npm run build
+Start command: npm run start:rebuild
+Health check: /healthz
+```
+
+Attach a Railway volume and set:
+
+```text
+YES_PUSHER_REBUILD_DATA_DIR=/data
+```
+
+The service root serves the rebuild browser and all API/stream traffic from the same process and commit.
