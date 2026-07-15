@@ -36,9 +36,19 @@ function renderToyShowcase(toys = [], message = '') {
     const card = document.createElement('article');
     card.className = 'toy-showcase-item';
 
-    const image = document.createElement('img');
-    image.src = clean(toy.imageUrl) || '/assets/coin-face.svg';
-    image.alt = clean(toy.name) || 'YES Pusher toy NFT';
+    const imageUrl = clean(toy.imageUrl);
+    if (imageUrl) {
+      const image = document.createElement('img');
+      image.src = imageUrl;
+      image.alt = clean(toy.name) || 'YES Pusher toy NFT';
+      image.addEventListener('error', () => {
+        image.remove();
+        card.classList.add('image-missing');
+      }, { once: true });
+      card.appendChild(image);
+    } else {
+      card.classList.add('image-missing');
+    }
 
     const copy = document.createElement('span');
     const name = document.createElement('strong');
@@ -49,7 +59,7 @@ function renderToyShowcase(toys = [], message = '') {
     meta.textContent = [size ? size.toUpperCase() : '', quantity > 1 ? `×${quantity}` : ''].filter(Boolean).join(' ');
     copy.append(name, meta);
 
-    card.append(image, copy);
+    card.appendChild(copy);
     items.appendChild(card);
   }
 
