@@ -7,7 +7,7 @@
     "dev": "node scripts/dev.mjs",
     "dev:web": "vite --host 0.0.0.0",
     "dev:server": "node apps/world-server/live-hosted-server.js",
-    "build": "node --test test/shared-status.test.js test/boundary-network-cache.test.js test/cucumber-slice-toy.test.js test/skin-image-url.test.js test/toy-nft-showcase.test.js test/live-authoritative-stream.test.js test/queue-join-nonblocking.test.js test/rebuild-machine-core.test.js && vite build",
+    "build": "node --test test/shared-status.test.js test/boundary-network-cache.test.js test/cucumber-slice-toy.test.js test/skin-image-url.test.js test/toy-nft-showcase.test.js test/live-authoritative-stream.test.js test/queue-join-nonblocking.test.js test/rebuild-machine-core.test.js && node scripts/rebuild-machine-stress.mjs 100 && vite build",
     "preview": "vite preview --host 0.0.0.0",
     "start": "node apps/world-server/live-hosted-server.js",
     "test": "node --test",
