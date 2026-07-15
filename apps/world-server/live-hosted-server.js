@@ -7,7 +7,6 @@ import './automatic-mint-patch.js';
 import './toy-reward-settlement-patch.js';
 import './toy-reward-startup-fix.js';
 import './squeak-wave-boost-patch.js';
-import './turn-flow-stability-patch.js';
 import './skin-loadout-patch.js';
 import './rubber-duck-toy-patch.js';
 import './cucumber-slice-toy-patch.js';
