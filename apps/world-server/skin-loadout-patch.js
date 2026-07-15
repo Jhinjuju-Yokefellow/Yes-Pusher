@@ -182,18 +182,17 @@ async function handleSkinRoute(request, response) {
   return true;
 }
 
-async function verifyQueueJoin(request) {
+function verifyQueueJoin(request) {
   const pathname = new URL(request.url ?? '/', `http://${request.headers.host ?? 'localhost'}`).pathname;
   if (request.method !== 'POST' || pathname !== '/api/queue/join') return;
   const session = identity(request);
   if (!session?.wallet || !bridge.loadouts.has(normalizeWallet(session.wallet))) return;
-  try {
-    await refreshWallet(session.wallet);
-  } catch {
-    const wallet = normalizeWallet(session.wallet);
+
+  const wallet = normalizeWallet(session.wallet);
+  void refreshWallet(session.wallet).catch(() => {
     const current = bridge.loadouts.get(wallet);
     if (current) bridge.loadouts.set(wallet, { ...current, owned: false, verifiedAt: 0 });
-  }
+  });
 }
 
 const previousCreateServer = http.createServer.bind(http);
@@ -203,7 +202,7 @@ if (!http.createServer.__skinLoadoutPatched) {
     return previousCreateServer(async (request, response) => {
       try {
         if (await handleSkinRoute(request, response)) return;
-        await verifyQueueJoin(request);
+        verifyQueueJoin(request);
       } catch (error) {
         const pathname = new URL(request.url ?? '/', `http://${request.headers.host ?? 'localhost'}`).pathname;
         if (pathname.startsWith('/api/skins/')) {
@@ -227,4 +226,4 @@ const refreshTimer = setInterval(() => {
 }, 30_000);
 refreshTimer.unref?.();
 
-export { bridge, handleSkinRoute };
+export { bridge, handleSkinRoute, verifyQueueJoin };
