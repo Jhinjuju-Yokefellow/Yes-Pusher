@@ -1,17 +1,19 @@
 {
   "name": "yes-pusher-shared-world",
   "private": true,
-  "version": "0.10.1",
+  "version": "0.11.0-rebuild.1",
   "type": "module",
   "scripts": {
     "dev": "node scripts/dev.mjs",
     "dev:web": "vite --host 0.0.0.0",
     "dev:server": "node apps/world-server/live-hosted-server.js",
-    "build": "node --test test/shared-status.test.js test/boundary-network-cache.test.js test/cucumber-slice-toy.test.js test/skin-image-url.test.js test/toy-nft-showcase.test.js test/live-authoritative-stream.test.js test/queue-join-nonblocking.test.js test/rebuild-machine-core.test.js && vite build",
+    "dev:rebuild-server": "node apps/rebuild-server.js",
+    "build": "node --test test/shared-status.test.js test/boundary-network-cache.test.js test/cucumber-slice-toy.test.js test/skin-image-url.test.js test/toy-nft-showcase.test.js test/live-authoritative-stream.test.js test/queue-join-nonblocking.test.js test/rebuild-machine-core.test.js test/rebuild-authoritative-server.test.js && vite build",
     "preview": "vite preview --host 0.0.0.0",
     "start": "node apps/world-server/live-hosted-server.js",
+    "start:rebuild": "node apps/rebuild-server.js",
     "test": "node --test",
-    "test:rebuild": "node --test test/rebuild-machine-core.test.js",
+    "test:rebuild": "node --test test/rebuild-machine-core.test.js test/rebuild-authoritative-server.test.js",
     "stress:rebuild": "node scripts/rebuild-machine-stress.mjs"
   },
   "dependencies": {
