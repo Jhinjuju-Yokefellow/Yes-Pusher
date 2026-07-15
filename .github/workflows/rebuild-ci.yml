@@ -1,0 +1,41 @@
+name: Rebuild CI
+
+on:
+  pull_request:
+    paths:
+      - 'apps/rebuild-server.js'
+      - 'rebuild.html'
+      - 'src/rebuild/**'
+      - 'scripts/rebuild-machine-stress.mjs'
+      - 'test/rebuild-*.test.js'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'vite.config.js'
+      - '.github/workflows/rebuild-ci.yml'
+  workflow_dispatch:
+
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run test:rebuild
+      - run: npm run build
+
+  hundred-play-stress:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run stress:rebuild -- 100
