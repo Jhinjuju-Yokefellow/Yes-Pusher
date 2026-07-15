@@ -10,6 +10,7 @@ import './remote-polling-patch.js';
 import './network/queue-join-ack-patch.js';
 import './network/replay-delta-view-patch.js';
 import './skin-image-view-patch.js';
+import './network/live-stream-view-patch.js';
 import './cucumber-chop-view-patch.js';
 import './cucumber-reward-display-patch.js';
 import './turn-result-modal.js';
