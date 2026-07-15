@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { normalizeToyHolding } from '../apps/world-server/skin-loadout-store.js';
+import { createShowcaseToyMesh, showcaseToyScale } from '../src/machine/cabinet.js';
 
 test('normalizes YES Pusher toy NFT metadata for the showcase', () => {
   const holding = normalizeToyHolding({
@@ -48,4 +49,29 @@ test('does not classify coin skins as toy NFTs', () => {
     classKey: 'yes_drop.cucumber_slice',
     meta: { outputKey: 'yes_drop.cucumber_slice' },
   }), null);
+});
+
+test('builds real Rubber Duck and Cucumber models for the physical cabinet', () => {
+  const duck = createShowcaseToyMesh({
+    holdingId: 'duck-small',
+    toyKey: 'rubber_duck',
+    sizeTier: 'small',
+  });
+  const cucumber = createShowcaseToyMesh({
+    holdingId: 'cucumber-small',
+    toyKey: 'cucumber',
+    sizeTier: 'small',
+  });
+
+  assert.equal(duck?.isGroup, true);
+  assert.equal(cucumber?.isGroup, true);
+  assert.equal(duck?.userData.holdingId, 'duck-small');
+  assert.equal(cucumber?.userData.holdingId, 'cucumber-small');
+  assert.equal(createShowcaseToyMesh({ toyKey: 'unknown' }), null);
+});
+
+test('uses progressively larger physical models for crafted toy tiers', () => {
+  assert.ok(showcaseToyScale('medium') > showcaseToyScale('small'));
+  assert.ok(showcaseToyScale('large') > showcaseToyScale('medium'));
+  assert.ok(showcaseToyScale('huge') > showcaseToyScale('large'));
 });
