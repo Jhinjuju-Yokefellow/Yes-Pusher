@@ -1,18 +1,11 @@
 import './load-env.js';
 import http from 'node:http';
 import { createReadStream, existsSync } from 'node:fs';
-import { mkdir, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { gzipSync } from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 import { WorldEngine } from '../../src/game/world-engine.js';
 import { normalizeWorldSnapshot } from '../../src/game/world-snapshot.js';
-import {
-  isReplayPackage,
-  publicTurnSnapshotFromReplay,
-  replayFramesAt,
-  simulateRecordedTurn,
-} from '../../src/game/replay-package.js';
 import { TURN_STATES } from '../../src/game/turn-controller.js';
 import { PlayerQueue } from './player-queue.js';
 import { PlayerProgressStore } from './player-progress.js';
@@ -20,19 +13,14 @@ import {
   WalletAuthStore,
   clearSessionCookie,
   sessionCookie,
-  walletLabel,
 } from './wallet-auth.js';
 import { SettlementOutbox, settlementConfigFromEnv } from './settlement-outbox.js';
+import { refreshWallet } from './skin-loadout-store.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(__dirname, '../..');
 const DIST_DIR = path.join(PROJECT_ROOT, 'dist');
 const DEFAULT_DATA_DIR = path.join(PROJECT_ROOT, '.world-data');
-
-const JSON_HEADERS = {
-  'content-type': 'application/json; charset=utf-8',
-  'cache-control': 'no-store',
-};
 
 function parsePort(value, fallback = 8787) {
   const port = Number(value);
@@ -42,11 +30,6 @@ function parsePort(value, fallback = 8787) {
 function parseRate(value, fallback, minimum = 1, maximum = 120) {
   const rate = Number(value);
   return Number.isFinite(rate) && rate >= minimum && rate <= maximum ? rate : fallback;
-}
-
-function writeJson(response, statusCode, payload) {
-  response.writeHead(statusCode, JSON_HEADERS);
-  response.end(JSON.stringify(payload));
 }
 
 function normalizeOrigin(value) {
@@ -92,8 +75,7 @@ function serverOrigin(request) {
   const forwarded = String(request.headers['x-forwarded-proto'] ?? '').split(',')[0].trim();
   const protocol = forwarded || (request.socket?.encrypted ? 'https' : 'http');
   const forwardedHost = String(request.headers['x-forwarded-host'] ?? '').split(',')[0].trim();
-  const host = forwardedHost || request.headers.host || 'localhost';
-  return `${protocol}://${host}`;
+  return `${protocol}://${forwardedHost || request.headers.host || 'localhost'}`;
 }
 
 function requestOrigin(request, allowedOrigins) {
@@ -110,14 +92,32 @@ function requestUsesCrossSiteCookie(request, allowedOrigins) {
 function anonymousIdentity(playerId, label = '') {
   const requestedId = String(playerId ?? '').trim();
   if (!requestedId) return null;
-  // Never allow an unsigned browser identifier to masquerade as a wallet session.
-  const id = requestedId.startsWith('wallet:') ? `guest:${requestedId.slice('wallet:'.length)}` : requestedId;
+  const id = requestedId.startsWith('wallet:')
+    ? `guest:${requestedId.slice('wallet:'.length)}`
+    : requestedId;
   return {
     playerId: id,
     label: String(label ?? ''),
     wallet: null,
     authenticated: false,
   };
+}
+
+function walletFromPlayerId(playerId) {
+  const value = String(playerId ?? '').trim();
+  if (!value.startsWith('wallet:')) return '';
+  const wallet = value.slice('wallet:'.length).toLowerCase();
+  return /^0x[a-f0-9]{40}$/.test(wallet) ? wallet : '';
+}
+
+function writeJson(response, statusCode, payload) {
+  const body = JSON.stringify(payload);
+  response.writeHead(statusCode, {
+    'content-type': 'application/json; charset=utf-8',
+    'content-length': Buffer.byteLength(body),
+    'cache-control': 'no-store',
+  });
+  response.end(body);
 }
 
 async function readJsonBody(request, limit = 32_000) {
@@ -130,6 +130,21 @@ async function readJsonBody(request, limit = 32_000) {
   }
   if (!chunks.length) return {};
   return JSON.parse(Buffer.concat(chunks).toString('utf8'));
+}
+
+async function loadJson(filePath) {
+  try {
+    return JSON.parse(await readFile(filePath, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+async function saveJsonAtomic(filePath, value) {
+  await mkdir(path.dirname(filePath), { recursive: true });
+  const temporary = `${filePath}.tmp`;
+  await writeFile(temporary, `${JSON.stringify(value)}\n`, 'utf8');
+  await rename(temporary, filePath);
 }
 
 function mimeType(filePath) {
@@ -148,22 +163,16 @@ function mimeType(filePath) {
   })[extension] ?? 'application/octet-stream';
 }
 
-function statusText(engineSnapshot, queue) {
-  const turn = engineSnapshot.turn;
+function statusText(world, queue) {
   const active = queue.publicQueue()[0];
   const activeName = active?.label ?? 'NEXT PLAYER';
-  if (engineSnapshot.syncMode === 'preparing') {
-    return `PREPARING TURN ${turn.currentTurn?.number ?? turn.nextTurnNumber} — ${activeName}`;
-  }
-  switch (turn.state) {
-    case TURN_STATES.PREPARING:
-      return `PREPARING TURN ${turn.currentTurn?.number ?? turn.nextTurnNumber} — ${activeName}`;
+  switch (world.turn?.state) {
     case TURN_STATES.DROPPING:
-      return `TURN ${turn.currentTurn?.number ?? turn.nextTurnNumber} — ${activeName} INSERTING COINS`;
+      return `TURN ${world.turn.currentTurn?.number ?? world.turn.nextTurnNumber} — ${activeName} INSERTING COINS`;
     case TURN_STATES.WAITING:
       return 'FINAL COIN ENTERING PUSHER';
     case TURN_STATES.ACTIVE:
-      return `TURN ${turn.currentTurn?.number ?? turn.nextTurnNumber} — ${activeName} PUSH WINDOW`;
+      return `TURN ${world.turn.currentTurn?.number ?? world.turn.nextTurnNumber} — ${activeName} PUSH WINDOW`;
     case TURN_STATES.FINISHING:
       return 'FINISHING CURRENT PUSHER CYCLE';
     case TURN_STATES.SETTLING:
@@ -173,23 +182,17 @@ function statusText(engineSnapshot, queue) {
   }
 }
 
-async function loadJson(filePath) {
-  try {
-    return JSON.parse(await readFile(filePath, 'utf8'));
-  } catch {
-    return null;
-  }
-}
-
-async function loadSavedWorld(worldFile) {
-  return normalizeWorldSnapshot(await loadJson(worldFile));
-}
-
-async function saveWorldAtomic(worldFile, snapshot) {
-  await mkdir(path.dirname(worldFile), { recursive: true });
-  const temporary = `${worldFile}.tmp`;
-  await writeFile(temporary, `${JSON.stringify(snapshot)}\n`, 'utf8');
-  await rename(temporary, worldFile);
+function withTimeout(promise, milliseconds) {
+  let timer = null;
+  return Promise.race([
+    Promise.resolve(promise),
+    new Promise((resolve) => {
+      timer = setTimeout(resolve, milliseconds);
+      timer.unref?.();
+    }),
+  ]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
 }
 
 export async function createWorldServer({
@@ -198,8 +201,7 @@ export async function createWorldServer({
   dataDir = process.env.YES_PUSHER_DATA_DIR || DEFAULT_DATA_DIR,
   autoListen = true,
   tickRate = parseRate(process.env.YES_PUSHER_TICK_RATE, 60, 30, 120),
-  broadcastRate = parseRate(process.env.YES_PUSHER_BROADCAST_RATE, 2, 1, 2),
-  replayFrameRate = parseRate(process.env.YES_PUSHER_REPLAY_FRAME_RATE, 15, 5, 30),
+  broadcastRate = parseRate(process.env.YES_PUSHER_STREAM_RATE, 12, 5, 30),
   testMode = process.env.YES_PUSHER_TEST_MODE === 'true',
   requireWallet = process.env.YES_PUSHER_REQUIRE_WALLET !== 'false'
     && process.env.YES_PUSHER_TEST_MODE !== 'true',
@@ -211,14 +213,12 @@ export async function createWorldServer({
   const worldFile = path.join(dataDir, 'confirmed-world.json');
   const progressFile = path.join(dataDir, 'player-progress.json');
   const settlementFile = path.join(dataDir, 'settlements.json');
-  const replayDir = path.join(dataDir, 'replays');
-  const activeReplayFile = path.join(dataDir, 'active-replay.json');
-  const [initialSnapshot, savedProgress, savedSettlements, savedActiveReplay] = await Promise.all([
-    loadSavedWorld(worldFile),
+  const [rawWorld, savedProgress, savedSettlements] = await Promise.all([
+    loadJson(worldFile),
     loadJson(progressFile),
     loadJson(settlementFile),
-    loadJson(activeReplayFile),
   ]);
+  const initialSnapshot = normalizeWorldSnapshot(rawWorld);
   const queue = new PlayerQueue();
   const progressStore = new PlayerProgressStore(savedProgress);
   const settlementStore = new SettlementOutbox(savedSettlements, {
@@ -230,14 +230,14 @@ export async function createWorldServer({
   const connectionClientIds = new Map();
   const recentPollClients = new Map();
   let revision = 0;
+  let streamSequence = 0;
   let boundaryRevision = 1;
-  let preparingTurn = null;
-  let activeReplay = null;
-  let preparationPromise = null;
-  let lastPreparationError = null;
-  let savePromise = Promise.resolve();
   let closed = false;
+  let startingPromise = null;
+  let savePromise = Promise.resolve();
   let lastSavedAt = initialSnapshot ? Date.now() : null;
+  let handledTurnId = null;
+  let lastTickAt = performance.now();
 
   const engine = new WorldEngine({
     initialSnapshot,
@@ -246,39 +246,13 @@ export async function createWorldServer({
     },
   });
 
-
-  async function persistConfirmedState() {
+  async function persistState() {
     await Promise.all([
-      saveWorldAtomic(worldFile, engine.exportConfirmedWorld()),
-      saveWorldAtomic(progressFile, progressStore.serialize()),
-      saveWorldAtomic(settlementFile, settlementStore.serialize()),
+      saveJsonAtomic(worldFile, engine.exportConfirmedWorld()),
+      saveJsonAtomic(progressFile, progressStore.serialize()),
+      saveJsonAtomic(settlementFile, settlementStore.serialize()),
     ]);
     lastSavedAt = Date.now();
-  }
-
-  function replayFilePath(turnId) {
-    const safeId = String(turnId ?? '').replace(/[^a-zA-Z0-9._-]/g, '');
-    if (!safeId) throw new Error('Invalid replay ID');
-    return path.join(replayDir, `${safeId}.json`);
-  }
-
-  async function saveReplayPackage(replayPackage) {
-    await mkdir(replayDir, { recursive: true });
-    await saveWorldAtomic(replayFilePath(replayPackage.id), replayPackage);
-  }
-
-  async function saveActiveReplayState() {
-    if (!activeReplay) {
-      await unlink(activeReplayFile).catch(() => {});
-      return;
-    }
-    await saveWorldAtomic(activeReplayFile, {
-      kind: 'yes-pusher-active-replay',
-      version: 1,
-      turnId: activeReplay.package.id,
-      startedAt: activeReplay.startedAt,
-      boundaryId: activeReplay.boundaryId,
-    });
   }
 
   function connectionCount() {
@@ -289,20 +263,16 @@ export async function createWorldServer({
 
   function markPollClient(clientId, playerId) {
     const id = String(clientId ?? '').trim();
-    if (!id) return;
-    recentPollClients.set(id, { playerId: String(playerId ?? ''), seenAt: Date.now() });
+    if (id) recentPollClients.set(id, { playerId: String(playerId ?? ''), seenAt: Date.now() });
   }
 
   function pollingClientCount() {
     const cutoff = Date.now() - 15_000;
-    const streamedClientIds = new Set(connectionClientIds.values());
+    const streamed = new Set(connectionClientIds.values());
     let total = 0;
     for (const [clientId, state] of recentPollClients) {
-      if (state.seenAt < cutoff) {
-        recentPollClients.delete(clientId);
-        continue;
-      }
-      if (!streamedClientIds.has(clientId)) total += 1;
+      if (state.seenAt < cutoff) recentPollClients.delete(clientId);
+      else if (!streamed.has(clientId)) total += 1;
     }
     return total;
   }
@@ -324,92 +294,14 @@ export async function createWorldServer({
     return anonymousIdentity(fallbackId, fallbackLabel);
   }
 
-  function preparingTurnSnapshot() {
-    const base = engine.turnController.getSnapshot();
-    if (!preparingTurn) return base;
-    return {
-      ...base,
-      state: TURN_STATES.PREPARING,
-      currentTurn: {
-        id: preparingTurn.turnId,
-        playerId: preparingTurn.playerId,
-        number: preparingTurn.number,
-        coinsDropped: preparingTurn.coinsDropped,
-        coinsWon: 0,
-        coinsLost: 0,
-        slotPlan: [],
-        seed: preparingTurn.seed,
-        startedAt: preparingTurn.requestedAt,
-        activeStartedAt: null,
-        completedAt: null,
-      },
-      lastResult: null,
-      activeSecondsRemaining: 30,
-      ownsScoringWindow: false,
-    };
-  }
-
   function transportWorld() {
     const boundary = engine.getNetworkSnapshot({ packed: true });
-    const boundaryId = `boundary-${boundaryRevision}`;
-
-    if (preparingTurn) {
-      return {
-        ...boundary,
-        syncMode: 'preparing',
-        boundaryId,
-        prepare: {
-          turnId: preparingTurn.turnId,
-          playerId: preparingTurn.playerId,
-          coinsDropped: preparingTurn.coinsDropped,
-          requestedAt: preparingTurn.requestedAt,
-          simulatedSeconds: preparingTurn.simulatedSeconds ?? 0,
-          frameCount: preparingTurn.frameCount ?? 0,
-          coinCount: preparingTurn.coinCount ?? boundary.coinCount,
-        },
-        replay: null,
-        turn: preparingTurnSnapshot(),
-      };
-    }
-
-    if (activeReplay) {
-      const elapsedSeconds = Math.max(0, (Date.now() - activeReplay.startedAt) / 1000);
-      const frame = replayFramesAt(activeReplay.package, elapsedSeconds).previous;
-      const replayTurn = publicTurnSnapshotFromReplay(
-        activeReplay.package,
-        Math.min(elapsedSeconds, Math.max(0, activeReplay.package.durationSeconds - 0.0001)),
-        boundary.turn,
-      );
-      if (replayTurn.currentTurn) {
-        replayTurn.currentTurn.startedAt = activeReplay.startedAt;
-        replayTurn.currentTurn.activeStartedAt = activeReplay.startedAt;
-      }
-      return {
-        ...activeReplay.package.startWorld,
-        syncMode: 'recorded-replay',
-        boundaryId: activeReplay.boundaryId,
-        prepare: null,
-        replay: {
-          turnId: activeReplay.package.id,
-          packageUrl: `/api/replays/${encodeURIComponent(activeReplay.package.id)}`,
-          startedAt: activeReplay.startedAt,
-          elapsedSeconds,
-          durationSeconds: activeReplay.package.durationSeconds,
-          frameRate: activeReplay.package.frameRate,
-          eventCount: activeReplay.package.events.length,
-          payoutCoinIds: activeReplay.package.events.filter((event) => event.type === 'payout').map((event) => event.coinId),
-        },
-        pusherZ: frame?.pusherZ ?? activeReplay.package.startWorld?.pusherZ ?? boundary.pusherZ,
-        activeSlotIndex: frame?.activeSlotIndex ?? -1,
-        coinCount: frame?.coins?.length ?? activeReplay.package.startWorld?.coinCount ?? boundary.coinCount,
-        turn: replayTurn,
-      };
-    }
-
     return {
       ...boundary,
-      syncMode: 'boundary',
-      boundaryId,
+      syncMode: 'live-stream',
+      boundaryId: `live-boundary-${boundaryRevision}`,
+      streamSequence,
+      streamRate: broadcastRate,
       prepare: null,
       replay: null,
     };
@@ -422,7 +314,7 @@ export async function createWorldServer({
     const position = playerId ? queue.positionOf(playerId) : null;
     return {
       kind: 'yes-pusher-shared-world',
-      protocolVersion: 4,
+      protocolVersion: 5,
       revision,
       serverTime: Date.now(),
       authoritative: true,
@@ -462,162 +354,19 @@ export async function createWorldServer({
     response.write(`data: ${JSON.stringify(payload)}\n\n`);
   }
 
-  async function prepareTurn(preparation) {
-    const initialWorld = engine.exportConfirmedWorld();
-    const startBoundary = engine.getNetworkSnapshot({ packed: true });
-    const replayPackage = await simulateRecordedTurn({
-      initialWorld,
-      startBoundary,
-      playerId: preparation.playerId,
-      playerLabel: preparation.playerLabel,
-      coinsDropped: preparation.coinsDropped,
-      seed: preparation.seed,
-      turnId: preparation.turnId,
-      frameRate: replayFrameRate,
-      onProgress: (progress) => {
-        if (preparingTurn?.turnId !== preparation.turnId) return;
-        preparingTurn.simulatedSeconds = progress.elapsedSeconds;
-        preparingTurn.frameCount = progress.frameCount;
-        preparingTurn.coinCount = progress.coinCount;
-      },
-    });
-
-    if (closed || preparingTurn?.turnId !== preparation.turnId) return null;
-    await saveReplayPackage(replayPackage);
-    activeReplay = {
-      package: replayPackage,
-      startedAt: Date.now(),
-      boundaryId: preparation.boundaryId,
-    };
-    preparingTurn = null;
-    lastPreparationError = null;
-    await saveActiveReplayState();
-    revision += 1;
-    broadcast();
-    return replayPackage;
-  }
-
-  function startNextQueuedTurnIfReady() {
-    if (preparingTurn || activeReplay || preparationPromise) return null;
-    if (engine.turnController.getSnapshot().state !== TURN_STATES.READY) return null;
-    const request = queue.activeRequest();
-    if (!request) return null;
-
-    const turnNumber = engine.turnController.getSnapshot().nextTurnNumber;
-    const seed = ((Date.now() ^ Math.imul(revision + 1, 0x9e3779b1)) >>> 0);
-    const turnId = `shared-turn-${turnNumber}-${seed.toString(36)}`;
-    preparingTurn = {
-      turnId,
-      number: turnNumber,
-      playerId: request.id,
-      playerLabel: request.label,
-      coinsDropped: request.requestedCoins,
-      seed,
-      requestedAt: Date.now(),
-      boundaryId: `boundary-${boundaryRevision}`,
-      simulatedSeconds: 0,
-      frameCount: 0,
-      coinCount: engine.coins.length,
-    };
-    revision += 1;
-    broadcast();
-    preparationPromise = prepareTurn(preparingTurn)
-      .catch((error) => {
-        lastPreparationError = error instanceof Error ? error.message : String(error);
-        preparingTurn = null;
-        queue.completeTurn();
-        revision += 1;
-        broadcast();
-        return null;
-      })
-      .finally(() => {
-        preparationPromise = null;
-      });
-    return {
-      id: preparingTurn.turnId,
-      playerId: preparingTurn.playerId,
-      number: preparingTurn.number,
-      coinsDropped: preparingTurn.coinsDropped,
-      coinsWon: 0,
-      coinsLost: 0,
-      slotPlan: [],
-      seed: preparingTurn.seed,
-      startedAt: preparingTurn.requestedAt,
-      completedAt: null,
-    };
-  }
-
-  function commitReplayIfFinished() {
-    if (!activeReplay) return false;
-    const elapsedSeconds = Math.max(0, (Date.now() - activeReplay.startedAt) / 1000);
-    if (elapsedSeconds + 0.0001 < activeReplay.package.durationSeconds) return false;
-
-    const completedReplay = activeReplay;
-    activeReplay = null;
-    engine.restoreConfirmedWorld(completedReplay.package.finalWorld);
-    boundaryRevision += 1;
-    const committedResult = {
-      ...completedReplay.package.result,
-      startedAt: completedReplay.startedAt,
-      activeStartedAt: completedReplay.startedAt,
-      completedAt: Date.now(),
-    };
-    const finalizedResult = progressStore.finalizeTurn(committedResult);
-    if (finalizedResult) settlementStore.enqueue(finalizedResult);
-    queue.completeTurn();
-    revision += 1;
-    savePromise = savePromise
-      .catch(() => {})
-      .then(async () => {
-        await saveActiveReplayState();
-        await persistConfirmedState();
-        const changed = await settlementStore.process();
-        if (changed) await saveWorldAtomic(settlementFile, settlementStore.serialize());
-      });
-    broadcast();
-    return true;
-  }
-
-  async function restoreActiveReplayFromDisk() {
-    if (
-      savedActiveReplay?.kind !== 'yes-pusher-active-replay'
-      || savedActiveReplay.version !== 1
-      || typeof savedActiveReplay.turnId !== 'string'
-    ) return false;
-    const replayPackage = await loadJson(replayFilePath(savedActiveReplay.turnId));
-    if (!isReplayPackage(replayPackage)) {
-      await unlink(activeReplayFile).catch(() => {});
-      return false;
-    }
-    queue.join(
-      replayPackage.turn.playerId,
-      replayPackage.turn.playerLabel || `PLAYER ${String(replayPackage.turn.playerId).slice(-4).toUpperCase()}`,
-      replayPackage.turn.coinsDropped,
-    );
-    activeReplay = {
-      package: replayPackage,
-      startedAt: Number(savedActiveReplay.startedAt) || Date.now(),
-      boundaryId: savedActiveReplay.boundaryId || `boundary-${boundaryRevision}`,
-    };
-    revision += 1;
-    return true;
-  }
-
-  await restoreActiveReplayFromDisk();
-  commitReplayIfFinished();
-
   function broadcast() {
-    queue.prune({ preserveActive: Boolean(preparingTurn || activeReplay) });
+    queue.prune({ preserveActive: engine.turnController.getSnapshot().state !== TURN_STATES.READY });
     revision += 1;
+    streamSequence += 1;
     const world = transportWorld();
     for (const [playerId, responses] of connections) {
       for (const response of responses) {
-        const identity = connectionIdentities.get(response) ?? anonymousIdentity(playerId, queue.getPlayer(playerId)?.label ?? '');
-        const payload = publicSnapshot(playerId, identity, world);
+        const identity = connectionIdentities.get(response)
+          ?? anonymousIdentity(playerId, queue.getPlayer(playerId)?.label ?? '');
         try {
-          sendEvent(response, 'world', payload);
+          sendEvent(response, 'world', publicSnapshot(playerId, identity, world));
         } catch {
-          // The close handler removes dead streams.
+          // Close handling removes dead streams.
         }
       }
     }
@@ -636,10 +385,10 @@ export async function createWorldServer({
       wallet: identity?.authenticated ? identity.wallet : null,
       authenticated: Boolean(identity?.authenticated),
     });
-    const normalizedClientId = String(clientId ?? '').trim();
-    if (normalizedClientId) {
-      connectionClientIds.set(response, normalizedClientId);
-      recentPollClients.delete(normalizedClientId);
+    const id = String(clientId ?? '').trim();
+    if (id) {
+      connectionClientIds.set(response, id);
+      recentPollClients.delete(id);
     }
   }
 
@@ -653,6 +402,51 @@ export async function createWorldServer({
       connections.delete(playerId);
       queue.disconnect(playerId);
     }
+  }
+
+  async function startNextQueuedTurnIfReady() {
+    if (closed || startingPromise) return null;
+    if (engine.turnController.getSnapshot().state !== TURN_STATES.READY) return null;
+    const request = queue.activeRequest();
+    if (!request) return null;
+
+    startingPromise = (async () => {
+      const wallet = walletFromPlayerId(request.id);
+      if (wallet) await withTimeout(refreshWallet(wallet).catch(() => null), 1_500);
+      if (closed || queue.activeId() !== request.id) return null;
+      if (engine.turnController.getSnapshot().state !== TURN_STATES.READY) return null;
+      const turn = engine.startTurn({
+        playerId: request.id,
+        coinsDropped: request.requestedCoins,
+        startedAt: Date.now(),
+      });
+      revision += 1;
+      broadcast();
+      return turn;
+    })().finally(() => {
+      startingPromise = null;
+    });
+    return startingPromise;
+  }
+
+  function finalizeTurnIfNeeded() {
+    const result = engine.lastFinalizedResult;
+    if (!result?.id || result.id === handledTurnId) return false;
+    handledTurnId = result.id;
+    const finalized = progressStore.finalizeTurn(result);
+    if (finalized) settlementStore.enqueue(finalized);
+    queue.completeTurn();
+    boundaryRevision += 1;
+    revision += 1;
+    savePromise = savePromise
+      .catch(() => {})
+      .then(async () => {
+        await persistState();
+        const changed = await settlementStore.process();
+        if (changed) await saveJsonAtomic(settlementFile, settlementStore.serialize());
+      });
+    broadcast();
+    return true;
   }
 
   async function serveStatic(request, response, pathname) {
@@ -672,7 +466,9 @@ export async function createWorldServer({
       if (!info.isFile()) return false;
       response.writeHead(200, {
         'content-type': mimeType(filePath),
-        'cache-control': path.basename(filePath) === 'index.html' ? 'no-store' : 'public, max-age=31536000, immutable',
+        'cache-control': path.basename(filePath) === 'index.html'
+          ? 'no-store'
+          : 'public, max-age=31536000, immutable',
       });
       createReadStream(filePath).pipe(response);
       return true;
@@ -690,7 +486,6 @@ export async function createWorldServer({
       writeJson(response, 403, { ok: false, error: 'This web origin is not allowed to use the YES Pusher world server' });
       return;
     }
-
     if (request.method === 'OPTIONS') {
       response.writeHead(204);
       response.end();
@@ -698,13 +493,15 @@ export async function createWorldServer({
     }
 
     if (request.method === 'GET' && pathname === '/api/health') {
-      const transportSnapshot = transportWorld();
+      const snapshot = transportWorld();
       writeJson(response, 200, {
         ok: true,
         authoritative: true,
+        mode: 'live-authoritative-stream',
         revision,
+        streamSequence,
         coinCount: engine.coins.length,
-        turnState: preparingTurn ? TURN_STATES.PREPARING : activeReplay ? 'replaying' : engine.turnController.getSnapshot().state,
+        turnState: engine.turnController.getSnapshot().state,
         connections: activeClientCount(),
         streamConnections: connectionCount(),
         pollingClients: pollingClientCount(),
@@ -713,33 +510,24 @@ export async function createWorldServer({
         tickRate,
         broadcastRate,
         network: {
-          coinEncoding: transportSnapshot.coinEncoding,
-          snapshotBytes: Buffer.byteLength(JSON.stringify(transportSnapshot)),
-          physicsSolverIterations: engine.world.solver.iterations,
+          coinEncoding: snapshot.coinEncoding,
+          snapshotBytes: Buffer.byteLength(JSON.stringify(snapshot)),
           physicsStepsPerSecond: engine.physicsRate,
-          replayFramesPerSecond: replayFrameRate,
-          statusBroadcastsPerSecond: broadcastRate,
-          clientVisualMode: 'recorded-authoritative-replay-with-interpolation',
+          streamFramesPerSecond: broadcastRate,
+          clientVisualMode: 'live-authoritative-stream-with-browser-interpolation',
           visibleCoinPhysicsRunsInBrowser: false,
           authoritativeTurnSimulationRunsOnRailway: true,
-          liveCoinTransformStreaming: false,
-          replayPackageDownload: true,
-          replayCompression: 'gzip',
-          exactCoinIdEvents: true,
-          guidedBoardCoins: engine.coins.filter((coin) => coin.planar).length,
+          liveCoinTransformStreaming: true,
+          replayPackageDownload: false,
+          skinImageUrlsInPhysicsFrames: false,
         },
-        lastPreparationError,
-        allowedOrigins: [...allowedOrigins],
         settlement: settlementStore.integrationStatus(),
         persistence: {
           dataDir,
           loadedFromDisk: Boolean(initialSnapshot),
           lastSavedAt: lastSavedAt ? new Date(lastSavedAt).toISOString() : null,
-          continuousPhysics: false,
+          continuousPhysics: true,
           boundarySnapshots: true,
-          replayDirectory: replayDir,
-          activeReplayId: activeReplay?.package?.id ?? null,
-          preparingTurnId: preparingTurn?.turnId ?? null,
         },
       });
       return;
@@ -783,11 +571,11 @@ export async function createWorldServer({
           origin: requestOrigin(request, allowedOrigins),
         });
         const crossSite = requestUsesCrossSiteCookie(request, allowedOrigins);
-        const secureCookie = requestOrigin(request, allowedOrigins).startsWith('https://')
+        const secure = requestOrigin(request, allowedOrigins).startsWith('https://')
           || serverOrigin(request).startsWith('https://');
         response.setHeader('set-cookie', sessionCookie(session.token, {
           maxAgeSeconds: Math.floor((session.expiresAtMs - Date.now()) / 1000),
-          secure: secureCookie,
+          secure,
           sameSite: crossSite ? 'None' : 'Lax',
         }));
         writeJson(response, 200, {
@@ -808,10 +596,10 @@ export async function createWorldServer({
     if (request.method === 'POST' && pathname === '/api/auth/logout') {
       authStore.revokeRequest(request);
       const crossSite = requestUsesCrossSiteCookie(request, allowedOrigins);
-      const secureCookie = requestOrigin(request, allowedOrigins).startsWith('https://')
+      const secure = requestOrigin(request, allowedOrigins).startsWith('https://')
         || serverOrigin(request).startsWith('https://');
       response.setHeader('set-cookie', clearSessionCookie({
-        secure: secureCookie,
+        secure,
         sameSite: crossSite ? 'None' : 'Lax',
       }));
       writeJson(response, 200, { ok: true, authenticated: false });
@@ -841,9 +629,8 @@ export async function createWorldServer({
       }
       const { playerId } = identity;
       const clientId = requestUrl.searchParams.get('clientId') ?? '';
-      const label = identity.label || (testMode ? 'LOCAL TESTER' : '');
-      queue.connect(playerId, label);
-      if (testMode && !queue.activeId()) queue.join(playerId, label || 'LOCAL TESTER');
+      queue.connect(playerId, identity.label || (testMode ? 'LOCAL TESTER' : ''));
+      if (testMode && !queue.activeId()) queue.join(playerId, identity.label || 'LOCAL TESTER');
       response.writeHead(200, {
         'content-type': 'text/event-stream; charset=utf-8',
         'cache-control': 'no-cache, no-transform',
@@ -860,37 +647,6 @@ export async function createWorldServer({
         clearInterval(heartbeat);
         removeConnection(playerId, response);
       });
-      return;
-    }
-
-    if (request.method === 'GET' && pathname.startsWith('/api/replays/')) {
-      const replayId = decodeURIComponent(pathname.slice('/api/replays/'.length));
-      if (!/^[a-zA-Z0-9._-]+$/.test(replayId)) {
-        writeJson(response, 400, { ok: false, error: 'Invalid replay ID' });
-        return;
-      }
-      try {
-        const inMemory = activeReplay?.package?.id === replayId ? activeReplay.package : null;
-        const raw = inMemory
-          ? JSON.stringify(inMemory)
-          : await readFile(replayFilePath(replayId), 'utf8');
-        const replayPackage = inMemory ?? JSON.parse(raw);
-        if (!isReplayPackage(replayPackage)) {
-          writeJson(response, 404, { ok: false, error: 'Replay not found' });
-          return;
-        }
-        const acceptsGzip = /(?:^|,)\s*gzip(?:\s*;|\s*,|$)/i.test(String(request.headers['accept-encoding'] ?? ''));
-        const body = acceptsGzip ? gzipSync(raw, { level: 6 }) : Buffer.from(raw);
-        response.writeHead(200, {
-          'content-type': 'application/json; charset=utf-8',
-          'content-length': body.length,
-          'cache-control': 'public, max-age=31536000, immutable',
-          ...(acceptsGzip ? { 'content-encoding': 'gzip', vary: 'accept-encoding' } : {}),
-        });
-        response.end(body);
-      } catch {
-        writeJson(response, 404, { ok: false, error: 'Replay not found' });
-      }
       return;
     }
 
@@ -918,24 +674,23 @@ export async function createWorldServer({
         }
         const { playerId, label } = identity;
         queue.ensurePlayer(playerId, label);
-        const turnState = preparingTurn ? TURN_STATES.PREPARING : activeReplay ? 'replaying' : engine.turnController.getSnapshot().state;
+        const turnRunning = engine.turnController.getSnapshot().state !== TURN_STATES.READY;
 
         if (pathname === '/api/queue/join') {
           const position = queue.join(playerId, label, body.coins);
           revision += 1;
-          const turn = startNextQueuedTurnIfReady();
-          if (!turn) broadcast();
+          void startNextQueuedTurnIfReady();
           writeJson(response, 200, {
             ok: true,
             position,
-            turn,
+            acceptedAt: Date.now(),
             snapshot: publicSnapshot(playerId, identity),
           });
           return;
         }
 
         if (pathname === '/api/queue/leave') {
-          queue.leave(playerId, { turnRunning: Boolean(preparingTurn || activeReplay) });
+          queue.leave(playerId, { turnRunning });
           revision += 1;
           broadcast();
           writeJson(response, 200, { ok: true, snapshot: publicSnapshot(playerId, identity) });
@@ -947,16 +702,17 @@ export async function createWorldServer({
             writeJson(response, 403, { error: 'Only the active queued player can start the turn' });
             return;
           }
-          if (preparingTurn || activeReplay || preparationPromise || turnState !== TURN_STATES.READY) {
-            writeJson(response, 409, { error: 'The current turn has not finished' });
-            return;
-          }
-          const turn = startNextQueuedTurnIfReady();
-          if (!turn) {
+          const turn = await startNextQueuedTurnIfReady();
+          if (!turn && engine.turnController.getSnapshot().state === TURN_STATES.READY) {
             writeJson(response, 409, { error: 'The queued turn could not be started' });
             return;
           }
-          writeJson(response, 200, { ok: true, turn, snapshot: publicSnapshot(playerId, identity) });
+          writeJson(response, 200, {
+            ok: true,
+            acceptedAt: Date.now(),
+            turn: engine.turnController.getSnapshot().currentTurn,
+            snapshot: publicSnapshot(playerId, identity),
+          });
           return;
         }
 
@@ -965,21 +721,14 @@ export async function createWorldServer({
             writeJson(response, 404, { error: 'Test controls are disabled' });
             return;
           }
-          if (preparingTurn || activeReplay || preparationPromise || turnState !== TURN_STATES.READY) {
+          if (turnRunning) {
             writeJson(response, 409, { error: 'Wait for the current turn to finish before resetting' });
             return;
           }
           engine.resetMachine();
-          preparingTurn = null;
-          activeReplay = null;
           boundaryRevision += 1;
           revision += 1;
-          savePromise = savePromise
-            .catch(() => {})
-            .then(async () => {
-              await saveActiveReplayState();
-              await saveWorldAtomic(worldFile, engine.exportConfirmedWorld());
-            });
+          savePromise = savePromise.catch(() => {}).then(() => persistState());
           broadcast();
           writeJson(response, 200, { ok: true, snapshot: publicSnapshot(playerId, identity) });
           return;
@@ -997,33 +746,38 @@ export async function createWorldServer({
   });
 
   const tickInterval = setInterval(() => {
-    if (!commitReplayIfFinished()) startNextQueuedTurnIfReady();
-  }, Math.max(10, Math.floor(1000 / tickRate)));
+    const now = performance.now();
+    const elapsed = Math.max(0, Math.min(0.05, (now - lastTickAt) / 1000));
+    lastTickAt = now;
+    if (engine.turnController.getSnapshot().state === TURN_STATES.READY) {
+      void startNextQueuedTurnIfReady();
+    }
+    engine.advance(elapsed);
+    finalizeTurnIfNeeded();
+  }, Math.max(8, Math.floor(1000 / tickRate)));
   tickInterval.unref?.();
 
-  const broadcastInterval = setInterval(broadcast, Math.max(40, Math.floor(1000 / broadcastRate)));
+  const broadcastInterval = setInterval(
+    broadcast,
+    Math.max(33, Math.floor(1000 / broadcastRate)),
+  );
   broadcastInterval.unref?.();
 
   const saveInterval = setInterval(() => {
-    if (preparingTurn || activeReplay || preparationPromise || engine.turnController.getSnapshot().state !== TURN_STATES.READY) return;
-    savePromise = savePromise
-      .catch(() => {})
-      .then(() => persistConfirmedState());
-  }, 10_000);
+    savePromise = savePromise.catch(() => {}).then(() => persistState());
+  }, 8_000);
   saveInterval.unref?.();
 
   const settlementInterval = setInterval(() => {
     settlementStore.retryFailed();
-    savePromise = savePromise
-      .catch(() => {})
-      .then(async () => {
-        const changed = await settlementStore.process();
-        if (changed) {
-          revision += 1;
-          await saveWorldAtomic(settlementFile, settlementStore.serialize());
-        }
-      });
-  }, 5_000);
+    savePromise = savePromise.catch(() => {}).then(async () => {
+      const changed = await settlementStore.process();
+      if (changed) {
+        revision += 1;
+        await saveJsonAtomic(settlementFile, settlementStore.serialize());
+      }
+    });
+  }, 2_000);
   settlementInterval.unref?.();
 
   async function close() {
@@ -1037,11 +791,9 @@ export async function createWorldServer({
       for (const response of responses) response.end();
     }
     connectionIdentities.clear();
-    await preparationPromise?.catch(() => {});
+    await startingPromise?.catch(() => {});
     await savePromise.catch(() => {});
-    if (!preparingTurn && !activeReplay && engine.turnController.getSnapshot().state === TURN_STATES.READY) {
-      await persistConfirmedState().catch(() => {});
-    }
+    await persistState().catch(() => {});
     await new Promise((resolve) => server.close(() => resolve()));
   }
 
@@ -1074,13 +826,7 @@ if (isDirectRun) {
   const instance = await createWorldServer({ port });
   const address = instance.address();
   const actualPort = typeof address === 'object' && address ? address.port : port;
-  console.log(`YES Pusher authoritative world server running on http://localhost:${actualPort}`);
-  if (process.env.YES_PUSHER_TEST_MODE === 'true') {
-    console.log('Local test mode: wallet and internet deployment are not required.');
-  }
-  console.log(existsSync(DIST_DIR)
-    ? 'Serving the built game and shared-world API.'
-    : 'Vite should run separately during development (npm run dev).');
+  console.log(`YES Pusher live authoritative stream running on http://localhost:${actualPort}`);
 
   const shutdown = async () => {
     await instance.close();

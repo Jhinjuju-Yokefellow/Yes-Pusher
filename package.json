@@ -1,15 +1,15 @@
 {
   "name": "yes-pusher-shared-world",
   "private": true,
-  "version": "0.9.0",
+  "version": "0.10.0",
   "type": "module",
   "scripts": {
     "dev": "node scripts/dev.mjs",
     "dev:web": "vite --host 0.0.0.0",
-    "dev:server": "node --import ./apps/world-server/squeak-wave-boost-patch.js --import ./apps/world-server/turn-flow-stability-patch.js --import ./apps/world-server/replay-worker-patch.js --import ./apps/world-server/skin-loadout-patch.js --import ./apps/world-server/skin-image-url-patch.js --import ./apps/world-server/rubber-duck-toy-patch.js --import ./apps/world-server/cucumber-slice-toy-patch.js apps/world-server/hosted-server.js",
-    "build": "node --test test/shared-status.test.js test/boundary-network-cache.test.js test/cucumber-slice-toy.test.js test/skin-image-url.test.js test/toy-nft-showcase.test.js && vite build",
+    "dev:server": "node apps/world-server/live-hosted-server.js",
+    "build": "node --test test/shared-status.test.js test/boundary-network-cache.test.js test/cucumber-slice-toy.test.js test/skin-image-url.test.js test/toy-nft-showcase.test.js test/live-authoritative-stream.test.js && vite build",
     "preview": "vite preview --host 0.0.0.0",
-    "start": "node --import ./apps/world-server/squeak-wave-boost-patch.js --import ./apps/world-server/turn-flow-stability-patch.js --import ./apps/world-server/replay-worker-patch.js --import ./apps/world-server/skin-loadout-patch.js --import ./apps/world-server/skin-image-url-patch.js --import ./apps/world-server/rubber-duck-toy-patch.js --import ./apps/world-server/cucumber-slice-toy-patch.js apps/world-server/hosted-server.js",
+    "start": "node apps/world-server/live-hosted-server.js",
     "test": "node --test"
   },
   "dependencies": {
