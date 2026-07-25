@@ -1,0 +1,16 @@
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile.machine"
+watchPatterns = [
+  "Dockerfile.machine",
+  "railway.machine.toml",
+  "deploy/start-machine.sh",
+  "project.godot",
+  "*.tscn",
+  "scripts/**",
+  "assets/**"
+]
+
+[deploy]
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10
