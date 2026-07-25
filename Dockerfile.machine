@@ -35,6 +35,14 @@ COPY scripts ./scripts
 COPY assets ./assets
 COPY deploy/start-machine.sh /usr/local/bin/start-yes-pusher-machine
 
+# The repository intentionally excludes .godot. Import once inside the image so
+# Godot generates its global class cache before parsing scenes that reference
+# class_name types such as PusherCoin, PusherToy, and YesPusherMachine.
+RUN mkdir -p /tmp/godot-home \
+    && HOME=/tmp/godot-home godot --headless --path /app --import \
+    && test -f /app/.godot/global_script_class_cache.cfg \
+    && rm -rf /tmp/godot-home
+
 RUN chmod +x /usr/local/bin/start-yes-pusher-machine \
     && mkdir -p /data /data/godot-home
 
