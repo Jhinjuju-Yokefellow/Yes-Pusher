@@ -1,0 +1,321 @@
+name: Apply hourly free drops
+
+on:
+  push:
+    paths:
+      - .github/workflows/apply-hourly-free-drops.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Add hourly and earned drop access
+        shell: python
+        run: |
+          from pathlib import Path
+
+          path = Path("scripts/shared_world.gd")
+          text = path.read_text(encoding="utf-8")
+
+          def replace_once(old: str, new: str) -> None:
+              global text
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"Expected exactly one match, found {count}: {old[:100]!r}")
+              text = text.replace(old, new, 1)
+
+          replace_once(
+              '''const SKIN_DROP_EVERY_COINS := 100
+          const STATE_VERSION := 1
+          const DEFAULT_PORT := 8787
+          ''',
+              '''const SKIN_DROP_EVERY_COINS := 100
+          const DEFAULT_FREE_TURN_COOLDOWN_SECONDS := 3600
+          const MAX_EARNED_TURNS := 1000
+          const STATE_VERSION := 1
+          const DEFAULT_PORT := 8787
+          ''',
+          )
+
+          replace_once(
+              '''var _state_path: String = "user://yes-pusher-shared-state.json"
+          ''',
+              '''var _state_path: String = "user://yes-pusher-shared-state.json"
+          var _free_turn_cooldown_seconds: int = DEFAULT_FREE_TURN_COOLDOWN_SECONDS
+          ''',
+          )
+
+          replace_once(
+              '''\t_state_path = _env_or("YES_PUSHER_STATE_PATH", "user://yes-pusher-shared-state.json")
+          \tlocal_wallet = OS.get_environment("YF_WALLET_ADDRESS").strip_edges().to_lower()
+          ''',
+              '''\t_state_path = _env_or("YES_PUSHER_STATE_PATH", "user://yes-pusher-shared-state.json")
+          \t_free_turn_cooldown_seconds = _env_int(
+          \t\t"YES_PUSHER_FREE_TURN_COOLDOWN_SECONDS",
+          \t\tDEFAULT_FREE_TURN_COOLDOWN_SECONDS,
+          \t\t0,
+          \t\t604800
+          \t)
+          \tlocal_wallet = OS.get_environment("YF_WALLET_ADDRESS").strip_edges().to_lower()
+          ''',
+          )
+
+          replace_once(
+              '''\t_client_identity_result.rpc_id(peer_id, true, normalized_wallet, cached_owned, "Wallet verified. Loading owned skins…")
+          ''',
+              '''\t_client_identity_result.rpc_id(
+          \t\tpeer_id,
+          \t\ttrue,
+          \t\tnormalized_wallet,
+          \t\tcached_owned,
+          \t\t"Wallet verified. %s Loading owned skins…" % _turn_access_status_message(normalized_wallet)
+          \t)
+          ''',
+          )
+
+          replace_once(
+              '''\t\t_client_skin_entitlements.rpc_id(peer_id, false, [], "Wallet verified. Owned skins could not be refreshed yet.")
+          ''',
+              '''\t\t_client_skin_entitlements.rpc_id(
+          \t\t\tpeer_id,
+          \t\t\tfalse,
+          \t\t\t[],
+          \t\t\t"Wallet verified. Owned skins could not be refreshed yet. %s" % _turn_access_status_message(wallet)
+          \t\t)
+          ''',
+          )
+
+          replace_once(
+              '''\t_client_skin_entitlements.rpc_id(peer_id, true, owned_families, "Wallet verified. Owned skins loaded.")
+          ''',
+              '''\t_client_skin_entitlements.rpc_id(
+          \t\tpeer_id,
+          \t\ttrue,
+          \t\towned_families,
+          \t\t"Wallet verified. Owned skins loaded. %s" % _turn_access_status_message(wallet)
+          \t)
+          ''',
+          )
+
+          replace_once(
+              '''\t_client_status_for(peer_id, "Added to the shared queue. Every turn drops exactly 10 coins.")
+          ''',
+              '''\t_client_status_for(
+          \t\tpeer_id,
+          \t\t"Added to the shared queue. Every turn drops exactly 10 coins. %s" % _turn_access_status_message(wallet)
+          \t)
+          ''',
+          )
+
+          replace_once(
+              '''\tvar seed := randi()
+          \t_active_turn = {
+          \t\t"turn_id": turn_id,
+          \t\t"wallet": wallet,
+          \t\t"peer_id": int(entry.get("peer_id", 0)),
+          \t\t"skin_family": String(entry.get("skin_family", "")),
+          \t\t"drop_count": FIXED_DROP_COUNT,
+          \t\t"seed": seed,
+          \t\t"status": "charging",
+          \t\t"pre_turn_world": machine.export_world_snapshot(),
+          \t\t"latest_payout_yes": 0,
+          \t\t"started_at_unix": 0,
+          \t}
+          \t_save_state()
+          \tvar spend_result := await yf.spend_turn_credit(wallet, turn_id)
+          \tif not bool(spend_result.get("ok", false)):
+          \t\tvar message := "Turn could not start: %s" % spend_result.get("error", "bucket credit charge failed")
+          \t\t_client_status_for(int(entry.get("peer_id", 0)), message)
+          \t\t_active_turn = {}
+          \t\t_save_state()
+          \t\t_processing_queue = false
+          \t\t_broadcast_queue_state()
+          \t\tcall_deferred("_process_next_turn")
+          \t\treturn
+          \t_active_turn["status"] = "charged"
+          \t_save_state()
+          ''',
+              '''\tvar seed := randi()
+          \tvar turn_access := _reserve_turn_access(wallet, turn_id)
+          \tvar access_mode := String(turn_access.get("mode", "paid"))
+          \t_active_turn = {
+          \t\t"turn_id": turn_id,
+          \t\t"wallet": wallet,
+          \t\t"peer_id": int(entry.get("peer_id", 0)),
+          \t\t"skin_family": String(entry.get("skin_family", "")),
+          \t\t"drop_count": FIXED_DROP_COUNT,
+          \t\t"seed": seed,
+          \t\t"status": "charging",
+          \t\t"access_mode": access_mode,
+          \t\t"next_free_turn_at_unix": int(turn_access.get("next_free_turn_at_unix", 0)),
+          \t\t"earned_turns_remaining": int(turn_access.get("earned_turns", 0)),
+          \t\t"pre_turn_world": machine.export_world_snapshot(),
+          \t\t"latest_payout_yes": 0,
+          \t\t"started_at_unix": 0,
+          \t}
+          \t_save_state()
+          \tif access_mode == "paid":
+          \t\tvar spend_result := await yf.spend_turn_credit(wallet, turn_id)
+          \t\tif not bool(spend_result.get("ok", false)):
+          \t\t\tvar message := "Turn could not start: %s" % spend_result.get("error", "bucket credit charge failed")
+          \t\t\t_client_status_for(int(entry.get("peer_id", 0)), message)
+          \t\t\t_active_turn = {}
+          \t\t\t_save_state()
+          \t\t\t_processing_queue = false
+          \t\t\t_broadcast_queue_state()
+          \t\t\tcall_deferred("_process_next_turn")
+          \t\t\treturn
+          \t\t_active_turn["status"] = "charged"
+          \telse:
+          \t\t_active_turn["status"] = "access_granted"
+          \t_save_state()
+          ''',
+          )
+
+          replace_once(
+              '''\t_client_status_for(int(_active_turn.get("peer_id", 0)), "Your paid 10-coin turn is starting.")
+          ''',
+              '''\tvar access_mode := String(_active_turn.get("access_mode", "paid"))
+          \tvar start_message := "Your paid 10-coin turn is starting."
+          \tmatch access_mode:
+          \t\t"hourly_free":
+          \t\t\tstart_message = "Your free hourly 10-coin drop is starting. %s" % _turn_access_status_message(wallet)
+          \t\t"earned":
+          \t\t\tstart_message = "Your earned 10-coin drop is starting. %s" % _turn_access_status_message(wallet)
+          \t\t"test_free":
+          \t\t\tstart_message = "Your free test 10-coin drop is starting."
+          \t_client_status_for(int(_active_turn.get("peer_id", 0)), start_message)
+          ''',
+          )
+
+          replace_once(
+              '''\tif status == "charging":
+          \t\tvar spend_result := await yf.spend_turn_credit(String(_active_turn.get("wallet", "")), String(_active_turn.get("turn_id", "")))
+          \t\tif not bool(spend_result.get("ok", false)):
+          \t\t\tstatus_changed.emit("Recovered turn is waiting for credit charge: %s" % spend_result.get("error", "unknown error"))
+          \t\t\treturn
+          \t\t_active_turn["status"] = "charged"
+          \t\t_save_state()
+          ''',
+              '''\tif status == "charging":
+          \t\tvar access_mode := String(_active_turn.get("access_mode", "paid"))
+          \t\tif access_mode == "paid":
+          \t\t\tvar spend_result := await yf.spend_turn_credit(String(_active_turn.get("wallet", "")), String(_active_turn.get("turn_id", "")))
+          \t\t\tif not bool(spend_result.get("ok", false)):
+          \t\t\t\tstatus_changed.emit("Recovered turn is waiting for credit charge: %s" % spend_result.get("error", "unknown error"))
+          \t\t\t\treturn
+          \t\t\t_active_turn["status"] = "charged"
+          \t\telse:
+          \t\t\t_active_turn["status"] = "access_granted"
+          \t\t_save_state()
+          ''',
+          )
+
+          replace_once(
+              '''\t\t"lifetime_yes": 0,
+          \t\t"lifetime_coins_paid_out": 0,
+          \t}
+
+          func _save_state() -> void:
+          ''',
+              '''\t\t"lifetime_yes": 0,
+          \t\t"lifetime_coins_paid_out": 0,
+          \t\t"next_free_turn_at_unix": 0,
+          \t\t"earned_turns": 0,
+          \t\t"earned_turn_sources": {},
+          \t}
+
+          func grant_earned_turns(wallet: String, amount: int, source: String = "manual") -> int:
+          \tif mode != "server":
+          \t\treturn -1
+          \tvar normalized := wallet.strip_edges().to_lower()
+          \tif not _is_wallet(normalized) or amount == 0:
+          \t\treturn -1
+          \tvar player := _player(normalized)
+          \tvar current := maxi(0, int(player.get("earned_turns", 0)))
+          \tvar next_total := clampi(current + amount, 0, MAX_EARNED_TURNS)
+          \tplayer["earned_turns"] = next_total
+          \tvar sources: Dictionary = {}
+          \tvar sources_value: Variant = player.get("earned_turn_sources", {})
+          \tif sources_value is Dictionary:
+          \t\tsources = (sources_value as Dictionary).duplicate(true)
+          \tvar source_key := source.strip_edges().to_lower()
+          \tif source_key.is_empty():
+          \t\tsource_key = "manual"
+          \tsources[source_key] = maxi(0, int(sources.get(source_key, 0)) + amount)
+          \tplayer["earned_turn_sources"] = sources
+          \t_players[normalized] = player
+          \t_save_state()
+          \treturn next_total
+
+          func _reserve_turn_access(wallet: String, turn_id: String) -> Dictionary:
+          \tvar normalized := wallet.strip_edges().to_lower()
+          \tvar player := _player(normalized)
+          \tvar now := int(Time.get_unix_time_from_system())
+          \tvar next_free_at := maxi(0, int(player.get("next_free_turn_at_unix", 0)))
+          \tvar earned_turns := maxi(0, int(player.get("earned_turns", 0)))
+          \tvar access_mode := "paid"
+          \tif yf != null and yf.test_free_turns:
+          \t\taccess_mode = "test_free"
+          \telif _free_turn_cooldown_seconds > 0 and now >= next_free_at:
+          \t\taccess_mode = "hourly_free"
+          \t\tnext_free_at = now + _free_turn_cooldown_seconds
+          \t\tplayer["next_free_turn_at_unix"] = next_free_at
+          \telif earned_turns > 0:
+          \t\taccess_mode = "earned"
+          \t\tearned_turns -= 1
+          \t\tplayer["earned_turns"] = earned_turns
+          \tif access_mode != "paid":
+          \t\tplayer["last_turn_access_mode"] = access_mode
+          \t\tplayer["last_turn_access_turn_id"] = turn_id
+          \t\tplayer["last_turn_access_at_unix"] = now
+          \t\t_players[normalized] = player
+          \treturn {
+          \t\t"mode": access_mode,
+          \t\t"next_free_turn_at_unix": next_free_at,
+          \t\t"earned_turns": earned_turns,
+          \t}
+
+          func _turn_access_status_message(wallet: String) -> String:
+          \tif yf != null and yf.test_free_turns:
+          \t\treturn "Free test drops are enabled."
+          \tvar player := _player(wallet)
+          \tvar earned_turns := maxi(0, int(player.get("earned_turns", 0)))
+          \tif _free_turn_cooldown_seconds <= 0:
+          \t\treturn "Earned drops: %d. Paid drops remain available." % earned_turns
+          \tvar now := int(Time.get_unix_time_from_system())
+          \tvar next_free_at := maxi(0, int(player.get("next_free_turn_at_unix", 0)))
+          \tif now >= next_free_at:
+          \t\treturn "Your free hourly 10-coin drop is ready. Earned drops: %d." % earned_turns
+          \tvar remaining_seconds := maxi(0, next_free_at - now)
+          \tvar remaining_minutes := maxi(1, ceili(float(remaining_seconds) / 60.0))
+          \treturn "Next free drop in about %d minute%s. Earned drops: %d. Paid drops remain available." % [
+          \t\tremaining_minutes,
+          \t\t"" if remaining_minutes == 1 else "s",
+          \t\tearned_turns,
+          \t]
+
+          func _save_state() -> void:
+          ''',
+          )
+
+          path.write_text(text, encoding="utf-8")
+          Path(".github/workflows/apply-hourly-free-drops.yml").unlink()
+
+      - name: Commit patch
+        run: |
+          git diff --check
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add scripts/shared_world.gd .github/workflows/apply-hourly-free-drops.yml
+          git commit -m "Add hourly free and earned drop access"
+          git push origin HEAD:main
