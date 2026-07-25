@@ -15,6 +15,8 @@ signal nft_awarded(award: Dictionary)
 
 const FIXED_DROP_COUNT := 10
 const SKIN_DROP_EVERY_COINS := 100
+const DEFAULT_FREE_TURN_COOLDOWN_SECONDS := 3600
+const MAX_EARNED_TURNS := 1000
 const STATE_VERSION := 1
 const DEFAULT_PORT := 8787
 const DEFAULT_MAX_CLIENTS := 128
@@ -50,6 +52,7 @@ var _processing_queue: bool = false
 var _settlement_worker_active: bool = false
 var _settlement_retry_elapsed: float = 0.0
 var _state_path: String = "user://yes-pusher-shared-state.json"
+var _free_turn_cooldown_seconds: int = DEFAULT_FREE_TURN_COOLDOWN_SECONDS
 
 func configure(target_machine: YesPusherMachine) -> void:
 	machine = target_machine
@@ -81,6 +84,12 @@ func _read_environment() -> void:
 		_server_url = "ws://%s:%d" % [_server_host, _server_port]
 	_snapshot_interval = 1.0 / float(_env_int("YES_PUSHER_SNAPSHOT_RATE", 10, 5, 15))
 	_state_path = _env_or("YES_PUSHER_STATE_PATH", "user://yes-pusher-shared-state.json")
+	_free_turn_cooldown_seconds = _env_int(
+		"YES_PUSHER_FREE_TURN_COOLDOWN_SECONDS",
+		DEFAULT_FREE_TURN_COOLDOWN_SECONDS,
+		0,
+		604800
+	)
 	local_wallet = OS.get_environment("YF_WALLET_ADDRESS").strip_edges().to_lower()
 	local_session_token = OS.get_environment("YF_WALLET_SESSION_TOKEN").strip_edges()
 	local_skin_family = _normalize_family(OS.get_environment("YF_ACTIVE_TOY_FAMILY"))
@@ -421,7 +430,13 @@ func _server_identify(wallet: String, session_token: String, requested_skin_fami
 	# Wallet verification controls whether the player can enter the queue. Do not
 	# block it behind a second network request for NFT entitlements. Confirm the
 	# signed session now, then refresh the equip menu independently.
-	_client_identity_result.rpc_id(peer_id, true, normalized_wallet, cached_owned, "Wallet verified. Loading owned skins…")
+	_client_identity_result.rpc_id(
+		peer_id,
+		true,
+		normalized_wallet,
+		cached_owned,
+		"Wallet verified. %s Loading owned skins…" % _turn_access_status_message(normalized_wallet)
+	)
 	_broadcast_queue_state()
 	call_deferred("_server_load_identity_entitlements", peer_id, normalized_wallet, requested_skin_family)
 
@@ -432,7 +447,12 @@ func _server_load_identity_entitlements(peer_id: int, wallet: String, requested_
 	if not multiplayer.get_peers().has(peer_id):
 		return
 	if not bool(entitlement_result.get("ok", false)):
-		_client_skin_entitlements.rpc_id(peer_id, false, [], "Wallet verified. Owned skins could not be refreshed yet.")
+		_client_skin_entitlements.rpc_id(
+			peer_id,
+			false,
+			[],
+			"Wallet verified. Owned skins could not be refreshed yet. %s" % _turn_access_status_message(wallet)
+		)
 		return
 	var owned_families: Array[String] = _normalized_family_array(entitlement_result.get("families", []))
 	var player := _player(wallet)
@@ -441,7 +461,12 @@ func _server_load_identity_entitlements(peer_id: int, wallet: String, requested_
 	player["owned_skin_families"] = owned_families
 	player["skin_family"] = selected
 	_players[wallet] = player
-	_client_skin_entitlements.rpc_id(peer_id, true, owned_families, "Wallet verified. Owned skins loaded.")
+	_client_skin_entitlements.rpc_id(
+		peer_id,
+		true,
+		owned_families,
+		"Wallet verified. Owned skins loaded. %s" % _turn_access_status_message(wallet)
+	)
 	_save_state()
 
 @rpc("authority", "call_remote", "reliable")
@@ -641,7 +666,10 @@ func _enqueue_player(peer_id: int, wallet: String, skin_family: String) -> void:
 		"request_id": request_id,
 		"joined_at_unix": Time.get_unix_time_from_system(),
 	})
-	_client_status_for(peer_id, "Added to the shared queue. Every turn drops exactly 10 coins.")
+	_client_status_for(
+		peer_id,
+		"Added to the shared queue. Every turn drops exactly 10 coins. %s" % _turn_access_status_message(wallet)
+	)
 	_broadcast_queue_state()
 	call_deferred("_process_next_turn")
 
@@ -654,6 +682,8 @@ func _process_next_turn() -> void:
 	var turn_id := String(entry.get("request_id", ""))
 	var wallet := String(entry.get("wallet", "")).to_lower()
 	var seed := randi()
+	var turn_access := _reserve_turn_access(wallet, turn_id)
+	var access_mode := String(turn_access.get("mode", "paid"))
 	_active_turn = {
 		"turn_id": turn_id,
 		"wallet": wallet,
@@ -662,22 +692,28 @@ func _process_next_turn() -> void:
 		"drop_count": FIXED_DROP_COUNT,
 		"seed": seed,
 		"status": "charging",
+		"access_mode": access_mode,
+		"next_free_turn_at_unix": int(turn_access.get("next_free_turn_at_unix", 0)),
+		"earned_turns_remaining": int(turn_access.get("earned_turns", 0)),
 		"pre_turn_world": machine.export_world_snapshot(),
 		"latest_payout_yes": 0,
 		"started_at_unix": 0,
 	}
 	_save_state()
-	var spend_result := await yf.spend_turn_credit(wallet, turn_id)
-	if not bool(spend_result.get("ok", false)):
-		var message := "Turn could not start: %s" % spend_result.get("error", "bucket credit charge failed")
-		_client_status_for(int(entry.get("peer_id", 0)), message)
-		_active_turn = {}
-		_save_state()
-		_processing_queue = false
-		_broadcast_queue_state()
-		call_deferred("_process_next_turn")
-		return
-	_active_turn["status"] = "charged"
+	if access_mode == "paid":
+		var spend_result := await yf.spend_turn_credit(wallet, turn_id)
+		if not bool(spend_result.get("ok", false)):
+			var message := "Turn could not start: %s" % spend_result.get("error", "bucket credit charge failed")
+			_client_status_for(int(entry.get("peer_id", 0)), message)
+			_active_turn = {}
+			_save_state()
+			_processing_queue = false
+			_broadcast_queue_state()
+			call_deferred("_process_next_turn")
+			return
+		_active_turn["status"] = "charged"
+	else:
+		_active_turn["status"] = "access_granted"
 	_save_state()
 	_start_active_turn()
 	_processing_queue = false
@@ -692,7 +728,16 @@ func _start_active_turn() -> void:
 	var turn_id := String(_active_turn.get("turn_id", ""))
 	active_player_changed.emit(wallet, turn_id)
 	_broadcast_queue_state()
-	_client_status_for(int(_active_turn.get("peer_id", 0)), "Your paid 10-coin turn is starting.")
+	var access_mode := String(_active_turn.get("access_mode", "paid"))
+	var start_message := "Your paid 10-coin turn is starting."
+	match access_mode:
+		"hourly_free":
+			start_message = "Your free hourly 10-coin drop is starting. %s" % _turn_access_status_message(wallet)
+		"earned":
+			start_message = "Your earned 10-coin drop is starting. %s" % _turn_access_status_message(wallet)
+		"test_free":
+			start_message = "Your free test 10-coin drop is starting."
+	_client_status_for(int(_active_turn.get("peer_id", 0)), start_message)
 	machine.set_turn_seed(int(_active_turn.get("seed", 0)))
 	machine.queue_turn_toy(String(_active_turn.get("skin_family", "")))
 	machine.drop_coins(FIXED_DROP_COUNT)
@@ -705,11 +750,15 @@ func _recover_active_turn() -> void:
 		machine.restore_authoritative_snapshot(pre_turn_world)
 	var status := String(_active_turn.get("status", "charging"))
 	if status == "charging":
-		var spend_result := await yf.spend_turn_credit(String(_active_turn.get("wallet", "")), String(_active_turn.get("turn_id", "")))
-		if not bool(spend_result.get("ok", false)):
-			status_changed.emit("Recovered turn is waiting for credit charge: %s" % spend_result.get("error", "unknown error"))
-			return
-		_active_turn["status"] = "charged"
+		var access_mode := String(_active_turn.get("access_mode", "paid"))
+		if access_mode == "paid":
+			var spend_result := await yf.spend_turn_credit(String(_active_turn.get("wallet", "")), String(_active_turn.get("turn_id", "")))
+			if not bool(spend_result.get("ok", false)):
+				status_changed.emit("Recovered turn is waiting for credit charge: %s" % spend_result.get("error", "unknown error"))
+				return
+			_active_turn["status"] = "charged"
+		else:
+			_active_turn["status"] = "access_granted"
 		_save_state()
 	_start_active_turn()
 
@@ -981,7 +1030,80 @@ func _player(wallet: String) -> Dictionary:
 		"owned_skin_families": [],
 		"lifetime_yes": 0,
 		"lifetime_coins_paid_out": 0,
+		"next_free_turn_at_unix": 0,
+		"earned_turns": 0,
+		"earned_turn_sources": {},
 	}
+
+func grant_earned_turns(wallet: String, amount: int, source: String = "manual") -> int:
+	if mode != "server":
+		return -1
+	var normalized := wallet.strip_edges().to_lower()
+	if not _is_wallet(normalized) or amount == 0:
+		return -1
+	var player := _player(normalized)
+	var current := maxi(0, int(player.get("earned_turns", 0)))
+	var next_total := clampi(current + amount, 0, MAX_EARNED_TURNS)
+	player["earned_turns"] = next_total
+	var sources: Dictionary = {}
+	var sources_value: Variant = player.get("earned_turn_sources", {})
+	if sources_value is Dictionary:
+		sources = (sources_value as Dictionary).duplicate(true)
+	var source_key := source.strip_edges().to_lower()
+	if source_key.is_empty():
+		source_key = "manual"
+	sources[source_key] = maxi(0, int(sources.get(source_key, 0)) + amount)
+	player["earned_turn_sources"] = sources
+	_players[normalized] = player
+	_save_state()
+	return next_total
+
+func _reserve_turn_access(wallet: String, turn_id: String) -> Dictionary:
+	var normalized := wallet.strip_edges().to_lower()
+	var player := _player(normalized)
+	var now := int(Time.get_unix_time_from_system())
+	var next_free_at := maxi(0, int(player.get("next_free_turn_at_unix", 0)))
+	var earned_turns := maxi(0, int(player.get("earned_turns", 0)))
+	var access_mode := "paid"
+	if yf != null and yf.test_free_turns:
+		access_mode = "test_free"
+	elif _free_turn_cooldown_seconds > 0 and now >= next_free_at:
+		access_mode = "hourly_free"
+		next_free_at = now + _free_turn_cooldown_seconds
+		player["next_free_turn_at_unix"] = next_free_at
+	elif earned_turns > 0:
+		access_mode = "earned"
+		earned_turns -= 1
+		player["earned_turns"] = earned_turns
+	if access_mode != "paid":
+		player["last_turn_access_mode"] = access_mode
+		player["last_turn_access_turn_id"] = turn_id
+		player["last_turn_access_at_unix"] = now
+		_players[normalized] = player
+	return {
+		"mode": access_mode,
+		"next_free_turn_at_unix": next_free_at,
+		"earned_turns": earned_turns,
+	}
+
+func _turn_access_status_message(wallet: String) -> String:
+	if yf != null and yf.test_free_turns:
+		return "Free test drops are enabled."
+	var player := _player(wallet)
+	var earned_turns := maxi(0, int(player.get("earned_turns", 0)))
+	if _free_turn_cooldown_seconds <= 0:
+		return "Earned drops: %d. Paid drops remain available." % earned_turns
+	var now := int(Time.get_unix_time_from_system())
+	var next_free_at := maxi(0, int(player.get("next_free_turn_at_unix", 0)))
+	if now >= next_free_at:
+		return "Your free hourly 10-coin drop is ready. Earned drops: %d." % earned_turns
+	var remaining_seconds := maxi(0, next_free_at - now)
+	var remaining_minutes := maxi(1, ceili(float(remaining_seconds) / 60.0))
+	return "Next free drop in about %d minute%s. Earned drops: %d. Paid drops remain available." % [
+		remaining_minutes,
+		"" if remaining_minutes == 1 else "s",
+		earned_turns,
+	]
 
 func _save_state() -> void:
 	if mode != "server":
