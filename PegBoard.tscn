@@ -1,0 +1,141 @@
+[gd_scene format=3 uid="uid://dabibmnuqtxgn"]
+
+[ext_resource type="PackedScene" path="res://Peg.tscn" id="1_peg"]
+[ext_resource type="PackedScene" path="res://DropDivider.tscn" id="2_divider"]
+
+[sub_resource type="StandardMaterial3D" id="Material_board"]
+albedo_color = Color(0.075, 0.095, 0.085, 1)
+metallic = 0.18
+roughness = 0.58
+
+[sub_resource type="BoxMesh" id="Mesh_board"]
+size = Vector3(11.2, 20.3, 0.18)
+
+[sub_resource type="BoxShape3D" id="Shape_board"]
+size = Vector3(11.2, 20.3, 0.18)
+
+[sub_resource type="StandardMaterial3D" id="Material_wall"]
+albedo_color = Color(0.055, 0.085, 0.07, 1)
+metallic = 0.22
+roughness = 0.48
+
+[sub_resource type="BoxMesh" id="Mesh_vertical_rail"]
+size = Vector3(0.2, 18.6, 0.42)
+
+[sub_resource type="BoxShape3D" id="Shape_vertical_rail"]
+size = Vector3(0.2, 18.6, 0.42)
+
+[sub_resource type="BoxMesh" id="Mesh_horizontal_rail"]
+size = Vector3(11.45, 0.22, 0.42)
+
+[sub_resource type="BoxShape3D" id="Shape_horizontal_rail"]
+size = Vector3(11.45, 0.22, 0.42)
+
+[sub_resource type="StandardMaterial3D" id="Material_glass"]
+transparency = 1
+cull_mode = 2
+albedo_color = Color(0.58, 0.83, 0.92, 0.16)
+metallic = 0.08
+roughness = 0.08
+
+[sub_resource type="BoxMesh" id="Mesh_glass"]
+size = Vector3(11, 17.6, 0.08)
+
+[sub_resource type="BoxShape3D" id="Shape_glass"]
+size = Vector3(11, 17.6, 0.08)
+
+[node name="PegBoard" type="Node3D" unique_id=1744462138]
+editor_description = "Open this scene directly. Use EditorFrontCamera for a straight-on view. Duplicate Pegs/Peg with Ctrl+D and move each peg."
+
+[node name="Panel" type="StaticBody3D" parent="." unique_id=919411878]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 10.95, -5)
+
+[node name="Mesh" type="MeshInstance3D" parent="Panel" unique_id=1494711722]
+material_override = SubResource("Material_board")
+mesh = SubResource("Mesh_board")
+
+[node name="Collision" type="CollisionShape3D" parent="Panel" unique_id=1062558638]
+shape = SubResource("Shape_board")
+
+[node name="LeftRail" type="StaticBody3D" parent="." unique_id=430116286]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -5.7, 11.9, -4.74)
+
+[node name="Mesh" type="MeshInstance3D" parent="LeftRail" unique_id=2126678486]
+material_override = SubResource("Material_wall")
+mesh = SubResource("Mesh_vertical_rail")
+
+[node name="Collision" type="CollisionShape3D" parent="LeftRail" unique_id=465989113]
+shape = SubResource("Shape_vertical_rail")
+
+[node name="RightRail" type="StaticBody3D" parent="." unique_id=946983609]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 5.7, 11.9, -4.74)
+
+[node name="Mesh" type="MeshInstance3D" parent="RightRail" unique_id=519819234]
+material_override = SubResource("Material_wall")
+mesh = SubResource("Mesh_vertical_rail")
+
+[node name="Collision" type="CollisionShape3D" parent="RightRail" unique_id=1686642573]
+shape = SubResource("Shape_vertical_rail")
+
+[node name="TopRail" type="StaticBody3D" parent="." unique_id=173920325]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 21.2, -4.74)
+
+[node name="Mesh" type="MeshInstance3D" parent="TopRail" unique_id=1915634162]
+material_override = SubResource("Material_wall")
+mesh = SubResource("Mesh_horizontal_rail")
+
+[node name="Collision" type="CollisionShape3D" parent="TopRail" unique_id=220101404]
+shape = SubResource("Shape_horizontal_rail")
+
+[node name="FrontGlass" type="StaticBody3D" parent="." unique_id=991201942]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 12.9, -4.66)
+
+[node name="Mesh" type="MeshInstance3D" parent="FrontGlass" unique_id=1196137806]
+material_override = SubResource("Material_glass")
+cast_shadow = 0
+mesh = SubResource("Mesh_glass")
+
+[node name="Collision" type="CollisionShape3D" parent="FrontGlass" unique_id=102675283]
+shape = SubResource("Shape_glass")
+
+[node name="Pegs" type="Node3D" parent="." unique_id=2131217247]
+
+[node name="Peg" parent="Pegs" unique_id=987034748 instance=ExtResource("1_peg")]
+transform = Transform3D(1, 0, 0, 0, -4.371139e-08, -1, 0, 1, -4.371139e-08, 0, 18.24821, -4.8)
+
+[node name="Peg2" parent="Pegs" unique_id=128690527 instance=ExtResource("1_peg")]
+transform = Transform3D(1, 0, 0, 0, -4.371139e-08, -1, 0, 1, -4.371139e-08, 1.2006183, 18.24821, -4.8)
+
+[node name="Peg3" parent="Pegs" unique_id=1338598905 instance=ExtResource("1_peg")]
+transform = Transform3D(1, 0, 0, 0, -4.371139e-08, -1, 0, 1, -4.371139e-08, 2.3788133, 18.24821, -4.8)
+
+[node name="DropSlots" type="Node3D" parent="." unique_id=1114573682]
+
+[node name="Divider_00" parent="DropSlots" unique_id=1981425156 instance=ExtResource("2_divider")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -3.675, 20.55, -4.8)
+
+[node name="Divider_01" parent="DropSlots" unique_id=1652681970 instance=ExtResource("2_divider")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -2.625, 20.55, -4.8)
+
+[node name="Divider_02" parent="DropSlots" unique_id=322508037 instance=ExtResource("2_divider")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -1.575, 20.55, -4.8)
+
+[node name="Divider_03" parent="DropSlots" unique_id=1622194946 instance=ExtResource("2_divider")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.525, 20.55, -4.8)
+
+[node name="Divider_04" parent="DropSlots" unique_id=1135513347 instance=ExtResource("2_divider")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.525, 20.55, -4.8)
+
+[node name="Divider_05" parent="DropSlots" unique_id=502198168 instance=ExtResource("2_divider")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 1.575, 20.55, -4.8)
+
+[node name="Divider_06" parent="DropSlots" unique_id=179718552 instance=ExtResource("2_divider")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 2.625, 20.55, -4.8)
+
+[node name="Divider_07" parent="DropSlots" unique_id=1540885419 instance=ExtResource("2_divider")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 3.675, 20.55, -4.8)
+
+[node name="EditorFrontCamera" type="Camera3D" parent="." unique_id=1015850374]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 11.5, 15)
+projection = 1
+size = 23.0

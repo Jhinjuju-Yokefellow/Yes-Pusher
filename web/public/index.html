@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>YES Pusher — Rainbow's End Machine</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <main class="shell">
+    <section id="login" class="login-card">
+      <p class="eyebrow">RAINBOW'S END</p>
+      <h1>Shared YES Pusher</h1>
+      <p class="copy">Connect the wallet you use on Yokefellow. You will sign a login message; it does not send a transaction or spend YES.</p>
+      <button id="connect" type="button">CONNECT WALLET &amp; PLAY</button>
+      <p id="status" class="status">Waiting for a wallet.</p>
+      <p class="fine-print">Each paid turn drops exactly 10 coins. The shared server—not this browser—handles bucket credit and verified results.</p>
+      <p id="mint-setup-link" class="fine-print"><a href="/instant-mint.html">Set up instant NFT minting</a></p>
+    </section>
+
+    <section id="game-shell" class="game-shell" hidden>
+      <header class="game-header">
+        <div>
+          <strong>RAINBOW'S END</strong>
+          <span id="wallet-label"></span>
+        </div>
+        <button id="disconnect" type="button" class="secondary">CHANGE WALLET</button>
+      </header>
+      <iframe id="game" title="YES Pusher — Rainbow's End machine" allow="fullscreen; autoplay" referrerpolicy="no-referrer"></iframe>
+    </section>
+  </main>
+  <script src="/app.js"></script>
+</body>
+</html>

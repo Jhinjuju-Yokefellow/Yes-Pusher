@@ -1,0 +1,136 @@
+[gd_scene format=3 uid="uid://d1hjkq6bintpy"]
+
+[ext_resource type="Script" uid="uid://dyfshba5pd1mm" path="res://scripts/main.gd" id="1_main"]
+[ext_resource type="PackedScene" uid="uid://duoc8mq88ul3g" path="res://Machine.tscn" id="2_machine"]
+[ext_resource type="Script" uid="uid://qcwjkolbbr8o" path="res://scripts/camera_controller.gd" id="3_camera"]
+
+[sub_resource type="ProceduralSkyMaterial" id="SkyMaterial"]
+sky_top_color = Color(0.010, 0.006, 0.004, 1)
+sky_horizon_color = Color(0.075, 0.038, 0.020, 1)
+ground_bottom_color = Color(0.006, 0.004, 0.003, 1)
+ground_horizon_color = Color(0.045, 0.026, 0.015, 1)
+
+[sub_resource type="Sky" id="Sky"]
+sky_material = SubResource("SkyMaterial")
+
+[sub_resource type="Environment" id="Environment"]
+background_mode = 2
+sky = SubResource("Sky")
+ambient_light_source = 3
+ambient_light_color = Color(0.30, 0.22, 0.15, 1)
+ambient_light_energy = 0.48
+tonemap_mode = 2
+
+[sub_resource type="StyleBoxFlat" id="PanelStyle"]
+content_margin_left = 16.0
+content_margin_top = 14.0
+content_margin_right = 16.0
+content_margin_bottom = 14.0
+bg_color = Color(0.025, 0.045, 0.035, 0.94)
+border_width_left = 1
+border_width_top = 1
+border_width_right = 1
+border_width_bottom = 1
+border_color = Color(0.66, 0.51, 0.16, 0.9)
+corner_radius_top_left = 10
+corner_radius_top_right = 10
+corner_radius_bottom_right = 10
+corner_radius_bottom_left = 10
+
+[node name="Main" type="Node3D" unique_id=193244016]
+script = ExtResource("1_main")
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=921001067]
+environment = SubResource("Environment")
+
+[node name="KeyLight" type="DirectionalLight3D" parent="." unique_id=2069158235]
+transform = Transform3D(0.88294756, 0.36994863, -0.2890356, 0, 0.6156615, 0.7880107, 0.46947157, -0.6957722, 0.5435968, 0, 0, 0)
+light_color = Color(1, 0.79, 0.52, 1)
+light_energy = 1.75
+shadow_enabled = true
+
+[node name="FillLight" type="OmniLight3D" parent="." unique_id=1644484499]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -5.4, 8.5, 2.5)
+light_color = Color(0.52, 0.33, 0.20, 1)
+light_energy = 1.55
+shadow_enabled = false
+omni_range = 14.0
+
+[node name="MarqueeWarmLight" type="OmniLight3D" parent="."]
+position = Vector3(0, 23.2, -1.6)
+light_color = Color(1, 0.60, 0.28, 1)
+light_energy = 3.1
+shadow_enabled = false
+omni_range = 10.0
+
+[node name="EmeraldRimLight" type="OmniLight3D" parent="."]
+position = Vector3(5.4, 8.5, 2.5)
+light_color = Color(0.52, 0.33, 0.20, 1)
+light_energy = 1.55
+shadow_enabled = false
+omni_range = 14.0
+
+[node name="Camera" type="Camera3D" parent="." unique_id=1874537046]
+current = true
+fov = 48.0
+script = ExtResource("3_camera")
+target = Vector3(0, 9.6, -0.1)
+distance = 36.0
+
+[node name="Machine" parent="." unique_id=1879374535 instance=ExtResource("2_machine")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.0011429787, 0.025031447, -0.0030431747)
+
+[node name="Interface" type="CanvasLayer" parent="." unique_id=248248236]
+
+[node name="Margin" type="MarginContainer" parent="Interface" unique_id=925021823]
+offset_left = 18.0
+offset_top = 18.0
+offset_right = 390.0
+offset_bottom = 500.0
+
+[node name="Panel" type="PanelContainer" parent="Interface/Margin" unique_id=230190934]
+layout_mode = 2
+theme_override_styles/panel = SubResource("PanelStyle")
+
+[node name="Layout" type="VBoxContainer" parent="Interface/Margin/Panel" unique_id=1300944904]
+layout_mode = 2
+theme_override_constants/separation = 9
+
+[node name="Title" type="Label" parent="Interface/Margin/Panel/Layout" unique_id=1584254361]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.96, 0.76, 0.24, 1)
+theme_override_font_sizes/font_size = 24
+text = "RAINBOW’S END — SHARED YES PUSHER"
+
+[node name="Status" type="Label" parent="Interface/Margin/Panel/Layout" unique_id=776494688]
+layout_mode = 2
+text = "Machine starting…"
+
+[node name="Payouts" type="Label" parent="Interface/Margin/Panel/Layout" unique_id=1435252496]
+layout_mode = 2
+text = "Dropped: 0   Paid out: 0   Lost: 0"
+
+[node name="ActiveCoins" type="Label" parent="Interface/Margin/Panel/Layout" unique_id=723050067]
+layout_mode = 2
+text = "Coins in machine: 0"
+
+[node name="DropControls" type="HBoxContainer" parent="Interface/Margin/Panel/Layout" unique_id=1894482403]
+layout_mode = 2
+theme_override_constants/separation = 8
+
+[node name="CountLabel" type="Label" parent="Interface/Margin/Panel/Layout/DropControls" unique_id=1752274947]
+layout_mode = 2
+text = "10 coins per turn"
+vertical_alignment = 1
+
+[node name="DropButton" type="Button" parent="Interface/Margin/Panel/Layout/DropControls" unique_id=807491495]
+custom_minimum_size = Vector2(150, 42)
+layout_mode = 2
+text = "JOIN / DROP 10"
+
+
+[node name="Instructions" type="Label" parent="Interface/Margin/Panel/Layout" unique_id=550859794]
+layout_mode = 2
+theme_override_colors/font_color = Color(0.72, 0.78, 0.74, 1)
+text = "SPACE: join for one 10-coin turn
+Right-drag: orbit   Wheel: zoom"

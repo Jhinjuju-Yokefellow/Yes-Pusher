@@ -1,0 +1,14 @@
+.git
+.github
+.godot
+**/.godot
+**/node_modules
+**/.local
+.env
+.env.*
+!.env.client.example
+!.env.server.example
+!web/.env.example
+*.zip
+*.mp4
+*.log

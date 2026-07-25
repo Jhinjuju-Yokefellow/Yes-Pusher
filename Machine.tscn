@@ -1,0 +1,421 @@
+[gd_scene format=3 uid="uid://duoc8mq88ul3g"]
+
+[ext_resource type="Script" uid="uid://bc7gtdu4gcoxe" path="res://scripts/machine.gd" id="1_machine"]
+[ext_resource type="PackedScene" path="res://Coin.tscn" id="2_coin"]
+[ext_resource type="Script" uid="uid://dy0o103ir10km" path="res://scripts/rainbows_end_theme.gd" id="3_theme"]
+[ext_resource type="Texture2D" uid="uid://c5ni1eot0ne0n" path="res://assets/rainbows_end_peg_wall.png" id="4_wall_art"]
+[ext_resource type="Texture2D" uid="uid://terijc3rsmbg" path="res://assets/hard_cloud_surface.png" id="5_cloud_surface"]
+
+[sub_resource type="StandardMaterial3D" id="Material_board"]
+albedo_color = Color(0.105, 0.17, 0.13, 1)
+roughness = 0.72
+
+[sub_resource type="BoxMesh" id="Mesh_lower_board"]
+size = Vector3(10, 0.5, 15.380664)
+
+[sub_resource type="BoxShape3D" id="Shape_lower_board"]
+size = Vector3(10, 0.5, 13.635058)
+
+[sub_resource type="StandardMaterial3D" id="Material_wall"]
+albedo_color = Color(0.032, 0.022, 0.016, 1)
+metallic = 0.42
+roughness = 0.46
+
+[sub_resource type="BoxMesh" id="Mesh_lower_side_wall"]
+size = Vector3(2.053418, 1.45, 4.2620115)
+
+[sub_resource type="BoxShape3D" id="Shape_lower_side_wall"]
+size = Vector3(1.6417968, 1.45, 4.0826235)
+
+[sub_resource type="StandardMaterial3D" id="Material_hard_cloud"]
+albedo_color = Color(0.96, 0.94, 0.88, 1)
+albedo_texture = ExtResource("5_cloud_surface")
+metallic = 0.02
+roughness = 0.72
+uv1_scale = Vector3(1.35, 1.35, 1.35)
+
+[sub_resource type="BoxMesh" id="Mesh_back_wall_side"]
+size = Vector3(3.937671, 3.6, 0.55)
+
+[sub_resource type="BoxShape3D" id="Shape_back_wall_side"]
+size = Vector3(3.9183533, 3.6, 0.55)
+
+[sub_resource type="StandardMaterial3D" id="Material_pusher"]
+albedo_color = Color(0.56, 0.6, 0.57, 1)
+metallic = 0.82
+roughness = 0.22
+
+[sub_resource type="BoxMesh" id="Mesh_pusher"]
+size = Vector3(6.35, 0.79799074, 5.282715)
+
+[sub_resource type="BoxShape3D" id="Shape_pusher"]
+size = Vector3(6.35, 0.75862306, 5.4804688)
+
+[sub_resource type="StandardMaterial3D" id="Material_peg_board"]
+albedo_color = Color(0.075, 0.095, 0.085, 1)
+metallic = 0.18
+roughness = 0.58
+
+[sub_resource type="BoxMesh" id="Mesh_peg_board"]
+size = Vector3(11.2, 20.3, 0.18)
+
+[sub_resource type="BoxShape3D" id="Shape_peg_board"]
+size = Vector3(11.2, 20.3, 0.18)
+
+[sub_resource type="StandardMaterial3D" id="Material_rainbow_wall_art"]
+albedo_texture = ExtResource("4_wall_art")
+metallic = 0.04
+roughness = 0.88
+
+[sub_resource type="QuadMesh" id="Mesh_rainbow_wall_art"]
+size = Vector2(10.9, 19.75)
+
+[sub_resource type="BoxMesh" id="Mesh_peg_vertical_rail"]
+size = Vector3(0.2, 18.6, 0.42)
+
+[sub_resource type="BoxShape3D" id="Shape_peg_vertical_rail"]
+size = Vector3(0.2, 18.6, 0.42)
+
+[sub_resource type="BoxMesh" id="Mesh_side_return_guide"]
+size = Vector3(0.34, 1.35, 0.72)
+
+[sub_resource type="BoxShape3D" id="Shape_side_return_guide"]
+size = Vector3(0.34, 1.35, 0.72)
+
+[sub_resource type="BoxMesh" id="Mesh_peg_horizontal_rail"]
+size = Vector3(11.45, 0.22, 0.42)
+
+[sub_resource type="BoxShape3D" id="Shape_peg_horizontal_rail"]
+size = Vector3(11.45, 0.22, 0.42)
+
+[sub_resource type="StandardMaterial3D" id="Material_glass"]
+transparency = 1
+cull_mode = 2
+albedo_color = Color(0.58, 0.83, 0.92, 0.16)
+metallic = 0.08
+roughness = 0.08
+
+[sub_resource type="BoxMesh" id="Mesh_peg_glass"]
+size = Vector3(11, 17.6, 0.08)
+
+[sub_resource type="BoxShape3D" id="Shape_peg_glass"]
+size = Vector3(11, 17.6, 0.08)
+
+[sub_resource type="StandardMaterial3D" id="Material_trim"]
+albedo_color = Color(0.68, 0.39, 0.075, 1)
+metallic = 0.82
+roughness = 0.28
+
+[sub_resource type="BoxMesh" id="Mesh_front_trim"]
+size = Vector3(10.6, 0.25, 0.25)
+
+[sub_resource type="BoxShape3D" id="Shape_payout"]
+size = Vector3(10.8, 0.75, 4)
+
+[sub_resource type="BoxShape3D" id="Shape_cleanup"]
+size = Vector3(22, 3, 24)
+
+[sub_resource type="StandardMaterial3D" id="Material_cabinet_accent"]
+albedo_color = Color(0.092, 0.026, 0.012, 1)
+metallic = 0.08
+roughness = 0.64
+
+[sub_resource type="BoxMesh" id="Mesh_payout_floor"]
+size = Vector3(11.6, 0.25, 4.8)
+
+[sub_resource type="BoxShape3D" id="Shape_payout_floor"]
+size = Vector3(11.6, 1.0, 4.8)
+
+[sub_resource type="BoxMesh" id="Mesh_payout_wall_side"]
+size = Vector3(0.35, 1.4, 4.8)
+
+[sub_resource type="BoxShape3D" id="Shape_payout_wall_side"]
+size = Vector3(0.35, 1.4, 4.8)
+
+[sub_resource type="StandardMaterial3D" id="Material_cabinet_gold"]
+albedo_color = Color(0.68, 0.39, 0.075, 1)
+metallic = 0.82
+roughness = 0.28
+
+[sub_resource type="BoxMesh" id="Mesh_payout_wall_front"]
+size = Vector3(11.6, 1.15, 0.35)
+
+[sub_resource type="BoxShape3D" id="Shape_payout_wall_front"]
+size = Vector3(11.6, 1.15, 0.35)
+
+[sub_resource type="BoxMesh" id="Mesh_front_guide"]
+size = Vector3(0.65, 1.15, 2.45)
+
+[sub_resource type="BoxShape3D" id="Shape_front_guide"]
+size = Vector3(0.65, 1.15, 2.45)
+
+[sub_resource type="BoxMesh" id="Mesh_front_edge_guard"]
+size = Vector3(0.5, 1, 2.7453125)
+
+[sub_resource type="BoxShape3D" id="Shape_front_edge_guard"]
+size = Vector3(0.5, 1, 2.7711914)
+
+[sub_resource type="BoxMesh" id="Mesh_header_panel"]
+size = Vector3(12.3, 1.1, 0.8)
+
+[sub_resource type="BoxMesh" id="Mesh_side_panel"]
+size = Vector3(0.42, 8.2, 13.2)
+
+[node name="Machine" type="Node3D" unique_id=1186393109]
+script = ExtResource("1_machine")
+coin_scene = ExtResource("2_coin")
+
+[node name="LowerBoard" type="StaticBody3D" parent="." unique_id=274978491]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 3.35)
+
+[node name="Mesh" type="MeshInstance3D" parent="LowerBoard" unique_id=2061044111]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -3.4953847)
+material_override = SubResource("Material_board")
+mesh = SubResource("Mesh_lower_board")
+
+[node name="Collision" type="CollisionShape3D" parent="LowerBoard" unique_id=762681514]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -2.6175294)
+shape = SubResource("Shape_lower_board")
+
+[node name="LeftWall" type="StaticBody3D" parent="." unique_id=2135919634]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -5.175, 0.82, 3.25)
+
+[node name="Mesh" type="MeshInstance3D" parent="LeftWall" unique_id=389028307]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 1.0707412, 0, -5.887645)
+material_override = SubResource("Material_wall")
+mesh = SubResource("Mesh_lower_side_wall")
+
+[node name="Collision" type="CollisionShape3D" parent="LeftWall" unique_id=1420834270]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 1.3454688, 0, -5.801478)
+shape = SubResource("Shape_lower_side_wall")
+
+[node name="RightWall" type="StaticBody3D" parent="." unique_id=5551008]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 5.175, 0.82, 3.25)
+
+[node name="Mesh" type="MeshInstance3D" parent="RightWall" unique_id=1120981807]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -1.1507478, 0, -5.9333854)
+material_override = SubResource("Material_wall")
+mesh = SubResource("Mesh_lower_side_wall")
+
+[node name="Collision" type="CollisionShape3D" parent="RightWall" unique_id=1334663638]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -0.95321083, 0, -5.826)
+shape = SubResource("Shape_lower_side_wall")
+
+[node name="BackWallLeft" type="StaticBody3D" parent="." unique_id=1226888580]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -4.175, 1.8, -5)
+
+[node name="Mesh" type="MeshInstance3D" parent="BackWallLeft" unique_id=1390370799]
+transform = Transform3D(0.9465131, 0.3226654, 0, -0.3226654, 0.9465131, 0, 0, 0, 1, -0.17012262, 0.057994604, 0)
+material_override = SubResource("Material_hard_cloud")
+mesh = SubResource("Mesh_back_wall_side")
+
+[node name="Collision" type="CollisionShape3D" parent="BackWallLeft" unique_id=1428446266]
+transform = Transform3D(0.9465131, 0.3226654, 0, -0.3226654, 0.9465131, 0, 0, 0, 1, -0.15472698, 0.052746296, 0)
+shape = SubResource("Shape_back_wall_side")
+
+[node name="BackWallRight" type="StaticBody3D" parent="." unique_id=1041510969]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 4.175, 1.8, -5)
+
+[node name="Mesh" type="MeshInstance3D" parent="BackWallRight" unique_id=1906863566]
+transform = Transform3D(0.9465131, -0.3226654, 0, 0.3226654, 0.9465131, 0, 0, 0, 1, 0.17012262, 0.057994604, 0)
+material_override = SubResource("Material_hard_cloud")
+mesh = SubResource("Mesh_back_wall_side")
+
+[node name="Collision" type="CollisionShape3D" parent="BackWallRight" unique_id=285704114]
+transform = Transform3D(0.90357375, -0.42843255, 0, 0.42843255, 0.90357375, 0, 0, 0, 1, 0.27524424, 0.13050795, 0)
+shape = SubResource("Shape_back_wall_side")
+
+[node name="Pusher" type="AnimatableBody3D" parent="." unique_id=99039065]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.59, -7.15)
+
+[node name="Mesh" type="MeshInstance3D" parent="Pusher" unique_id=1939075507]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.040584743, -0.89135695)
+material_override = SubResource("Material_pusher")
+mesh = SubResource("Mesh_pusher")
+
+[node name="Collision" type="CollisionShape3D" parent="Pusher" unique_id=146969499]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -0.11466685, -0.9902339)
+shape = SubResource("Shape_pusher")
+
+[node name="PegBoard" type="Node3D" parent="." unique_id=460574905]
+
+[node name="Panel" type="StaticBody3D" parent="PegBoard" unique_id=791841336]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 10.95, -5)
+
+[node name="Mesh" type="MeshInstance3D" parent="PegBoard/Panel" unique_id=841921954]
+material_override = SubResource("Material_peg_board")
+mesh = SubResource("Mesh_peg_board")
+
+[node name="Collision" type="CollisionShape3D" parent="PegBoard/Panel" unique_id=961497610]
+shape = SubResource("Shape_peg_board")
+
+[node name="RainbowWallArt" type="MeshInstance3D" parent="PegBoard" unique_id=1767073496]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 10.95, -4.895)
+material_override = SubResource("Material_rainbow_wall_art")
+cast_shadow = 0
+mesh = SubResource("Mesh_rainbow_wall_art")
+
+[node name="LeftRail" type="StaticBody3D" parent="PegBoard" unique_id=1756636546]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -5.7, 11.9, -4.74)
+
+[node name="Mesh" type="MeshInstance3D" parent="PegBoard/LeftRail" unique_id=1262278506]
+material_override = SubResource("Material_wall")
+mesh = SubResource("Mesh_peg_vertical_rail")
+
+[node name="Collision" type="CollisionShape3D" parent="PegBoard/LeftRail" unique_id=1699541905]
+shape = SubResource("Shape_peg_vertical_rail")
+
+[node name="RightRail" type="StaticBody3D" parent="PegBoard" unique_id=1813036256]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 5.7, 11.9, -4.74)
+
+[node name="Mesh" type="MeshInstance3D" parent="PegBoard/RightRail" unique_id=1371162148]
+material_override = SubResource("Material_wall")
+mesh = SubResource("Mesh_peg_vertical_rail")
+
+[node name="Collision" type="CollisionShape3D" parent="PegBoard/RightRail" unique_id=1716124542]
+shape = SubResource("Shape_peg_vertical_rail")
+
+[node name="LeftSideReturnGuideMid" type="StaticBody3D" parent="PegBoard" unique_id=1780693090]
+transform = Transform3D(-0.7018468, 0.7123279, 0, -0.7123279, -0.7018468, 0, 0, 0, 1, -5.3200000, 15.1546665, -5.0200000)
+
+[node name="Mesh" type="MeshInstance3D" parent="PegBoard/LeftSideReturnGuideMid" unique_id=233751425]
+material_override = SubResource("Material_hard_cloud")
+mesh = SubResource("Mesh_side_return_guide")
+
+[node name="Collision" type="CollisionShape3D" parent="PegBoard/LeftSideReturnGuideMid" unique_id=2087089739]
+shape = SubResource("Shape_side_return_guide")
+
+[node name="RightSideReturnGuideMid" type="StaticBody3D" parent="PegBoard" unique_id=28652572]
+transform = Transform3D(-0.7018468, -0.7123279, 0, 0.7123279, -0.7018468, 0, 0, 0, 1, 5.3200000, 15.1546665, -5.0200000)
+
+[node name="Mesh" type="MeshInstance3D" parent="PegBoard/RightSideReturnGuideMid" unique_id=195789806]
+material_override = SubResource("Material_hard_cloud")
+mesh = SubResource("Mesh_side_return_guide")
+
+[node name="Collision" type="CollisionShape3D" parent="PegBoard/RightSideReturnGuideMid" unique_id=1252057439]
+shape = SubResource("Shape_side_return_guide")
+
+[node name="LeftSideReturnGuideLow" type="StaticBody3D" parent="PegBoard" unique_id=1068996945]
+transform = Transform3D(-0.4941333, 0.8693861, 0, -0.8693861, -0.4941333, 0, 0, 0, 1, -5.1600000, 8.6665515, -5.0200000)
+
+[node name="Mesh" type="MeshInstance3D" parent="PegBoard/LeftSideReturnGuideLow" unique_id=2019054281]
+material_override = SubResource("Material_hard_cloud")
+mesh = SubResource("Mesh_side_return_guide")
+
+[node name="Collision" type="CollisionShape3D" parent="PegBoard/LeftSideReturnGuideLow" unique_id=1812629182]
+shape = SubResource("Shape_side_return_guide")
+
+[node name="RightSideReturnGuideLow" type="StaticBody3D" parent="PegBoard" unique_id=1517707356]
+transform = Transform3D(-0.4941333, -0.8693861, 0, 0.8693861, -0.4941333, 0, 0, 0, 1, 5.1600000, 8.6665515, -5.0200000)
+
+[node name="Mesh" type="MeshInstance3D" parent="PegBoard/RightSideReturnGuideLow" unique_id=1161101245]
+material_override = SubResource("Material_hard_cloud")
+mesh = SubResource("Mesh_side_return_guide")
+
+[node name="Collision" type="CollisionShape3D" parent="PegBoard/RightSideReturnGuideLow" unique_id=175544888]
+shape = SubResource("Shape_side_return_guide")
+
+[node name="TopRail" type="StaticBody3D" parent="PegBoard" unique_id=1029681253]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 21.2, -4.74)
+
+[node name="Mesh" type="MeshInstance3D" parent="PegBoard/TopRail" unique_id=1355813519]
+material_override = SubResource("Material_wall")
+mesh = SubResource("Mesh_peg_horizontal_rail")
+
+[node name="Collision" type="CollisionShape3D" parent="PegBoard/TopRail" unique_id=1843389565]
+shape = SubResource("Shape_peg_horizontal_rail")
+
+[node name="FrontGlass" type="StaticBody3D" parent="PegBoard" unique_id=451250911]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 12.9, -4.66)
+
+[node name="Mesh" type="MeshInstance3D" parent="PegBoard/FrontGlass" unique_id=2029829312]
+material_override = SubResource("Material_glass")
+cast_shadow = 0
+mesh = SubResource("Mesh_peg_glass")
+
+[node name="Collision" type="CollisionShape3D" parent="PegBoard/FrontGlass" unique_id=581401083]
+shape = SubResource("Shape_peg_glass")
+
+[node name="Pegs" type="Node3D" parent="PegBoard" unique_id=1963734291]
+
+[node name="DropSlots" type="Node3D" parent="PegBoard" unique_id=920252726]
+
+[node name="FrontTrim" type="MeshInstance3D" parent="." unique_id=1078236827]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.16, 7.65)
+material_override = SubResource("Material_trim")
+mesh = SubResource("Mesh_front_trim")
+
+[node name="PayoutZone" type="Area3D" parent="." unique_id=1389625748]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -1.05, 9.65)
+collision_layer = 0
+
+[node name="Collision" type="CollisionShape3D" parent="PayoutZone" unique_id=1606584530]
+shape = SubResource("Shape_payout")
+
+[node name="CleanupZone" type="Area3D" parent="." unique_id=1356398784]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, -7.2, 7.8)
+collision_layer = 0
+
+[node name="Collision" type="CollisionShape3D" parent="CleanupZone" unique_id=815255570]
+shape = SubResource("Shape_cleanup")
+
+
+[node name="LeftFrontGuide" type="StaticBody3D" parent="." unique_id=300100013]
+transform = Transform3D(0.866025, 0, -0.5, 0, 1, 0, 0.5, 0, 0.866025, -3.8863912, 0.8110236, 0.49482542)
+
+[node name="Mesh" type="MeshInstance3D" parent="LeftFrontGuide" unique_id=300100014]
+material_override = SubResource("Material_wall")
+mesh = SubResource("Mesh_front_guide")
+
+[node name="Collision" type="CollisionShape3D" parent="LeftFrontGuide" unique_id=300100015]
+shape = SubResource("Shape_front_guide")
+
+[node name="RightFrontGuide" type="StaticBody3D" parent="." unique_id=300100016]
+transform = Transform3D(0.866025, 0, 0.5, 0, 1, 0, -0.5, 0, 0.866025, 3.8863912, 0.8110236, 0.49482542)
+
+[node name="Mesh" type="MeshInstance3D" parent="RightFrontGuide" unique_id=300100017]
+material_override = SubResource("Material_wall")
+mesh = SubResource("Mesh_front_guide")
+
+[node name="Collision" type="CollisionShape3D" parent="RightFrontGuide" unique_id=300100018]
+shape = SubResource("Shape_front_guide")
+
+[node name="LeftFrontGuideExtension" type="StaticBody3D" parent="." unique_id=300100022]
+transform = Transform3D(0.9998555, 0, -0.016998688, 0, 1, 0, 0.016998688, 0, 0.9998555, -4.624816, 0.72, 2.945549)
+
+[node name="Mesh" type="MeshInstance3D" parent="LeftFrontGuideExtension" unique_id=300100023]
+material_override = SubResource("Material_wall")
+mesh = SubResource("Mesh_front_edge_guard")
+
+[node name="Collision" type="CollisionShape3D" parent="LeftFrontGuideExtension" unique_id=300100024]
+shape = SubResource("Shape_front_edge_guard")
+
+[node name="RightFrontGuideExtension" type="StaticBody3D" parent="." unique_id=300100025]
+transform = Transform3D(0.9998555, 0, 0.016998688, 0, 1, 0, -0.016998688, 0, 0.9998555, 4.624816, 0.72, 2.945549)
+
+[node name="Mesh" type="MeshInstance3D" parent="RightFrontGuideExtension" unique_id=300100026]
+material_override = SubResource("Material_wall")
+mesh = SubResource("Mesh_front_edge_guard")
+
+[node name="Collision" type="CollisionShape3D" parent="RightFrontGuideExtension" unique_id=300100027]
+shape = SubResource("Shape_front_edge_guard")
+
+[node name="HeaderPanel" type="MeshInstance3D" parent="." unique_id=300100019]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 22.15, -4.85)
+material_override = SubResource("Material_cabinet_accent")
+mesh = SubResource("Mesh_header_panel")
+
+[node name="LeftCabinetPanel" type="MeshInstance3D" parent="." unique_id=300100020]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -5.95, 4.25, 1.6)
+material_override = SubResource("Material_cabinet_accent")
+mesh = SubResource("Mesh_side_panel")
+
+[node name="RightCabinetPanel" type="MeshInstance3D" parent="." unique_id=300100021]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 5.95, 4.25, 1.6)
+material_override = SubResource("Material_cabinet_accent")
+mesh = SubResource("Mesh_side_panel")
+
+[node name="RainbowEndTheme" type="Node3D" parent="." unique_id=57836394]
+script = ExtResource("3_theme")
+
+[node name="Coins" type="Node3D" parent="." unique_id=890715406]

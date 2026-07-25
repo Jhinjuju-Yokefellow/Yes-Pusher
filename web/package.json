@@ -1,0 +1,12 @@
+{
+  "name": "rainbows-end-wallet-session",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node --env-file=../.env.server --env-file=.env server.mjs",
+    "check": "node --check server.mjs"
+  },
+  "dependencies": {
+    "ethers": "^6.15.0"
+  }
+}

@@ -1,0 +1,28 @@
+[gd_scene load_steps=4 format=3]
+
+[sub_resource type="StandardMaterial3D" id="Material_peg"]
+albedo_color = Color(0.82, 0.84, 0.79, 1)
+metallic = 0.72
+roughness = 0.24
+
+[sub_resource type="CylinderMesh" id="Mesh_peg"]
+top_radius = 0.14
+bottom_radius = 0.14
+height = 0.20
+radial_segments = 16
+
+[sub_resource type="CylinderShape3D" id="Shape_peg"]
+radius = 0.14
+height = 0.20
+
+[node name="Peg" type="StaticBody3D"]
+rotation_degrees = Vector3(90, 0, 0)
+collision_layer = 1
+collision_mask = 1
+
+[node name="Mesh" type="MeshInstance3D" parent="."]
+mesh = SubResource("Mesh_peg")
+material_override = SubResource("Material_peg")
+
+[node name="Collision" type="CollisionShape3D" parent="."]
+shape = SubResource("Shape_peg")

@@ -1,0 +1,29 @@
+﻿# Godot generated files
+.godot/
+/android/
+*.import
+
+# Local secrets and persistent runtime state
+.env.server
+.env.client
+.env
+.env.*
+!.env.example
+!web/.env.example
+*.shared-state.json
+server-data/
+
+# Browser wallet service
+web/.env
+web/node_modules/
+web/.local/
+
+# Local archives and logs
+*.zip
+*.log
+.DS_Store
+Thumbs.db
+
+# IMPORTANT:
+# web/public/game is intentionally NOT ignored.
+# index.pck, index.wasm, index.js, and index.html must be committed.

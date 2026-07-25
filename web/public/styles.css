@@ -1,0 +1,55 @@
+:root {
+  color-scheme: dark;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: #020403;
+  color: #f5f4eb;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; min-height: 100%; background: #020403; }
+body { min-height: 100vh; }
+button { font: inherit; }
+.shell { min-height: 100vh; display: grid; place-items: center; padding: 24px; }
+.login-card {
+  width: min(560px, 100%);
+  padding: 36px;
+  border: 1px solid #d9a914;
+  border-radius: 18px;
+  background: linear-gradient(145deg, rgba(8, 18, 11, .98), rgba(2, 5, 3, .98));
+  box-shadow: 0 24px 80px rgba(0, 0, 0, .55);
+}
+.eyebrow { margin: 0 0 10px; color: #ffca2e; font-weight: 800; letter-spacing: .14em; }
+h1 { margin: 0; font-size: clamp(34px, 6vw, 56px); line-height: .98; }
+.copy { margin: 22px 0; color: #d8ded8; font-size: 18px; line-height: 1.55; }
+#connect, .secondary {
+  border: 1px solid #efbd1f;
+  border-radius: 10px;
+  padding: 14px 20px;
+  cursor: pointer;
+  font-weight: 800;
+}
+#connect { width: 100%; background: #efbd1f; color: #101006; }
+#connect:disabled { cursor: wait; opacity: .65; }
+.secondary { background: #111711; color: #f7cb3b; padding: 9px 13px; }
+.status { min-height: 24px; margin: 18px 0 0; color: #f7cb3b; }
+.fine-print { margin: 18px 0 0; color: #9ca79f; font-size: 13px; line-height: 1.5; }
+.game-shell { width: min(1500px, 100%); }
+.game-header { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 10px 4px 14px; color: #ffca2e; }
+.game-header div { display: flex; gap: 14px; align-items: baseline; flex-wrap: wrap; }
+#wallet-label { color: #cbd4cc; font-size: 14px; }
+iframe { display: block; width: 100%; height: min(82vh, 900px); min-height: 620px; border: 1px solid #343a34; border-radius: 12px; background: #000; }
+@media (max-width: 700px) {
+  .shell { padding: 10px; }
+  .login-card { padding: 24px; }
+  .game-header { align-items: flex-start; }
+  iframe { min-height: 540px; height: 84vh; }
+}
+.setup-card { width: min(760px, 100%); }
+.setup-row { display: grid; grid-template-columns: 150px 1fr; gap: 16px; margin: 14px 0; align-items: center; }
+.setup-row code { overflow-wrap: anywhere; color: #ffca2e; }
+.wide { width: 100%; margin-top: 12px; }
+.collection-list { display: grid; gap: 12px; margin-top: 20px; }
+.collection-card { border: 1px solid #343a34; border-radius: 12px; padding: 16px; background: #090d0a; }
+.collection-card strong, .collection-card small { display: block; }
+.collection-card small { margin-top: 6px; color: #9ca79f; overflow-wrap: anywhere; }
+.collection-state { color: #d8ded8; line-height: 1.45; }
+a { color: #ffca2e; }
