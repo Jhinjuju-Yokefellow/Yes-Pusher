@@ -100,7 +100,7 @@ theme_override_constants/separation = 9
 layout_mode = 2
 theme_override_colors/font_color = Color(0.96, 0.76, 0.24, 1)
 theme_override_font_sizes/font_size = 24
-text = "RAINBOW’S END — SHARED YES PUSHER"
+text = "RAINBOW’S END — YES DROP"
 
 [node name="Status" type="Label" parent="Interface/Margin/Panel/Layout" unique_id=776494688]
 layout_mode = 2
