@@ -267,15 +267,6 @@ func _toy_showcase_from_entitlements(entitlement_result: Dictionary) -> Array[Di
 	for value in grouped.values():
 		if value is Dictionary:
 			result.append((value as Dictionary).duplicate(true))
-	result.sort_custom(func(left: Dictionary, right: Dictionary) -> bool:
-		var family_order := ["horseshoe", "four_leaf_clover", "leprechaun", "pot_of_gold", "treasure_chest"]
-		var tier_order := {"small": 0, "medium": 1, "large": 2}
-		var left_family := family_order.find(String(left.get("family", "")))
-		var right_family := family_order.find(String(right.get("family", "")))
-		if left_family != right_family:
-			return left_family < right_family
-		return int(tier_order.get(String(left.get("tier", "small")), 0)) < int(tier_order.get(String(right.get("tier", "small")), 0))
-	)
 	return result
 
 func spend_turn_credit(wallet: String, turn_id: String) -> Dictionary:
