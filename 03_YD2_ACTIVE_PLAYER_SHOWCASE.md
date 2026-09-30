@@ -124,9 +124,21 @@ Source-level checks confirmed:
 - gameplay turn start does not wait on profile/Toy presentation reads;
 - current machine/queue/payout code was not redesigned.
 
+## Build validation
+
+Validated locally on Windows with Godot **4.7.2 stable** after a fresh-clone tool/config rebuild:
+
+- Node dependency install: passed;
+- `node --check web/server.mjs`: passed;
+- Godot global classes registered successfully;
+- YD-2 GDScript parsed/compiled successfully;
+- Web export packing completed without the earlier parser failures.
+
+The current YES DROP Bucket/App connection has not yet been created in the current Yokefellow version, so live profile/Toy ownership acceptance remains intentionally pending.
+
 ## Manual runtime acceptance required
 
-The source change should be validated with the rebuilt Godot web export before merge/deployment:
+After the current YES DROP Bucket/App connection exists, validate the rebuilt Godot web export before merge/deployment:
 
 1. Start the authoritative machine with the current Yokefellow test configuration.
 2. Connect two browser clients.
@@ -143,8 +155,8 @@ The source change should be validated with the rebuilt Godot web export before m
 
 ## Gate
 
-**YD-2 source implementation: COMPLETE.**
+**YD-2 source implementation + compile/export validation: COMPLETE.**
 
-**YD-2 runtime acceptance: PENDING rebuilt-game manual validation.**
+**YD-2 live integration acceptance: BLOCKED ONLY on creating/configuring the current YES DROP Bucket + App connection.**
 
 The next product pull remains YD-3: the exact one-hour free-drop lifecycle and visible countdown.
