@@ -59,6 +59,7 @@ var _active_player_avatar_fallback: Label
 var _active_player_name: Label
 var _active_player_handle: Label
 var _active_player_tagline: Label
+var _active_player_featured_outputs: HBoxContainer
 var _active_player_toys: HBoxContainer
 var _active_player_showcase_generation: int = 0
 var _active_player_wallet: String = ""
@@ -507,6 +508,10 @@ func _build_active_player_showcase() -> void:
 	_active_player_tagline.add_theme_color_override("font_color", Color(0.95, 0.72, 0.22, 1.0))
 	profile_box.add_child(_active_player_tagline)
 
+	_active_player_featured_outputs = HBoxContainer.new()
+	_active_player_featured_outputs.add_theme_constant_override("separation", 5)
+	profile_box.add_child(_active_player_featured_outputs)
+
 	var separator := VSeparator.new()
 	root.add_child(separator)
 
@@ -546,6 +551,7 @@ func _show_active_player_placeholder(wallet: String) -> void:
 	_active_player_name.text = "%s…%s" % [wallet.left(6), wallet.right(4)] if wallet.length() >= 10 else "Player"
 	_active_player_handle.text = "Loading Yokefellow profile…"
 	_active_player_tagline.text = ""
+	_clear_active_player_featured_outputs()
 	_clear_active_player_toy_cards()
 	_add_showcase_message("Loading Toy NFT collection…")
 
@@ -581,6 +587,7 @@ func _render_active_player_presentation(presentation: Dictionary) -> void:
 		var avatar_url := String(profile.get("avatarUrl", "")).strip_edges()
 		if not avatar_url.is_empty():
 			_load_showcase_texture(avatar_url, _active_player_avatar, generation)
+		_render_featured_profile_outputs(profile, generation)
 
 	_clear_active_player_toy_cards()
 	var toys_value: Variant = presentation.get("toys", [])
@@ -588,6 +595,37 @@ func _render_active_player_presentation(presentation: Dictionary) -> void:
 		_add_showcase_message("No Rainbow's End Toy NFTs yet.")
 		return
 	_render_toy_family_cards(toys_value as Array, generation)
+
+
+func _clear_active_player_featured_outputs() -> void:
+	if _active_player_featured_outputs == null:
+		return
+	for child in _active_player_featured_outputs.get_children():
+		child.queue_free()
+
+
+func _render_featured_profile_outputs(profile: Dictionary, generation: int) -> void:
+	_clear_active_player_featured_outputs()
+	var outputs_value: Variant = profile.get("featuredOutputs", [])
+	if not (outputs_value is Array):
+		return
+	var shown := 0
+	for output_value in outputs_value:
+		if shown >= 3:
+			break
+		if not (output_value is Dictionary):
+			continue
+		var output := output_value as Dictionary
+		var icon := TextureRect.new()
+		icon.custom_minimum_size = Vector2(28.0, 28.0)
+		icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+		icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_active_player_featured_outputs.add_child(icon)
+		var url := String(output.get("imageUrl", "")).strip_edges()
+		if not url.is_empty():
+			_load_showcase_texture(url, icon, generation)
+		shown += 1
 
 
 func _clear_active_player_toy_cards() -> void:
