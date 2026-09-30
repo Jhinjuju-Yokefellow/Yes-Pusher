@@ -53,17 +53,30 @@ var _nft_award_queue: Array[Dictionary] = []
 var _nft_award_showing: bool = false
 var _nft_award_generation: int = 0
 var _active_nft_award: Dictionary = {}
+var _active_player_showcase_panel: PanelContainer
+var _active_player_avatar: TextureRect
+var _active_player_avatar_fallback: Label
+var _active_player_name: Label
+var _active_player_handle: Label
+var _active_player_tagline: Label
+var _active_player_featured_outputs: HBoxContainer
+var _active_player_toys: HBoxContainer
+var _active_player_showcase_generation: int = 0
+var _active_player_wallet: String = ""
+var _active_player_turn_id: String = ""
 
 func _ready() -> void:
 	_build_power_panel()
 	_build_turn_result_panel()
 	_build_nft_award_panel()
+	_build_active_player_showcase()
 	_shared_world = YesPusherSharedWorld.new()
 	_shared_world.name = "SharedWorld"
 	add_child(_shared_world)
 	_shared_world.status_changed.connect(_on_shared_status_changed)
 	_shared_world.queue_changed.connect(_on_shared_queue_changed)
 	_shared_world.active_player_changed.connect(_on_shared_active_player_changed)
+	_shared_world.active_player_presentation_changed.connect(_on_active_player_presentation_changed)
 	_shared_world.local_identity_changed.connect(_on_local_identity_changed)
 	_shared_world.owned_skins_changed.connect(_on_owned_skins_changed)
 	_shared_world.settlement_changed.connect(_on_settlement_changed)
@@ -334,14 +347,29 @@ func _on_shared_queue_changed(position: int, total: int) -> void:
 
 func _on_shared_active_player_changed(wallet: String, turn_id: String) -> void:
 	if wallet.is_empty():
+		_active_player_wallet = ""
+		_active_player_turn_id = ""
+		_hide_active_player_showcase()
 		if _shared_world != null and _shared_world.mode == "client":
 			drop_button.disabled = not _shared_world.local_verified
 		return
+	var changed_player := wallet.to_lower() != _active_player_wallet or turn_id != _active_player_turn_id
+	_active_player_wallet = wallet.to_lower()
+	_active_player_turn_id = turn_id
+	if changed_player:
+		_show_active_player_placeholder(wallet)
 	var is_local_turn: bool = wallet.to_lower() == _shared_world.local_wallet.to_lower()
 	if is_local_turn and _shared_world.mode == "client":
 		drop_button.disabled = true
 	var owner := "your wallet" if is_local_turn else "%s…%s" % [wallet.left(6), wallet.right(4)]
 	status_label.text = "Active turn %s belongs to %s and drops 10 coins." % [turn_id, owner]
+
+
+func _on_active_player_presentation_changed(presentation: Dictionary) -> void:
+	if presentation.is_empty():
+		_hide_active_player_showcase()
+		return
+	_render_active_player_presentation(presentation)
 
 func _on_local_identity_changed(wallet: String, verified: bool) -> void:
 	if _verify_button != null:
@@ -378,6 +406,379 @@ func _on_remote_turn_finished(summary: Dictionary, wallet: String, lifetime_yes:
 	else:
 		status_label.text = "%s…%s finished with %d YES." % [wallet.left(6), wallet.right(4), _current_turn_payout]
 	_show_turn_result(summary, true, lifetime_yes if is_local_turn else -1, milestones if is_local_turn else [], wallet)
+
+func _build_active_player_showcase() -> void:
+	_active_player_showcase_panel = PanelContainer.new()
+	_active_player_showcase_panel.name = "ActivePlayerShowcase"
+	_active_player_showcase_panel.visible = false
+	_active_player_showcase_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	interface_layer.add_child(_active_player_showcase_panel)
+	_active_player_showcase_panel.anchor_left = 0.0
+	_active_player_showcase_panel.anchor_right = 0.0
+	_active_player_showcase_panel.anchor_top = 1.0
+	_active_player_showcase_panel.anchor_bottom = 1.0
+	_active_player_showcase_panel.offset_left = 18.0
+	_active_player_showcase_panel.offset_right = 920.0
+	_active_player_showcase_panel.offset_top = -220.0
+	_active_player_showcase_panel.offset_bottom = -18.0
+
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.010, 0.018, 0.014, 0.95)
+	style.border_width_left = 2
+	style.border_width_top = 2
+	style.border_width_right = 2
+	style.border_width_bottom = 2
+	style.border_color = Color(0.96, 0.76, 0.20, 0.92)
+	style.corner_radius_top_left = 18
+	style.corner_radius_top_right = 18
+	style.corner_radius_bottom_left = 18
+	style.corner_radius_bottom_right = 18
+	style.content_margin_left = 18.0
+	style.content_margin_right = 18.0
+	style.content_margin_top = 14.0
+	style.content_margin_bottom = 14.0
+	_active_player_showcase_panel.add_theme_stylebox_override("panel", style)
+
+	var root := HBoxContainer.new()
+	root.add_theme_constant_override("separation", 16)
+	_active_player_showcase_panel.add_child(root)
+
+	var profile_box := VBoxContainer.new()
+	profile_box.custom_minimum_size = Vector2(235.0, 0.0)
+	profile_box.add_theme_constant_override("separation", 5)
+	root.add_child(profile_box)
+
+	var eyebrow := Label.new()
+	eyebrow.text = "CURRENT DROPPER"
+	eyebrow.add_theme_font_size_override("font_size", 12)
+	eyebrow.add_theme_color_override("font_color", Color(0.96, 0.76, 0.20, 1.0))
+	profile_box.add_child(eyebrow)
+
+	var identity := HBoxContainer.new()
+	identity.add_theme_constant_override("separation", 10)
+	profile_box.add_child(identity)
+
+	var avatar_stack := Control.new()
+	avatar_stack.custom_minimum_size = Vector2(62.0, 62.0)
+	identity.add_child(avatar_stack)
+
+	var avatar_back := ColorRect.new()
+	avatar_back.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	avatar_back.color = Color(0.035, 0.075, 0.055, 1.0)
+	avatar_stack.add_child(avatar_back)
+
+	_active_player_avatar_fallback = Label.new()
+	_active_player_avatar_fallback.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_active_player_avatar_fallback.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_active_player_avatar_fallback.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_active_player_avatar_fallback.add_theme_font_size_override("font_size", 18)
+	_active_player_avatar_fallback.add_theme_color_override("font_color", Color(0.30, 0.92, 0.60, 1.0))
+	avatar_stack.add_child(_active_player_avatar_fallback)
+
+	_active_player_avatar = TextureRect.new()
+	_active_player_avatar.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_active_player_avatar.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_active_player_avatar.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	_active_player_avatar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	avatar_stack.add_child(_active_player_avatar)
+
+	var identity_text := VBoxContainer.new()
+	identity_text.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	identity.add_child(identity_text)
+
+	_active_player_name = Label.new()
+	_active_player_name.text = "Player"
+	_active_player_name.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	_active_player_name.add_theme_font_size_override("font_size", 21)
+	_active_player_name.add_theme_color_override("font_color", Color.WHITE)
+	identity_text.add_child(_active_player_name)
+
+	_active_player_handle = Label.new()
+	_active_player_handle.text = ""
+	_active_player_handle.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	_active_player_handle.add_theme_font_size_override("font_size", 13)
+	_active_player_handle.add_theme_color_override("font_color", Color(0.67, 0.74, 0.69, 1.0))
+	identity_text.add_child(_active_player_handle)
+
+	_active_player_tagline = Label.new()
+	_active_player_tagline.text = ""
+	_active_player_tagline.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_active_player_tagline.custom_minimum_size = Vector2(220.0, 36.0)
+	_active_player_tagline.add_theme_font_size_override("font_size", 12)
+	_active_player_tagline.add_theme_color_override("font_color", Color(0.95, 0.72, 0.22, 1.0))
+	profile_box.add_child(_active_player_tagline)
+
+	_active_player_featured_outputs = HBoxContainer.new()
+	_active_player_featured_outputs.add_theme_constant_override("separation", 5)
+	profile_box.add_child(_active_player_featured_outputs)
+
+	var separator := VSeparator.new()
+	root.add_child(separator)
+
+	var showcase_box := VBoxContainer.new()
+	showcase_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	showcase_box.add_theme_constant_override("separation", 7)
+	root.add_child(showcase_box)
+
+	var showcase_title := Label.new()
+	showcase_title.text = "RAINBOW'S END TOYS"
+	showcase_title.add_theme_font_size_override("font_size", 12)
+	showcase_title.add_theme_color_override("font_color", Color(0.96, 0.76, 0.20, 1.0))
+	showcase_box.add_child(showcase_title)
+
+	_active_player_toys = HBoxContainer.new()
+	_active_player_toys.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_active_player_toys.add_theme_constant_override("separation", 8)
+	showcase_box.add_child(_active_player_toys)
+
+
+func _hide_active_player_showcase() -> void:
+	_active_player_showcase_generation += 1
+	if _active_player_showcase_panel != null:
+		_active_player_showcase_panel.visible = false
+
+
+func _show_active_player_placeholder(wallet: String) -> void:
+	if _active_player_showcase_panel == null:
+		return
+	_active_player_showcase_generation += 1
+	_active_player_showcase_panel.visible = true
+	_active_player_showcase_panel.modulate.a = 0.0
+	var reveal := create_tween()
+	reveal.tween_property(_active_player_showcase_panel, "modulate:a", 1.0, 0.22)
+	_active_player_avatar.texture = null
+	_active_player_avatar_fallback.text = "YF"
+	_active_player_name.text = "%s…%s" % [wallet.left(6), wallet.right(4)] if wallet.length() >= 10 else "Player"
+	_active_player_handle.text = "Loading Yokefellow profile…"
+	_active_player_tagline.text = ""
+	_clear_active_player_featured_outputs()
+	_clear_active_player_toy_cards()
+	_add_showcase_message("Loading Toy NFT collection…")
+
+
+func _render_active_player_presentation(presentation: Dictionary) -> void:
+	if _active_player_showcase_panel == null:
+		return
+	_active_player_showcase_generation += 1
+	var generation := _active_player_showcase_generation
+	_active_player_showcase_panel.visible = true
+
+	var wallet := String(presentation.get("wallet", "")).strip_edges().to_lower()
+	var profile: Dictionary = {}
+	var profile_value: Variant = presentation.get("profile", {})
+	if profile_value is Dictionary:
+		profile = profile_value as Dictionary
+
+	_active_player_avatar.texture = null
+	_active_player_avatar_fallback.text = "YF"
+	if profile.is_empty():
+		_active_player_name.text = "%s…%s" % [wallet.left(6), wallet.right(4)] if wallet.length() >= 10 else "Player"
+		_active_player_handle.text = "Yokefellow profile unavailable"
+		_active_player_tagline.text = ""
+	else:
+		_active_player_name.text = String(profile.get("displayName", "Player"))
+		var handle := String(profile.get("handle", profile.get("slug", ""))).strip_edges()
+		_active_player_handle.text = "@%s" % handle if not handle.is_empty() else ""
+		var settings: Dictionary = {}
+		var settings_value: Variant = profile.get("cardSettings", {})
+		if settings_value is Dictionary:
+			settings = settings_value as Dictionary
+		_active_player_tagline.text = String(settings.get("tagline", "")).strip_edges()
+		var avatar_url := String(profile.get("avatarUrl", "")).strip_edges()
+		if not avatar_url.is_empty():
+			_load_showcase_texture(avatar_url, _active_player_avatar, generation)
+		_render_featured_profile_outputs(profile, generation)
+
+	_clear_active_player_toy_cards()
+	var toys_value: Variant = presentation.get("toys", [])
+	if not (toys_value is Array) or (toys_value as Array).is_empty():
+		_add_showcase_message("No Rainbow's End Toy NFTs yet.")
+		return
+	_render_toy_family_cards(toys_value as Array, generation)
+
+
+func _clear_active_player_featured_outputs() -> void:
+	if _active_player_featured_outputs == null:
+		return
+	for child in _active_player_featured_outputs.get_children():
+		child.queue_free()
+
+
+func _render_featured_profile_outputs(profile: Dictionary, generation: int) -> void:
+	_clear_active_player_featured_outputs()
+	var outputs_value: Variant = profile.get("featuredOutputs", [])
+	if not (outputs_value is Array):
+		return
+	var shown := 0
+	for output_value in outputs_value:
+		if shown >= 3:
+			break
+		if not (output_value is Dictionary):
+			continue
+		var output := output_value as Dictionary
+		var icon := TextureRect.new()
+		icon.custom_minimum_size = Vector2(28.0, 28.0)
+		icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+		icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_active_player_featured_outputs.add_child(icon)
+		var url := String(output.get("imageUrl", "")).strip_edges()
+		if not url.is_empty():
+			_load_showcase_texture(url, icon, generation)
+		shown += 1
+
+
+func _clear_active_player_toy_cards() -> void:
+	if _active_player_toys == null:
+		return
+	for child in _active_player_toys.get_children():
+		child.queue_free()
+
+
+func _add_showcase_message(message: String) -> void:
+	var label := Label.new()
+	label.text = message
+	label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	label.add_theme_font_size_override("font_size", 14)
+	label.add_theme_color_override("font_color", Color(0.67, 0.74, 0.69, 1.0))
+	_active_player_toys.add_child(label)
+
+
+func _render_toy_family_cards(toys: Array, generation: int) -> void:
+	var by_family: Dictionary = {}
+	for toy_value in toys:
+		if not (toy_value is Dictionary):
+			continue
+		var toy := toy_value as Dictionary
+		var family := String(toy.get("family", "")).strip_edges().to_lower()
+		if not _is_valid_toy_family(family):
+			continue
+		if not by_family.has(family):
+			by_family[family] = []
+		var entries := by_family[family] as Array
+		entries.append(toy.duplicate(true))
+		by_family[family] = entries
+
+	for family in ["horseshoe", "four_leaf_clover", "leprechaun", "pot_of_gold", "treasure_chest"]:
+		if not by_family.has(family):
+			continue
+		var entries := by_family[family] as Array
+		var counts := {"small": 0, "medium": 0, "large": 0}
+		var best: Dictionary = {}
+		var best_rank := -1
+		for entry_value in entries:
+			if not (entry_value is Dictionary):
+				continue
+			var entry := entry_value as Dictionary
+			var tier := String(entry.get("tier", "small")).strip_edges().to_lower()
+			var rank := _toy_tier_rank(tier)
+			counts[tier] = int(counts.get(tier, 0)) + maxi(1, int(entry.get("quantity", 1)))
+			if rank > best_rank:
+				best_rank = rank
+				best = entry
+		_add_toy_family_card(family, counts, best, generation)
+
+
+func _add_toy_family_card(family: String, counts: Dictionary, best: Dictionary, generation: int) -> void:
+	var tier := String(best.get("tier", "small")).strip_edges().to_lower()
+	var card := PanelContainer.new()
+	card.custom_minimum_size = Vector2(116.0 if tier == "large" else 106.0 if tier == "medium" else 98.0, 132.0)
+	card.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.025, 0.044, 0.033, 0.96)
+	style.border_width_left = 1
+	style.border_width_top = 1
+	style.border_width_right = 1
+	style.border_width_bottom = 1
+	style.border_color = Color(0.22, 0.48, 0.32, 0.9)
+	style.corner_radius_top_left = 10
+	style.corner_radius_top_right = 10
+	style.corner_radius_bottom_left = 10
+	style.corner_radius_bottom_right = 10
+	style.content_margin_left = 6.0
+	style.content_margin_right = 6.0
+	style.content_margin_top = 6.0
+	style.content_margin_bottom = 6.0
+	card.add_theme_stylebox_override("panel", style)
+	_active_player_toys.add_child(card)
+
+	var layout := VBoxContainer.new()
+	layout.alignment = BoxContainer.ALIGNMENT_CENTER
+	layout.add_theme_constant_override("separation", 3)
+	card.add_child(layout)
+
+	var image := TextureRect.new()
+	image.custom_minimum_size = Vector2(72.0, 68.0)
+	image.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	image.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	image.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	layout.add_child(image)
+
+	var title := Label.new()
+	title.text = _toy_name(family)
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	title.add_theme_font_size_override("font_size", 11)
+	title.add_theme_color_override("font_color", Color.WHITE)
+	layout.add_child(title)
+
+	var tier_label := Label.new()
+	tier_label.text = tier.to_upper()
+	tier_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	tier_label.add_theme_font_size_override("font_size", 10)
+	tier_label.add_theme_color_override(
+		"font_color",
+		Color(1.0, 0.78, 0.20, 1.0) if tier == "large" else Color(0.40, 0.90, 0.62, 1.0)
+	)
+	layout.add_child(tier_label)
+
+	var counts_label := Label.new()
+	counts_label.text = "S%d  M%d  L%d" % [
+		int(counts.get("small", 0)),
+		int(counts.get("medium", 0)),
+		int(counts.get("large", 0)),
+	]
+	counts_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	counts_label.add_theme_font_size_override("font_size", 9)
+	counts_label.add_theme_color_override("font_color", Color(0.65, 0.72, 0.67, 1.0))
+	layout.add_child(counts_label)
+
+	var image_url := String(best.get("imageUrl", "")).strip_edges()
+	if not image_url.is_empty():
+		_load_showcase_texture(image_url, image, generation)
+
+
+func _toy_tier_rank(tier: String) -> int:
+	match tier:
+		"large": return 2
+		"medium": return 1
+	return 0
+
+
+func _load_showcase_texture(raw_url: String, target: TextureRect, generation: int) -> void:
+	var url := _nft_image_request_url(raw_url)
+	if url.is_empty():
+		return
+	var request := HTTPRequest.new()
+	request.timeout = 12.0
+	add_child(request)
+	var start_error := request.request(url, PackedStringArray(["Accept: image/*"]))
+	if start_error != OK:
+		request.queue_free()
+		return
+	var completed: Array = await request.request_completed
+	request.queue_free()
+	if generation != _active_player_showcase_generation or not is_instance_valid(target):
+		return
+	if int(completed[0]) != HTTPRequest.RESULT_SUCCESS or int(completed[1]) < 200 or int(completed[1]) >= 300:
+		return
+	var image_data := Image.new()
+	var load_error := _load_image_bytes(image_data, completed[3], completed[2], url)
+	if load_error != OK:
+		return
+	target.texture = ImageTexture.create_from_image(image_data)
+
 
 func _build_network_controls() -> void:
 	var layout := $Interface/Margin/Panel/Layout as VBoxContainer

@@ -4,6 +4,7 @@ class_name YesPusherSharedWorld
 signal status_changed(message: String)
 signal queue_changed(position: int, total: int)
 signal active_player_changed(wallet: String, turn_id: String)
+signal active_player_presentation_changed(presentation: Dictionary)
 signal local_identity_changed(wallet: String, verified: bool)
 signal owned_skins_changed(families: Array, equipped: String)
 signal settlement_changed(message: String)
@@ -47,6 +48,7 @@ var _turn_sequence: int = 0
 var _queue: Array[Dictionary] = []
 var _players: Dictionary = {}
 var _active_turn: Dictionary = {}
+var _active_player_presentation: Dictionary = {}
 var _settlements: Array[Dictionary] = []
 var _processing_queue: bool = false
 var _settlement_worker_active: bool = false
@@ -363,6 +365,7 @@ func authoritative_turn_completed(summary: Dictionary) -> void:
 	if not multiplayer.get_peers().is_empty():
 		_client_turn_completed.rpc(safe_summary, wallet, new_lifetime, milestones)
 	_active_turn = {}
+	_clear_active_player_presentation()
 	_save_state()
 	_broadcast_queue_state()
 	active_player_changed.emit("", "")
@@ -394,6 +397,7 @@ func _on_server_disconnected() -> void:
 func _on_peer_connected(peer_id: int) -> void:
 	_players[str(peer_id)] = {"peer_id": peer_id, "wallet": "", "verified": false, "skin_family": "", "lifetime_yes": 0, "lifetime_coins_paid_out": 0}
 	_broadcast_queue_state()
+	call_deferred("_send_active_player_presentation_to_peer", peer_id)
 
 func _on_peer_disconnected(peer_id: int) -> void:
 	var wallet := _wallet_for_peer(peer_id)
@@ -614,6 +618,46 @@ func _client_status(message: String) -> void:
 		return
 	status_changed.emit(message)
 
+func _load_active_player_presentation(wallet: String, turn_id: String) -> void:
+	if mode != "server" or yf == null:
+		return
+	var presentation: Dictionary = await yf.load_player_presentation(wallet)
+	if _active_turn.is_empty():
+		return
+	if String(_active_turn.get("wallet", "")).to_lower() != wallet.to_lower():
+		return
+	if String(_active_turn.get("turn_id", "")) != turn_id:
+		return
+	presentation["wallet"] = wallet.to_lower()
+	presentation["turn_id"] = turn_id
+	presentation["loading"] = false
+	_active_player_presentation = presentation.duplicate(true)
+	active_player_presentation_changed.emit(_active_player_presentation.duplicate(true))
+	if not multiplayer.get_peers().is_empty():
+		_client_active_player_presentation.rpc(_active_player_presentation.duplicate(true))
+
+
+func _send_active_player_presentation_to_peer(peer_id: int) -> void:
+	if mode != "server" or _active_player_presentation.is_empty():
+		return
+	if peer_id <= 1 or not multiplayer.get_peers().has(peer_id):
+		return
+	_client_active_player_presentation.rpc_id(peer_id, _active_player_presentation.duplicate(true))
+
+
+func _clear_active_player_presentation() -> void:
+	_active_player_presentation = {}
+	active_player_presentation_changed.emit({})
+	if mode == "server" and not multiplayer.get_peers().is_empty():
+		_client_active_player_presentation.rpc({})
+
+
+@rpc("authority", "call_remote", "reliable")
+func _client_active_player_presentation(presentation: Dictionary) -> void:
+	_active_player_presentation = presentation.duplicate(true)
+	active_player_presentation_changed.emit(_active_player_presentation.duplicate(true))
+
+
 @rpc("authority", "call_remote", "reliable")
 func _client_queue_state(entries: Array, active: Dictionary) -> void:
 	var position := -1
@@ -726,8 +770,21 @@ func _start_active_turn() -> void:
 	_save_state()
 	var wallet := String(_active_turn.get("wallet", ""))
 	var turn_id := String(_active_turn.get("turn_id", ""))
+	_active_player_presentation = {
+		"ok": false,
+		"wallet": wallet,
+		"turn_id": turn_id,
+		"loading": true,
+		"profile": {},
+		"toys": [],
+		"errors": [],
+	}
 	active_player_changed.emit(wallet, turn_id)
+	active_player_presentation_changed.emit(_active_player_presentation.duplicate(true))
 	_broadcast_queue_state()
+	if not multiplayer.get_peers().is_empty():
+		_client_active_player_presentation.rpc(_active_player_presentation.duplicate(true))
+	call_deferred("_load_active_player_presentation", wallet, turn_id)
 	var access_mode := String(_active_turn.get("access_mode", "paid"))
 	var start_message := "Your paid 10-coin turn is starting."
 	match access_mode:

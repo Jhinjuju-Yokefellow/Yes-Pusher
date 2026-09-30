@@ -64,27 +64,21 @@ npm run check
 Pop-Location
 
 $ServerEnv = Join-Path $ProjectRoot ".env.server"
+if (-not (Test-Path $ServerEnv)) {
+    $ServerEnvExample = Join-Path $ProjectRoot ".env.server.example"
+    if (Test-Path $ServerEnvExample) {
+        Copy-Item $ServerEnvExample $ServerEnv
+        Write-Host "Created .env.server from .env.server.example. Fill the Yokefellow connection values before starting the stack."
+    }
+}
 if (Test-Path $ServerEnv) {
     $content = Get-Content $ServerEnv -Raw
     $content = Set-EnvValue $content "YF_SESSION_VERIFY_URL" "http://127.0.0.1:8080/auth/session/verify"
     $content = Set-EnvValue $content "YF_INSTANT_MINT_URL" "http://127.0.0.1:8080/mint/instant"
     $content = Set-EnvValue $content "YF_RPC_URL" "https://sepolia.base.org" -OnlyWhenMissingOrBlank
-    $content = Set-EnvValue $content "YF_INSTANT_MINT_SECRET" (New-HexSecret 48) -OnlyWhenMissingOrBlank
-
-    $privateKeyMatch = [regex]::Match($content, '(?m)^YF_NFT_MINT_PRIVATE_KEY=(.*)$')
-    if (-not $privateKeyMatch.Success -or [string]::IsNullOrWhiteSpace($privateKeyMatch.Groups[1].Value)) {
-        Push-Location $WebRoot
-        $privateKey = (& node --input-type=module -e "import { Wallet } from 'ethers'; process.stdout.write(Wallet.createRandom().privateKey);").Trim()
-        Pop-Location
-        if ($privateKey -notmatch '^0x[0-9a-fA-F]{64}$') {
-            throw "Could not generate the dedicated Base Sepolia instant mint signer."
-        }
-        $content = Set-EnvValue $content "YF_NFT_MINT_PRIVATE_KEY" $privateKey
-        Write-Host "Created a dedicated server-only Base Sepolia NFT mint signer."
-    }
-
     Set-Content -Path $ServerEnv -Value $content -NoNewline
-    Write-Host "Connected .env.server to the local wallet verifier and instant minter."
+    Write-Host "Connected .env.server to the local wallet verifier."
+    Write-Host "Legacy instant mint credentials were not generated. Leave them blank unless intentionally restoring that test path."
 } else {
     Write-Warning "No .env.server exists yet. Copy .env.server.example to .env.server, fill in the Yokefellow bucket/app values, and run this command again."
 }
@@ -95,8 +89,11 @@ if (Test-Path $GameDir) {
     Get-ChildItem -Force $GameDir | Remove-Item -Recurse -Force
 }
 New-Item -ItemType Directory -Force -Path $GameDir | Out-Null
-& $Godot --headless --path $ProjectRoot --export-release "Web" (Join-Path $GameDir "index.html")
-if ($LASTEXITCODE -ne 0) { throw "Godot web export failed with exit code $LASTEXITCODE." }
+$exportPath = Join-Path $GameDir "index.html"
+$godotArgs = @("--headless", "--path", $ProjectRoot, "--export-release", "Web", $exportPath)
+$process = Start-Process -FilePath $Godot -ArgumentList $godotArgs -NoNewWindow -Wait -PassThru
+if ($process.ExitCode -ne 0) { throw "Godot web export failed with exit code $($process.ExitCode)." }
+if (-not (Test-Path $exportPath)) { throw "Godot reported success but the web export was not created." }
 
 Write-Host ""
 Write-Host "Web wallet player prepared."

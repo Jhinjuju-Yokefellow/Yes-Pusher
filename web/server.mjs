@@ -159,10 +159,10 @@ async function handleChallenge(request, response) {
   const challengeId = crypto.randomUUID();
   const nonce = crypto.randomBytes(16).toString("hex");
   const message = [
-    `YES Pusher wants you to sign in with your Ethereum account:`,
+    `YES DROP wants you to sign in with your Ethereum account:`,
     wallet,
     "",
-    "Sign in to the shared YES Pusher. Rainbow's End is the active machine theme.",
+    "Sign in to YES DROP. Rainbow's End is the active machine theme.",
     "This signature does not send a transaction or spend YES.",
     "",
     `URI: ${publicOrigin}`,
