@@ -61,6 +61,8 @@ var _active_player_handle: Label
 var _active_player_tagline: Label
 var _active_player_toys: HBoxContainer
 var _active_player_showcase_generation: int = 0
+var _active_player_wallet: String = ""
+var _active_player_turn_id: String = ""
 
 func _ready() -> void:
 	_build_power_panel()
@@ -344,11 +346,17 @@ func _on_shared_queue_changed(position: int, total: int) -> void:
 
 func _on_shared_active_player_changed(wallet: String, turn_id: String) -> void:
 	if wallet.is_empty():
+		_active_player_wallet = ""
+		_active_player_turn_id = ""
 		_hide_active_player_showcase()
 		if _shared_world != null and _shared_world.mode == "client":
 			drop_button.disabled = not _shared_world.local_verified
 		return
-	_show_active_player_placeholder(wallet)
+	var changed_player := wallet.to_lower() != _active_player_wallet or turn_id != _active_player_turn_id
+	_active_player_wallet = wallet.to_lower()
+	_active_player_turn_id = turn_id
+	if changed_player:
+		_show_active_player_placeholder(wallet)
 	var is_local_turn: bool = wallet.to_lower() == _shared_world.local_wallet.to_lower()
 	if is_local_turn and _shared_world.mode == "client":
 		drop_button.disabled = true
@@ -530,6 +538,9 @@ func _show_active_player_placeholder(wallet: String) -> void:
 		return
 	_active_player_showcase_generation += 1
 	_active_player_showcase_panel.visible = true
+	_active_player_showcase_panel.modulate.a = 0.0
+	var reveal := create_tween()
+	reveal.tween_property(_active_player_showcase_panel, "modulate:a", 1.0, 0.22)
 	_active_player_avatar.texture = null
 	_active_player_avatar_fallback.text = "YF"
 	_active_player_name.text = "%s…%s" % [wallet.left(6), wallet.right(4)] if wallet.length() >= 10 else "Player"
