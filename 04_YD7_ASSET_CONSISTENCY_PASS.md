@@ -14,17 +14,35 @@ This is not a redesign of the Rainbow's End machine. Preserve the cabinet, machi
 4. Pot of Gold
 5. Treasure Chest
 
-Each family must remain recognizable across its Coin Skin, physical gameplay Toy, and Toy NFT showcase art.
+## Coin model — corrected source of truth
 
-## Asset model
+YES DROP has **one physical gameplay coin mesh and one physics/collision model**.
 
-### Coin Skins
+The default coin uses the silver-and-blue YES token artwork. Family collectibles are **skins on that same coin**, not different coin objects.
 
-There are five Coin Skin designs, one per family. A Coin Skin stays visibly a coin/token and must remain readable at gameplay scale.
+A skin may change the face artwork and visual accents, but it must not change:
 
-The final NFT image should be a polished presentation of the same design used by the game, not unrelated artwork.
+- coin dimensions;
+- collision;
+- mass;
+- payout value;
+- drop behavior;
+- physics behavior.
 
-### Physical gameplay Toys
+The runtime skin slots are:
+
+- `assets/coin_skins/yes_default.webp`
+- `assets/coin_skins/horseshoe.webp`
+- `assets/coin_skins/four_leaf_clover.webp`
+- `assets/coin_skins/leprechaun.webp`
+- `assets/coin_skins/pot_of_gold.webp`
+- `assets/coin_skins/treasure_chest.webp`
+
+Until a family texture exists, the runtime deliberately falls back to the default YES skin. This lets us design each family without changing Coin.tscn again.
+
+The Coin Skin NFT artwork should correspond to the texture actually used on this shared gameplay coin.
+
+## Physical gameplay Toys
 
 There are exactly five gameplay Toy designs, one per family.
 
@@ -32,7 +50,7 @@ Small, Medium, and Large are not separate physical machine objects.
 
 Small, Medium, and Large ownership all map to the same family gameplay Toy and the same family power. Tier must not change physical dimensions, physics, power strength, power behavior, or payout behavior.
 
-### Toy NFT tiers
+## Toy NFT tiers
 
 Each family has Small, Medium, and Large NFT/showcase tiers, for fifteen Toy NFT classes total.
 
@@ -48,7 +66,7 @@ A transferred or sold Toy disappears after authoritative ownership refresh. Ther
 
 ## YD-7 preview workbench
 
-Use res://tools/AssetPreview.tscn to inspect the real Coin.tscn and Toy.tscn assets under fixed lighting before making NFT artwork.
+Use `res://tools/AssetPreview.tscn` to inspect the real Coin.tscn and Toy.tscn assets under fixed lighting.
 
 Controls:
 
@@ -59,24 +77,16 @@ Controls:
 - R: toggle rotation
 - S: save a clean PNG without the overlay
 
-Screenshots are written to user://yd7_previews.
-
-The first family pass is Horseshoe:
-
-1. inspect/polish the real Horseshoe Coin;
-2. inspect/polish the real Horseshoe gameplay Toy;
-3. use those real designs as the source for the Horseshoe Coin NFT image;
-4. make Small Horseshoe closely match the gameplay Toy;
-5. derive Medium and Large as progressively richer showcase treatments;
-6. freeze that visual grammar before repeating it for the remaining four families.
+Screenshots are written to `user://yd7_previews`.
 
 ## Deliverables
 
-- 5 final Coin Skin class images
-- 5 final physical gameplay Toy appearances
-- 15 final Small/Medium/Large Toy NFT/showcase images
-- light guard/presentation cleanup where needed
+- one final YES base coin;
+- 5 final Coin Skin textures/class images;
+- 5 final physical gameplay Toy appearances;
+- 15 final Small/Medium/Large Toy NFT/showcase images;
+- light guard/presentation cleanup where needed.
 
 ## Acceptance gate
 
-YD-7 is complete when all five families are visually coherent across Coin Skin, gameplay Toy, and Toy NFT presentation; the 15 Toy NFT tiers clearly communicate collectible progression without implying gameplay progression; and the finished images are ready for creation of the 5 Coin Skin classes and 15 Toy classes in Yokefellow.
+YD-7 is complete when the default in-game coin visibly matches the official YES identity, all five family skins use the same Coin.tscn geometry/physics, all five Toy families are coherent with their NFT presentation, and the finished images are ready for the 5 Coin Skin classes and 15 Toy classes in Yokefellow.
