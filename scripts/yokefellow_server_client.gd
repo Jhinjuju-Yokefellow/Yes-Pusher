@@ -188,7 +188,7 @@ func load_player_presentation(wallet: String) -> Dictionary:
 
 	var errors: Array[String] = []
 	var profile: Dictionary = {}
-	var profile_result := await load_profile_card(normalized)
+	var profile_result: Dictionary = await load_profile_card(normalized)
 	if bool(profile_result.get("ok", false)):
 		var profile_value: Variant = profile_result.get("card", {})
 		if profile_value is Dictionary:
@@ -196,8 +196,8 @@ func load_player_presentation(wallet: String) -> Dictionary:
 	else:
 		errors.append(String(profile_result.get("error", "Profile Card could not be loaded.")))
 
-	var toys: Array[Dictionary] = []
-	var entitlement_result := await load_wallet_entitlements(normalized)
+	var toys: Array = []
+	var entitlement_result: Dictionary = await load_wallet_entitlements(normalized)
 	if bool(entitlement_result.get("ok", false)):
 		toys = _toy_showcase_from_entitlements(entitlement_result)
 	else:
@@ -212,7 +212,7 @@ func load_player_presentation(wallet: String) -> Dictionary:
 	}
 
 
-func _toy_showcase_from_entitlements(entitlement_result: Dictionary) -> Array[Dictionary]:
+func _toy_showcase_from_entitlements(entitlement_result: Dictionary) -> Array:
 	var body: Dictionary = entitlement_result.get("body", {}) as Dictionary
 	var wallet_state_value: Variant = body.get("walletState", {})
 	if not (wallet_state_value is Dictionary):
@@ -263,7 +263,7 @@ func _toy_showcase_from_entitlements(entitlement_result: Dictionary) -> Array[Di
 			item["imageUrl"] = image_url
 		grouped[key] = item
 
-	var result: Array[Dictionary] = []
+	var result: Array = []
 	for value in grouped.values():
 		if value is Dictionary:
 			result.append((value as Dictionary).duplicate(true))
