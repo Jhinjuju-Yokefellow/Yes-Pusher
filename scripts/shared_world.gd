@@ -621,7 +621,7 @@ func _client_status(message: String) -> void:
 func _load_active_player_presentation(wallet: String, turn_id: String) -> void:
 	if mode != "server" or yf == null:
 		return
-	var presentation := await yf.load_player_presentation(wallet)
+	var presentation: Dictionary = await yf.load_player_presentation(wallet)
 	if _active_turn.is_empty():
 		return
 	if String(_active_turn.get("wallet", "")).to_lower() != wallet.to_lower():
