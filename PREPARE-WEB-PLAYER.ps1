@@ -64,6 +64,13 @@ npm run check
 Pop-Location
 
 $ServerEnv = Join-Path $ProjectRoot ".env.server"
+if (-not (Test-Path $ServerEnv)) {
+    $ServerEnvExample = Join-Path $ProjectRoot ".env.server.example"
+    if (Test-Path $ServerEnvExample) {
+        Copy-Item $ServerEnvExample $ServerEnv
+        Write-Host "Created .env.server from .env.server.example. Fill the Yokefellow connection values before starting the stack."
+    }
+}
 if (Test-Path $ServerEnv) {
     $content = Get-Content $ServerEnv -Raw
     $content = Set-EnvValue $content "YF_SESSION_VERIFY_URL" "http://127.0.0.1:8080/auth/session/verify"
