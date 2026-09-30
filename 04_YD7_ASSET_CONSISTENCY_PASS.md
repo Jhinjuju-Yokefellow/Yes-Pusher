@@ -31,12 +31,12 @@ A skin may change the face artwork and visual accents, but it must not change:
 
 The runtime skin slots are:
 
-- `assets/coin_skins/yes_default.webp`
-- `assets/coin_skins/horseshoe.webp`
-- `assets/coin_skins/four_leaf_clover.webp`
-- `assets/coin_skins/leprechaun.webp`
-- `assets/coin_skins/pot_of_gold.webp`
-- `assets/coin_skins/treasure_chest.webp`
+- `assets/coin_skins/yes_default.svg`
+- `assets/coin_skins/horseshoe.png`
+- `assets/coin_skins/four_leaf_clover.png`
+- `assets/coin_skins/leprechaun.png`
+- `assets/coin_skins/pot_of_gold.png`
+- `assets/coin_skins/treasure_chest.png`
 
 Until a family texture exists, the runtime deliberately falls back to the default YES skin. This lets us design each family without changing Coin.tscn again.
 
