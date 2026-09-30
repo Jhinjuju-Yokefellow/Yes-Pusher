@@ -49,7 +49,8 @@ func _process(delta: float) -> void:
 func _unhandled_key_input(event: InputEvent) -> void:
 	if not event is InputEventKey:
 		return
-	var key_event := event as InputEventKey
+
+	var key_event: InputEventKey = event as InputEventKey
 	if not key_event.pressed or key_event.echo:
 		return
 
@@ -86,9 +87,10 @@ func _unhandled_key_input(event: InputEvent) -> void:
 
 
 func _build_stage() -> void:
-	var world_environment := WorldEnvironment.new()
+	var world_environment: WorldEnvironment = WorldEnvironment.new()
 	world_environment.name = "WorldEnvironment"
-	var environment := Environment.new()
+
+	var environment: Environment = Environment.new()
 	environment.background_mode = Environment.BG_COLOR
 	environment.background_color = Color(0.035, 0.028, 0.045, 1.0)
 	environment.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
@@ -97,7 +99,7 @@ func _build_stage() -> void:
 	world_environment.environment = environment
 	add_child(world_environment)
 
-	var key_light := DirectionalLight3D.new()
+	var key_light: DirectionalLight3D = DirectionalLight3D.new()
 	key_light.name = "KeyLight"
 	key_light.rotation_degrees = Vector3(-48.0, -32.0, 0.0)
 	key_light.light_color = Color(1.0, 0.86, 0.68, 1.0)
@@ -105,7 +107,7 @@ func _build_stage() -> void:
 	key_light.shadow_enabled = true
 	add_child(key_light)
 
-	var fill_light := OmniLight3D.new()
+	var fill_light: OmniLight3D = OmniLight3D.new()
 	fill_light.name = "FillLight"
 	fill_light.position = Vector3(-2.4, 2.2, 2.8)
 	fill_light.light_color = Color(0.60, 0.78, 1.0, 1.0)
@@ -113,7 +115,7 @@ func _build_stage() -> void:
 	fill_light.omni_range = 7.5
 	add_child(fill_light)
 
-	var rim_light := OmniLight3D.new()
+	var rim_light: OmniLight3D = OmniLight3D.new()
 	rim_light.name = "RimLight"
 	rim_light.position = Vector3(2.5, 2.6, -2.4)
 	rim_light.light_color = Color(0.45, 1.0, 0.62, 1.0)
@@ -129,43 +131,43 @@ func _build_stage() -> void:
 	add_child(_camera)
 	_camera.look_at(Vector3(0.0, 0.85, 0.0), Vector3.UP)
 
-	var floor := MeshInstance3D.new()
+	var floor: MeshInstance3D = MeshInstance3D.new()
 	floor.name = "Floor"
-	var floor_mesh := PlaneMesh.new()
+	var floor_mesh: PlaneMesh = PlaneMesh.new()
 	floor_mesh.size = Vector2(10.0, 10.0)
 	floor.mesh = floor_mesh
-	var floor_material := StandardMaterial3D.new()
+	var floor_material: StandardMaterial3D = StandardMaterial3D.new()
 	floor_material.albedo_color = Color(0.055, 0.07, 0.062, 1.0)
 	floor_material.roughness = 0.82
 	floor.material_override = floor_material
 	add_child(floor)
 
-	var pedestal := MeshInstance3D.new()
+	var pedestal: MeshInstance3D = MeshInstance3D.new()
 	pedestal.name = "Pedestal"
-	var pedestal_mesh := CylinderMesh.new()
+	var pedestal_mesh: CylinderMesh = CylinderMesh.new()
 	pedestal_mesh.top_radius = 1.06
 	pedestal_mesh.bottom_radius = 1.16
 	pedestal_mesh.height = 0.24
 	pedestal_mesh.radial_segments = 64
 	pedestal.mesh = pedestal_mesh
 	pedestal.position = Vector3(0.0, 0.12, 0.0)
-	var pedestal_material := StandardMaterial3D.new()
+	var pedestal_material: StandardMaterial3D = StandardMaterial3D.new()
 	pedestal_material.albedo_color = Color(0.09, 0.20, 0.13, 1.0)
 	pedestal_material.metallic = 0.30
 	pedestal_material.roughness = 0.27
 	pedestal.material_override = pedestal_material
 	add_child(pedestal)
 
-	var gold_ring := MeshInstance3D.new()
+	var gold_ring: MeshInstance3D = MeshInstance3D.new()
 	gold_ring.name = "PedestalGoldRing"
-	var ring_mesh := TorusMesh.new()
+	var ring_mesh: TorusMesh = TorusMesh.new()
 	ring_mesh.inner_radius = 1.00
 	ring_mesh.outer_radius = 1.08
 	ring_mesh.rings = 64
 	ring_mesh.ring_segments = 12
 	gold_ring.mesh = ring_mesh
 	gold_ring.position = Vector3(0.0, 0.245, 0.0)
-	var ring_material := StandardMaterial3D.new()
+	var ring_material: StandardMaterial3D = StandardMaterial3D.new()
 	ring_material.albedo_color = Color(0.90, 0.58, 0.12, 1.0)
 	ring_material.metallic = 0.86
 	ring_material.roughness = 0.18
@@ -176,7 +178,7 @@ func _build_stage() -> void:
 	_preview_anchor.name = "PreviewAnchor"
 	add_child(_preview_anchor)
 
-	var ui := CanvasLayer.new()
+	var ui: CanvasLayer = CanvasLayer.new()
 	ui.name = "PreviewUI"
 	add_child(ui)
 
@@ -195,10 +197,10 @@ func _spawn_preview() -> void:
 		_current_preview = null
 
 	family_index = clampi(family_index, 0, FAMILIES.size() - 1)
-	var family_key := FAMILIES[family_index]
+	var family_key: String = FAMILIES[family_index]
 
 	if asset_kind == PreviewAssetKind.COIN:
-		var coin := COIN_SCENE.instantiate() as PusherCoin
+		var coin: PusherCoin = COIN_SCENE.instantiate() as PusherCoin
 		if coin == null:
 			push_error("YD-7 preview could not instantiate Coin.tscn")
 			return
@@ -207,7 +209,7 @@ func _spawn_preview() -> void:
 		_prepare_rigid_body(coin)
 		coin.apply_skin_family(family_key)
 	else:
-		var toy := TOY_SCENE.instantiate() as PusherToy
+		var toy: PusherToy = TOY_SCENE.instantiate() as PusherToy
 		if toy == null:
 			push_error("YD-7 preview could not instantiate Toy.tscn")
 			return
@@ -236,20 +238,20 @@ func _frame_current_preview() -> void:
 	_current_preview.rotation = Vector3.ZERO
 	_current_preview.scale = Vector3.ONE
 
-	var bounds := _combined_local_bounds(_current_preview)
+	var bounds: AABB = _combined_local_bounds(_current_preview)
 	if bounds.size == Vector3.ZERO:
 		return
 
-	var largest_dimension := maxf(bounds.size.x, maxf(bounds.size.y, bounds.size.z))
+	var largest_dimension: float = maxf(bounds.size.x, maxf(bounds.size.y, bounds.size.z))
 	if largest_dimension <= 0.001:
 		return
 
-	var target_dimension := 1.45 if asset_kind == PreviewAssetKind.COIN else 1.85
-	var scale_factor := target_dimension / largest_dimension
+	var target_dimension: float = 1.45 if asset_kind == PreviewAssetKind.COIN else 1.85
+	var scale_factor: float = target_dimension / largest_dimension
 	_current_preview.scale = Vector3.ONE * scale_factor
 
-	var scaled_bounds := _combined_local_bounds(_current_preview)
-	var center := scaled_bounds.position + scaled_bounds.size * 0.5
+	var scaled_bounds: AABB = _combined_local_bounds(_current_preview)
+	var center: Vector3 = scaled_bounds.position + scaled_bounds.size * 0.5
 	_current_preview.position.x -= center.x
 	_current_preview.position.z -= center.z
 	_current_preview.position.y += 0.30 - scaled_bounds.position.y
@@ -261,15 +263,15 @@ func _combined_local_bounds(root: Node3D) -> AABB:
 	if meshes.is_empty():
 		return AABB()
 
-	var root_inverse := root.global_transform.affine_inverse()
-	var found := false
-	var combined := AABB()
+	var root_inverse: Transform3D = root.global_transform.affine_inverse()
+	var found: bool = false
+	var combined: AABB = AABB()
 
-	for mesh_instance in meshes:
+	for mesh_instance: MeshInstance3D in meshes:
 		if mesh_instance.mesh == null:
 			continue
-		var mesh_transform := root_inverse * mesh_instance.global_transform
-		var transformed := mesh_transform * mesh_instance.get_aabb()
+		var mesh_transform: Transform3D = root_inverse * mesh_instance.global_transform
+		var transformed: AABB = mesh_transform * mesh_instance.get_aabb()
 		if not found:
 			combined = transformed
 			found = true
@@ -280,14 +282,14 @@ func _combined_local_bounds(root: Node3D) -> AABB:
 
 
 func _collect_meshes(node: Node, output: Array[MeshInstance3D]) -> void:
-	for child in node.get_children():
+	for child: Node in node.get_children():
 		if child is MeshInstance3D:
 			output.append(child as MeshInstance3D)
 		_collect_meshes(child, output)
 
 
 func _cycle_family(direction: int) -> void:
-	var count := FAMILIES.size()
+	var count: int = FAMILIES.size()
 	family_index = posmod(family_index + direction, count)
 	_spawn_preview()
 
@@ -304,11 +306,12 @@ func _asset_label() -> String:
 func _update_label() -> void:
 	if _info_label == null:
 		return
-	var lines := [
+
+	var lines: PackedStringArray = PackedStringArray([
 		"YD-7 ASSET PREVIEW",
 		"%s — %s" % [FAMILY_LABELS[family_index], _asset_label()],
-		"←/→ or 1–5 family   C coin   T toy   Space toggle   R spin   S screenshot",
-	]
+		"Left/Right or 1-5 family   C coin   T toy   Space toggle   R spin   S screenshot",
+	])
 	if not _status_text.is_empty():
 		lines.append(_status_text)
 	_info_label.text = "\n".join(lines)
@@ -320,10 +323,10 @@ func _capture_preview() -> void:
 
 	await RenderingServer.frame_post_draw
 
-	var image := get_viewport().get_texture().get_image()
-	var output_dir := "user://yd7_previews"
-	var absolute_dir := ProjectSettings.globalize_path(output_dir)
-	var mkdir_error := DirAccess.make_dir_recursive_absolute(absolute_dir)
+	var image: Image = get_viewport().get_texture().get_image()
+	var output_dir: String = "user://yd7_previews"
+	var absolute_dir: String = ProjectSettings.globalize_path(output_dir)
+	var mkdir_error: int = DirAccess.make_dir_recursive_absolute(absolute_dir)
 	if mkdir_error != OK and mkdir_error != ERR_ALREADY_EXISTS:
 		_status_text = "Screenshot failed: could not create %s" % absolute_dir
 		if _info_label != null:
@@ -331,10 +334,10 @@ func _capture_preview() -> void:
 		_update_label()
 		return
 
-	var kind_slug := "coin" if asset_kind == PreviewAssetKind.COIN else "toy"
-	var filename := "%s_%s.png" % [FAMILIES[family_index], kind_slug]
-	var output_path := output_dir.path_join(filename)
-	var save_error := image.save_png(output_path)
+	var kind_slug: String = "coin" if asset_kind == PreviewAssetKind.COIN else "toy"
+	var filename: String = "%s_%s.png" % [FAMILIES[family_index], kind_slug]
+	var output_path: String = output_dir.path_join(filename)
+	var save_error: int = image.save_png(output_path)
 
 	if _info_label != null:
 		_info_label.visible = true
