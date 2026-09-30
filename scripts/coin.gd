@@ -138,8 +138,8 @@ func _rebuild_skin() -> void:
 	_skin_faces.name = "SkinFaces"
 	add_child(_skin_faces)
 
-	_add_skin_face(_skin_faces, "Top", texture, 0.0615, -90.0, 0.0)
-	_add_skin_face(_skin_faces, "Bottom", texture, -0.0615, 90.0, 180.0)
+	_add_skin_face(_skin_faces, "Top", texture, 0.066, false)
+	_add_skin_face(_skin_faces, "Bottom", texture, -0.066, true)
 
 
 func _add_skin_face(
@@ -147,25 +147,31 @@ func _add_skin_face(
 	node_name: String,
 	texture: Texture2D,
 	y_position: float,
-	x_rotation_degrees: float,
-	y_rotation_degrees: float
+	flip_for_bottom: bool
 ) -> void:
+	# PlaneMesh is horizontal in Godot, matching the coin's Y-axis cylinder.
+	# Keep the art slightly above the metal face to avoid z-fighting.
 	var face: MeshInstance3D = MeshInstance3D.new()
 	face.name = "SkinFace%s" % node_name
 
-	var mesh: QuadMesh = QuadMesh.new()
-	mesh.size = Vector2(0.81, 0.81)
+	var mesh: PlaneMesh = PlaneMesh.new()
+	mesh.size = Vector2(0.84, 0.84)
+	mesh.subdivide_width = 1
+	mesh.subdivide_depth = 1
 	face.mesh = mesh
 
 	var material: StandardMaterial3D = StandardMaterial3D.new()
 	material.albedo_texture = texture
+	material.albedo_color = Color.WHITE
 	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	material.cull_mode = BaseMaterial3D.CULL_DISABLED
-	material.metallic = 0.12
-	material.roughness = 0.30
+	# The supplied skin art already contains the intended metal/blue lighting.
+	# Unshaded rendering keeps the in-game face visually faithful to that artwork.
+	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	material.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS_ANISOTROPIC
 	face.material_override = material
 
 	face.position = Vector3(0.0, y_position, 0.0)
-	face.rotation_degrees = Vector3(x_rotation_degrees, y_rotation_degrees, 0.0)
+	if flip_for_bottom:
+		face.rotation_degrees = Vector3(180.0, 0.0, 0.0)
 	parent.add_child(face)
