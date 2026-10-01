@@ -7,6 +7,7 @@ class_name PusherToy
 
 const HORSESHOE_MODEL_PATH = "res://assets/Toys/horseshoe.glb"
 const CLOVER_MODEL_PATH = "res://assets/Toys/four_leaf_clover.glb"
+const LEPRECHAUN_MODEL_PATH = "res://assets/Toys/leprechaun.glb"
 
 var _gold_material: StandardMaterial3D
 var _green_material: StandardMaterial3D
@@ -280,111 +281,20 @@ func _build_plush_clover_leaf(
 	_add_box(Vector3(0.026, 0.020, 0.150), direction * 0.520 + tangent * 0.060 + Vector3(0.0, 0.237, 0.0), Vector3(0.0, angle_degrees + 34.0, 0.0), thread_material)
 
 func _build_leprechaun() -> void:
-	# A full seated plush character rather than a few stacked primitives. The
-	# broad hat, orange beard, face, coat, hands, shoes, and gold trim keep the
-	# leprechaun readable even when it is partly buried in the coin pile.
+	# YD-7 Leprechaun: use the finished GLB as the gameplay visual while
+	# preserving the existing rigid-body behavior and compound collision.
 	mass = 0.72
-	var plush_green_dark := _material(Color(0.018, 0.14, 0.035, 1.0), 0.01, 0.96)
-	var plush_green := _material(Color(0.035, 0.48, 0.10, 1.0), 0.01, 0.94)
-	var plush_green_light := _material(Color(0.08, 0.66, 0.16, 1.0), 0.01, 0.91)
-	var plush_skin := _material(Color(0.96, 0.63, 0.40, 1.0), 0.0, 0.92)
-	var plush_skin_light := _material(Color(1.0, 0.77, 0.57, 1.0), 0.0, 0.90)
-	var ginger_dark := _material(Color(0.48, 0.10, 0.015, 1.0), 0.01, 0.96)
-	var ginger := _material(Color(0.90, 0.25, 0.025, 1.0), 0.01, 0.93)
-	var gold_thread := _material(Color(1.0, 0.66, 0.09, 1.0), 0.30, 0.42)
-	var belt_brown := _material(Color(0.20, 0.065, 0.018, 1.0), 0.02, 0.86)
-	var eye_white := _material(Color(0.96, 0.98, 0.94, 1.0), 0.0, 0.32)
-	var eye_green := _material(Color(0.02, 0.43, 0.12, 1.0), 0.12, 0.25)
-	var eye_black := _material(Color(0.004, 0.006, 0.005, 1.0), 0.28, 0.16)
-	var cheek_pink := _material(Color(0.92, 0.25, 0.27, 1.0), 0.0, 0.78)
-
-	# Soft seated body with a darker lower cushion showing around the coat.
-	_add_sphere(Vector3(0.48, 0.54, 0.40), Vector3(0.0, 0.02, 0.04), plush_green_dark)
-	_add_sphere(Vector3(0.43, 0.49, 0.36), Vector3(0.0, 0.08, -0.015), plush_green)
-	_add_sphere(Vector3(0.23, 0.22, 0.25), Vector3(-0.25, -0.26, 0.08), plush_green_dark)
-	_add_sphere(Vector3(0.23, 0.22, 0.25), Vector3(0.25, -0.26, 0.08), plush_green_dark)
-
-	# Coat lapels, belt, buckle, and oversized toy-like buttons.
-	_add_box(Vector3(0.11, 0.48, 0.055), Vector3(-0.13, 0.12, -0.355), Vector3(0.0, 0.0, -18.0), plush_green_light)
-	_add_box(Vector3(0.11, 0.48, 0.055), Vector3(0.13, 0.12, -0.355), Vector3(0.0, 0.0, 18.0), plush_green_light)
-	_add_box(Vector3(0.74, 0.105, 0.065), Vector3(0.0, -0.06, -0.37), Vector3.ZERO, belt_brown)
-	_add_box(Vector3(0.25, 0.22, 0.075), Vector3(0.0, -0.06, -0.415), Vector3.ZERO, gold_thread)
-	_add_box(Vector3(0.125, 0.095, 0.045), Vector3(0.0, -0.06, -0.458), Vector3.ZERO, belt_brown)
-	for button_y in [0.16, 0.31]:
-		_add_sphere(Vector3(0.070, 0.070, 0.035), Vector3(0.0, button_y, -0.378), gold_thread)
-
-	# Stubby padded arms and hands make the silhouette read as a plush doll.
-	_add_capsule(0.16, 0.58, Vector3(-0.45, 0.12, -0.01), plush_green_dark, Vector3(0.0, 0.0, -56.0))
-	_add_capsule(0.135, 0.52, Vector3(-0.43, 0.16, -0.045), plush_green, Vector3(0.0, 0.0, -56.0))
-	_add_capsule(0.16, 0.58, Vector3(0.45, 0.12, -0.01), plush_green_dark, Vector3(0.0, 0.0, 56.0))
-	_add_capsule(0.135, 0.52, Vector3(0.43, 0.16, -0.045), plush_green, Vector3(0.0, 0.0, 56.0))
-	_add_sphere(Vector3(0.175, 0.175, 0.165), Vector3(-0.66, -0.02, -0.08), plush_skin)
-	_add_sphere(Vector3(0.175, 0.175, 0.165), Vector3(0.66, -0.02, -0.08), plush_skin)
-	_add_sphere(Vector3(0.090, 0.080, 0.045), Vector3(-0.66, -0.015, -0.235), plush_skin_light)
-	_add_sphere(Vector3(0.090, 0.080, 0.045), Vector3(0.66, -0.015, -0.235), plush_skin_light)
-
-	# Seated legs, striped socks, and broad buckled shoes.
-	_add_capsule(0.19, 0.56, Vector3(-0.25, -0.34, -0.20), plush_green, Vector3(72.0, 0.0, 0.0))
-	_add_capsule(0.19, 0.56, Vector3(0.25, -0.34, -0.20), plush_green, Vector3(72.0, 0.0, 0.0))
-	for leg_x in [-0.25, 0.25]:
-		_add_box(Vector3(0.28, 0.055, 0.065), Vector3(leg_x, -0.31, -0.43), Vector3.ZERO, plush_skin_light)
-		_add_box(Vector3(0.28, 0.055, 0.068), Vector3(leg_x, -0.39, -0.45), Vector3.ZERO, plush_green_light)
-	_add_sphere(Vector3(0.31, 0.17, 0.37), Vector3(-0.27, -0.49, -0.48), plush_green_dark)
-	_add_sphere(Vector3(0.31, 0.17, 0.37), Vector3(0.27, -0.49, -0.48), plush_green_dark)
-	_add_box(Vector3(0.18, 0.13, 0.055), Vector3(-0.27, -0.47, -0.835), Vector3.ZERO, gold_thread)
-	_add_box(Vector3(0.18, 0.13, 0.055), Vector3(0.27, -0.47, -0.835), Vector3.ZERO, gold_thread)
-
-	# Head cushion, ears, side hair, and a layered orange plush beard.
-	_add_sphere(Vector3(0.46, 0.44, 0.41), Vector3(0.0, 0.69, 0.005), ginger_dark)
-	_add_sphere(Vector3(0.405, 0.385, 0.365), Vector3(0.0, 0.72, -0.045), plush_skin)
-	_add_sphere(Vector3(0.15, 0.19, 0.11), Vector3(-0.405, 0.69, -0.045), plush_skin)
-	_add_sphere(Vector3(0.15, 0.19, 0.11), Vector3(0.405, 0.69, -0.045), plush_skin)
-	_add_sphere(Vector3(0.065, 0.10, 0.035), Vector3(-0.43, 0.69, -0.145), plush_skin_light)
-	_add_sphere(Vector3(0.065, 0.10, 0.035), Vector3(0.43, 0.69, -0.145), plush_skin_light)
-
-	var beard_positions := [
-		Vector3(-0.31, 0.54, -0.30),
-		Vector3(-0.19, 0.45, -0.345),
-		Vector3(-0.065, 0.41, -0.365),
-		Vector3(0.065, 0.41, -0.365),
-		Vector3(0.19, 0.45, -0.345),
-		Vector3(0.31, 0.54, -0.30),
-	]
-	for beard_position in beard_positions:
-		_add_sphere(Vector3(0.145, 0.175, 0.105), beard_position, ginger_dark)
-		_add_sphere(Vector3(0.116, 0.145, 0.078), beard_position + Vector3(0.0, 0.018, -0.055), ginger)
-
-	# Large expressive embroidered face on the front of the head.
-	for eye_x in [-0.145, 0.145]:
-		_add_sphere(Vector3(0.105, 0.125, 0.045), Vector3(eye_x, 0.79, -0.375), eye_white)
-		_add_sphere(Vector3(0.070, 0.092, 0.030), Vector3(eye_x, 0.79, -0.415), eye_green)
-		_add_sphere(Vector3(0.040, 0.062, 0.020), Vector3(eye_x, 0.785, -0.438), eye_black)
-		_add_sphere(Vector3(0.016, 0.022, 0.010), Vector3(eye_x - 0.018, 0.825, -0.456), eye_white)
-	_add_capsule(0.026, 0.16, Vector3(-0.145, 0.925, -0.375), ginger, Vector3(0.0, 0.0, 77.0))
-	_add_capsule(0.026, 0.16, Vector3(0.145, 0.925, -0.375), ginger, Vector3(0.0, 0.0, 103.0))
-	_add_sphere(Vector3(0.078, 0.070, 0.060), Vector3(0.0, 0.69, -0.430), plush_skin_light)
-	_add_sphere(Vector3(0.080, 0.050, 0.030), Vector3(-0.25, 0.65, -0.405), cheek_pink)
-	_add_sphere(Vector3(0.080, 0.050, 0.030), Vector3(0.25, 0.65, -0.405), cheek_pink)
-	_add_sphere(Vector3(0.135, 0.070, 0.032), Vector3(0.0, 0.565, -0.410), eye_black)
-	_add_sphere(Vector3(0.085, 0.035, 0.024), Vector3(0.0, 0.590, -0.442), plush_skin_light)
-
-	# Oversized plush top hat with dark band, gold buckle, piping, and clover pin.
-	_add_sphere(Vector3(0.56, 0.085, 0.43), Vector3(0.0, 1.055, 0.0), plush_green_dark)
-	_add_sphere(Vector3(0.51, 0.065, 0.39), Vector3(0.0, 1.105, -0.015), plush_green)
-	_add_cylinder(0.395, 0.48, Vector3(0.0, 1.31, 0.02), Vector3.ZERO, plush_green_dark, 0.43)
-	_add_cylinder(0.355, 0.43, Vector3(0.0, 1.34, -0.005), Vector3.ZERO, plush_green, 0.39)
-	_add_cylinder(0.405, 0.115, Vector3(0.0, 1.205, -0.005), Vector3.ZERO, belt_brown)
-	_add_box(Vector3(0.285, 0.205, 0.060), Vector3(-0.08, 1.205, -0.405), Vector3.ZERO, gold_thread)
-	_add_box(Vector3(0.145, 0.090, 0.042), Vector3(-0.08, 1.205, -0.440), Vector3.ZERO, belt_brown)
-	_add_box(Vector3(0.055, 0.035, 0.36), Vector3(0.0, 1.535, -0.03), Vector3(0.0, 90.0, 0.0), gold_thread)
-
-	var pin_center := Vector3(0.235, 1.34, -0.385)
-	for pin_offset in [Vector3(-0.055, 0.0, 0.0), Vector3(0.055, 0.0, 0.0), Vector3(0.0, 0.055, 0.0), Vector3(0.0, -0.055, 0.0)]:
-		_add_sphere(Vector3(0.062, 0.062, 0.025), pin_center + pin_offset, gold_thread)
-	for pin_offset in [Vector3(-0.045, 0.0, -0.020), Vector3(0.045, 0.0, -0.020), Vector3(0.0, 0.045, -0.020), Vector3(0.0, -0.045, -0.020)]:
-		_add_sphere(Vector3(0.045, 0.045, 0.018), pin_center + pin_offset, plush_green_light)
+	linear_damp = 0.24
+	angular_damp = 0.42
+	_add_external_model_visual(
+		LEPRECHAUN_MODEL_PATH,
+		"LeprechaunVisual",
+		"LeprechaunModel",
+		1.55
+	)
 
 	# Compound collision follows the seated body, head, hat, hands, and feet.
+	# The detailed imported mesh remains visual-only so it cannot snag the pile.
 	_add_capsule_collision(0.43, 0.92, Vector3(0.0, 0.02, 0.02))
 	_add_sphere_collision(0.43, Vector3(0.0, 0.70, 0.0))
 	_add_box_collision(Vector3(0.90, 0.58, 0.78), Vector3(0.0, 1.29, 0.0))
