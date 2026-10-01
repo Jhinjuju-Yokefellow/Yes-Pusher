@@ -150,24 +150,27 @@ func _build_horseshoe() -> void:
 
 func _build_clover() -> void:
 	# YD-7 Clover: use the finished shaded GLB as the gameplay visual.
-	# The generated model already uses the same flat clover orientation as the
-	# existing collision layout, so only centering/scaling is applied here.
 	mass = 0.52
+	linear_damp = 0.24
+	angular_damp = 0.42
 	_add_clover_model_visual()
 
-	# Keep gameplay physics simple and stable instead of deriving collision from
-	# the high-detail plush mesh.
-	var leaf_angles := [0.0, 90.0, 180.0, 270.0]
-	_add_sphere_collision(0.25, Vector3.ZERO)
-	for angle_degrees in leaf_angles:
-		var angle := deg_to_rad(angle_degrees)
-		var direction := Vector3(sin(angle), 0.0, cos(angle))
-		_add_sphere_collision(0.34, direction * 0.42)
-	_add_capsule_collision(
-		0.15,
-		0.60,
-		Vector3(0.0, 0.0, 0.69),
-		Vector3(90.0, 0.0, -10.0)
+	# The imported plush is broad in local X/Y and shallow in local Z. Match that
+	# with a deliberately thin compound collision profile so it can tumble, then
+	# naturally settle face-up or face-down instead of rolling on sphere shapes.
+	var leaf_size := Vector3(0.64, 0.58, 0.22)
+	_add_box_collision(leaf_size, Vector3(-0.34, 0.27, 0.0), Vector3(0.0, 0.0, -8.0))
+	_add_box_collision(leaf_size, Vector3(0.34, 0.27, 0.0), Vector3(0.0, 0.0, 8.0))
+	_add_box_collision(leaf_size, Vector3(-0.34, -0.24, 0.0), Vector3(0.0, 0.0, 8.0))
+	_add_box_collision(leaf_size, Vector3(0.34, -0.24, 0.0), Vector3(0.0, 0.0, -8.0))
+
+	# Small center and stem shapes close the gaps without turning the high-detail
+	# rendered mesh itself into collision geometry.
+	_add_box_collision(Vector3(0.34, 0.34, 0.24), Vector3(0.0, 0.02, 0.0))
+	_add_box_collision(
+		Vector3(0.20, 0.43, 0.18),
+		Vector3(0.06, -0.62, 0.0),
+		Vector3(0.0, 0.0, -12.0)
 	)
 
 
