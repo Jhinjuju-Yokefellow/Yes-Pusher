@@ -25,7 +25,7 @@ const COIN_SCENE: PackedScene = preload("res://Coin.tscn")
 const TOY_SCENE: PackedScene = preload("res://Toy.tscn")
 
 @export var asset_kind: PreviewAssetKind = PreviewAssetKind.COIN
-@export_range(0, 4, 1) var family_index: int = 0
+@export_range(-1, 4, 1) var family_index: int = -1
 @export var spin_preview: bool = false
 @export_range(1.0, 90.0, 1.0) var spin_speed_degrees: float = 18.0
 
@@ -59,6 +59,8 @@ func _unhandled_key_input(event: InputEvent) -> void:
 			_cycle_family(-1)
 		KEY_RIGHT:
 			_cycle_family(1)
+		KEY_0:
+			_set_family_index(-1)
 		KEY_1:
 			_set_family_index(0)
 		KEY_2:
@@ -196,8 +198,10 @@ func _spawn_preview() -> void:
 		_current_preview.queue_free()
 		_current_preview = null
 
-	family_index = clampi(family_index, 0, FAMILIES.size() - 1)
-	var family_key: String = FAMILIES[family_index]
+	family_index = clampi(family_index, -1, FAMILIES.size() - 1)
+	if asset_kind == PreviewAssetKind.TOY and family_index < 0:
+		family_index = 0
+	var family_key: String = "" if family_index < 0 else FAMILIES[family_index]
 
 	if asset_kind == PreviewAssetKind.COIN:
 		var coin: PusherCoin = COIN_SCENE.instantiate() as PusherCoin
@@ -289,13 +293,19 @@ func _collect_meshes(node: Node, output: Array[MeshInstance3D]) -> void:
 
 
 func _cycle_family(direction: int) -> void:
-	var count: int = FAMILIES.size()
-	family_index = posmod(family_index + direction, count)
+	var state_count: int = FAMILIES.size() + 1
+	var state_index: int = family_index + 1
+	state_index = posmod(state_index + direction, state_count)
+	family_index = state_index - 1
+	if asset_kind == PreviewAssetKind.TOY and family_index < 0:
+		family_index = FAMILIES.size() - 1 if direction < 0 else 0
 	_spawn_preview()
 
 
 func _set_family_index(index: int) -> void:
-	family_index = clampi(index, 0, FAMILIES.size() - 1)
+	family_index = clampi(index, -1, FAMILIES.size() - 1)
+	if asset_kind == PreviewAssetKind.TOY and family_index < 0:
+		family_index = 0
 	_spawn_preview()
 
 
@@ -307,10 +317,11 @@ func _update_label() -> void:
 	if _info_label == null:
 		return
 
+	var family_label: String = "Default YES" if family_index < 0 else FAMILY_LABELS[family_index]
 	var lines: PackedStringArray = PackedStringArray([
 		"YD-7 ASSET PREVIEW",
-		"%s — %s" % [FAMILY_LABELS[family_index], _asset_label()],
-		"Left/Right or 1-5 family   C coin   T toy   Space toggle   R spin   S screenshot",
+		"%s — %s" % [family_label, _asset_label()],
+		"Left/Right family   0 default YES   1-5 skins   C coin   T toy   Space toggle   R spin   S screenshot",
 	])
 	if not _status_text.is_empty():
 		lines.append(_status_text)
@@ -335,7 +346,8 @@ func _capture_preview() -> void:
 		return
 
 	var kind_slug: String = "coin" if asset_kind == PreviewAssetKind.COIN else "toy"
-	var filename: String = "%s_%s.png" % [FAMILIES[family_index], kind_slug]
+	var family_slug: String = "yes_default" if family_index < 0 else FAMILIES[family_index]
+	var filename: String = "%s_%s.png" % [family_slug, kind_slug]
 	var output_path: String = output_dir.path_join(filename)
 	var save_error: int = image.save_png(output_path)
 

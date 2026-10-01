@@ -6,11 +6,11 @@ class_name PusherCoin
 const DEFAULT_SKIN_TEXTURE_PATH: String = "res://assets/coin_skins/yes_default.svg"
 
 const FAMILY_SKIN_TEXTURE_PATHS: Dictionary = {
-	"horseshoe": "res://assets/coin_skins/horseshoe.png",
-	"four_leaf_clover": "res://assets/coin_skins/four_leaf_clover.png",
-	"leprechaun": "res://assets/coin_skins/leprechaun.png",
-	"pot_of_gold": "res://assets/coin_skins/pot_of_gold.png",
-	"treasure_chest": "res://assets/coin_skins/treasure_chest.png",
+	"horseshoe": "res://assets/coin_skins/horseshoe.svg",
+	"four_leaf_clover": "res://assets/coin_skins/four_leaf_clover.svg",
+	"leprechaun": "res://assets/coin_skins/leprechaun.svg",
+	"pot_of_gold": "res://assets/coin_skins/pot_of_gold.svg",
+	"treasure_chest": "res://assets/coin_skins/treasure_chest.svg",
 }
 
 var _skin_family: String = ""

@@ -32,11 +32,11 @@ A skin may change the face artwork and visual accents, but it must not change:
 The runtime skin slots are:
 
 - `assets/coin_skins/yes_default.svg`
-- `assets/coin_skins/horseshoe.png`
-- `assets/coin_skins/four_leaf_clover.png`
-- `assets/coin_skins/leprechaun.png`
-- `assets/coin_skins/pot_of_gold.png`
-- `assets/coin_skins/treasure_chest.png`
+- `assets/coin_skins/horseshoe.svg`
+- `assets/coin_skins/four_leaf_clover.svg`
+- `assets/coin_skins/leprechaun.svg`
+- `assets/coin_skins/pot_of_gold.svg`
+- `assets/coin_skins/treasure_chest.svg`
 
 Until a family texture exists, the runtime deliberately falls back to the default YES skin. This lets us design each family without changing Coin.tscn again.
 
@@ -70,7 +70,9 @@ Use `res://tools/AssetPreview.tscn` to inspect the real Coin.tscn and Toy.tscn a
 
 Controls:
 
-- Left/Right or 1–5: choose family
+- Left/Right: cycle default YES + five families
+- 0: Default YES coin
+- 1–5: Horseshoe, Four-Leaf Clover, Leprechaun, Pot of Gold, Treasure Chest
 - C: Coin Skin
 - T: gameplay Toy
 - Space: toggle Coin/Toy
