@@ -147,52 +147,82 @@ func _build_horseshoe() -> void:
 		)
 
 func _build_clover() -> void:
-	# A proper soft four-leaf-clover plush: padded heart-shaped leaves, layered
-	# fabric, gold piping/embroidery, a friendly face, and a stuffed stem.
-	mass = 0.48
-	var plush_back := _material(Color(0.012, 0.16, 0.035, 1.0), 0.02, 0.96)
-	var plush_green := _material(Color(0.035, 0.55, 0.12, 1.0), 0.01, 0.94)
-	var plush_highlight := _material(Color(0.09, 0.72, 0.20, 1.0), 0.01, 0.92)
-	var gold_thread := _material(Color(0.98, 0.66, 0.10, 1.0), 0.18, 0.50)
-	var button_black := _material(Color(0.006, 0.009, 0.008, 1.0), 0.34, 0.16)
-	var cheek_pink := _material(Color(0.92, 0.24, 0.31, 1.0), 0.0, 0.74)
+	# YD-7 Clover V2: one compact, chunky arcade-prize toy. Four large padded
+	# leaves carry the silhouette; silver backing ties it directly to the
+	# silver/blue Clover Coin Skin. No face, diorama, or tiny decorative parts.
+	mass = 0.52
+	var silver := _material(Color(0.73, 0.79, 0.86, 1.0), 0.82, 0.24)
+	var silver_dark := _material(Color(0.34, 0.40, 0.48, 1.0), 0.72, 0.30)
+	var clover_green := _material(Color(0.025, 0.56, 0.12, 1.0), 0.08, 0.46)
+	var clover_light := _material(Color(0.08, 0.78, 0.20, 1.0), 0.05, 0.38)
+	var clover_dark := _material(Color(0.008, 0.20, 0.045, 1.0), 0.04, 0.60)
 
-	var leaf_angles := [45.0, 135.0, 225.0, 315.0]
-	for angle_degrees in leaf_angles:
-		_build_plush_clover_leaf(angle_degrees, plush_back, plush_green, plush_highlight, gold_thread)
-
-	# Puffy center cushion and raised face keep the toy readable in a dense coin pile.
-	_add_sphere(Vector3(0.31, 0.14, 0.31), Vector3(0.0, 0.015, 0.0), plush_back)
-	_add_sphere(Vector3(0.265, 0.105, 0.265), Vector3(0.0, 0.13, 0.0), plush_green)
-	_add_sphere(Vector3(0.090, 0.045, 0.090), Vector3(-0.105, 0.255, -0.055), button_black)
-	_add_sphere(Vector3(0.090, 0.045, 0.090), Vector3(0.105, 0.255, -0.055), button_black)
-	_add_sphere(Vector3(0.034, 0.018, 0.034), Vector3(-0.078, 0.292, -0.078), plush_highlight)
-	_add_sphere(Vector3(0.034, 0.018, 0.034), Vector3(0.132, 0.292, -0.078), plush_highlight)
-	_add_sphere(Vector3(0.067, 0.025, 0.046), Vector3(-0.205, 0.236, 0.030), cheek_pink)
-	_add_sphere(Vector3(0.067, 0.025, 0.046), Vector3(0.205, 0.236, 0.030), cheek_pink)
-
-	# Curved embroidered smile made from three visible gold stitches.
-	_add_box(Vector3(0.060, 0.024, 0.024), Vector3(-0.070, 0.272, 0.060), Vector3(0.0, -28.0, 0.0), gold_thread)
-	_add_box(Vector3(0.080, 0.024, 0.024), Vector3(0.0, 0.265, 0.082), Vector3.ZERO, gold_thread)
-	_add_box(Vector3(0.060, 0.024, 0.024), Vector3(0.070, 0.272, 0.060), Vector3(0.0, 28.0, 0.0), gold_thread)
-
-	# Stuffed stem with dark backing and a smaller bright fabric face.
-	_add_capsule(0.145, 0.70, Vector3(0.0, -0.005, 0.655), plush_back, Vector3(90.0, 0.0, -8.0))
-	_add_capsule(0.112, 0.64, Vector3(0.0, 0.105, 0.655), plush_green, Vector3(90.0, 0.0, -8.0))
-	_add_box(Vector3(0.030, 0.022, 0.26), Vector3(0.035, 0.225, 0.655), Vector3(0.0, -8.0, 0.0), gold_thread)
-
-	# Compound collision follows the four padded leaves and stem rather than
-	# using one oversized sphere that would make it roll like a ball.
-	_add_sphere_collision(0.30, Vector3.ZERO)
+	var leaf_angles := [0.0, 90.0, 180.0, 270.0]
 	for angle_degrees in leaf_angles:
 		var angle := deg_to_rad(angle_degrees)
 		var direction := Vector3(sin(angle), 0.0, cos(angle))
-		var tangent := Vector3(cos(angle), 0.0, -sin(angle))
-		var outer_center := direction * 0.49
-		_add_sphere_collision(0.285, outer_center + tangent * 0.145)
-		_add_sphere_collision(0.285, outer_center - tangent * 0.145)
-		_add_sphere_collision(0.245, direction * 0.325)
-	_add_capsule_collision(0.15, 0.72, Vector3(0.0, 0.0, 0.655), Vector3(90.0, 0.0, -8.0))
+		var center := direction * 0.42
+		var rotation := Vector3(0.0, angle_degrees, 0.0)
+
+		# Thick silver lower cushion creates a visible metallic edge around each
+		# leaf, matching the Coin Skin without turning the toy into another coin.
+		_add_sphere(
+			Vector3(0.39, 0.25, 0.52),
+			center + Vector3(0.0, 0.00, 0.0),
+			silver_dark,
+			rotation
+		)
+		_add_sphere(
+			Vector3(0.355, 0.215, 0.475),
+			center + Vector3(0.0, 0.105, 0.0),
+			clover_green,
+			rotation
+		)
+
+		# One soft highlight patch per leaf keeps the surface toy-like and gives
+		# the shape depth under the machine lighting.
+		_add_sphere(
+			Vector3(0.16, 0.045, 0.21),
+			center + direction * 0.055 + Vector3(0.0, 0.285, 0.0),
+			clover_light,
+			rotation
+		)
+
+	# A compact center cap visually locks the four padded leaves together.
+	_add_sphere(Vector3(0.255, 0.175, 0.255), Vector3(0.0, 0.035, 0.0), silver)
+	_add_sphere(Vector3(0.195, 0.145, 0.195), Vector3(0.0, 0.165, 0.0), clover_green)
+	_add_sphere(Vector3(0.080, 0.045, 0.080), Vector3(-0.045, 0.295, -0.040), clover_light)
+
+	# Short, thick stuffed stem: enough to read as a clover, not enough to snag.
+	_add_capsule(
+		0.145,
+		0.58,
+		Vector3(0.0, -0.015, 0.69),
+		clover_dark,
+		Vector3(90.0, 0.0, -10.0)
+	)
+	_add_capsule(
+		0.112,
+		0.52,
+		Vector3(0.0, 0.085, 0.67),
+		clover_green,
+		Vector3(90.0, 0.0, -10.0)
+	)
+
+	# Simple compound collision follows the four chunky leaves and stem. The
+	# visual silver trim/highlights remain decorative and cannot catch coins.
+	_add_sphere_collision(0.25, Vector3.ZERO)
+	for angle_degrees in leaf_angles:
+		var angle := deg_to_rad(angle_degrees)
+		var direction := Vector3(sin(angle), 0.0, cos(angle))
+		_add_sphere_collision(0.34, direction * 0.42)
+	_add_capsule_collision(
+		0.15,
+		0.60,
+		Vector3(0.0, 0.0, 0.69),
+		Vector3(90.0, 0.0, -10.0)
+	)
+
 
 func _build_plush_clover_leaf(
 	angle_degrees: float,
