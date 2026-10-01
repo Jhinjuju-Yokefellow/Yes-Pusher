@@ -5,6 +5,8 @@ class_name PusherToy
 @export var toy_instance_id: String = ""
 @export var source_wallet: String = ""
 
+const CLOVER_MODEL_PATH = "res://assets/toys/four_leaf_clover.glb"
+
 var _gold_material: StandardMaterial3D
 var _green_material: StandardMaterial3D
 var _dark_material: StandardMaterial3D
@@ -147,70 +149,15 @@ func _build_horseshoe() -> void:
 		)
 
 func _build_clover() -> void:
-	# YD-7 Clover V2: one compact, chunky arcade-prize toy. Four large padded
-	# leaves carry the silhouette; silver backing ties it directly to the
-	# silver/blue Clover Coin Skin. No face, diorama, or tiny decorative parts.
+	# YD-7 Clover: use the finished shaded GLB as the gameplay visual.
+	# The generated model already uses the same flat clover orientation as the
+	# existing collision layout, so only centering/scaling is applied here.
 	mass = 0.52
-	var silver := _material(Color(0.73, 0.79, 0.86, 1.0), 0.82, 0.24)
-	var silver_dark := _material(Color(0.34, 0.40, 0.48, 1.0), 0.72, 0.30)
-	var clover_green := _material(Color(0.025, 0.56, 0.12, 1.0), 0.08, 0.46)
-	var clover_light := _material(Color(0.08, 0.78, 0.20, 1.0), 0.05, 0.38)
-	var clover_dark := _material(Color(0.008, 0.20, 0.045, 1.0), 0.04, 0.60)
+	_add_clover_model_visual()
 
+	# Keep gameplay physics simple and stable instead of deriving collision from
+	# the high-detail plush mesh.
 	var leaf_angles := [0.0, 90.0, 180.0, 270.0]
-	for angle_degrees in leaf_angles:
-		var angle := deg_to_rad(angle_degrees)
-		var direction := Vector3(sin(angle), 0.0, cos(angle))
-		var center := direction * 0.42
-		var rotation := Vector3(0.0, angle_degrees, 0.0)
-
-		# Thick silver lower cushion creates a visible metallic edge around each
-		# leaf, matching the Coin Skin without turning the toy into another coin.
-		_add_sphere(
-			Vector3(0.39, 0.25, 0.52),
-			center + Vector3(0.0, 0.00, 0.0),
-			silver_dark,
-			rotation
-		)
-		_add_sphere(
-			Vector3(0.355, 0.215, 0.475),
-			center + Vector3(0.0, 0.105, 0.0),
-			clover_green,
-			rotation
-		)
-
-		# One soft highlight patch per leaf keeps the surface toy-like and gives
-		# the shape depth under the machine lighting.
-		_add_sphere(
-			Vector3(0.16, 0.045, 0.21),
-			center + direction * 0.055 + Vector3(0.0, 0.285, 0.0),
-			clover_light,
-			rotation
-		)
-
-	# A compact center cap visually locks the four padded leaves together.
-	_add_sphere(Vector3(0.255, 0.175, 0.255), Vector3(0.0, 0.035, 0.0), silver)
-	_add_sphere(Vector3(0.195, 0.145, 0.195), Vector3(0.0, 0.165, 0.0), clover_green)
-	_add_sphere(Vector3(0.080, 0.045, 0.080), Vector3(-0.045, 0.295, -0.040), clover_light)
-
-	# Short, thick stuffed stem: enough to read as a clover, not enough to snag.
-	_add_capsule(
-		0.145,
-		0.58,
-		Vector3(0.0, -0.015, 0.69),
-		clover_dark,
-		Vector3(90.0, 0.0, -10.0)
-	)
-	_add_capsule(
-		0.112,
-		0.52,
-		Vector3(0.0, 0.085, 0.67),
-		clover_green,
-		Vector3(90.0, 0.0, -10.0)
-	)
-
-	# Simple compound collision follows the four chunky leaves and stem. The
-	# visual silver trim/highlights remain decorative and cannot catch coins.
 	_add_sphere_collision(0.25, Vector3.ZERO)
 	for angle_degrees in leaf_angles:
 		var angle := deg_to_rad(angle_degrees)
@@ -223,6 +170,73 @@ func _build_clover() -> void:
 		Vector3(90.0, 0.0, -10.0)
 	)
 
+
+func _add_clover_model_visual() -> void:
+	if not ResourceLoader.exists(CLOVER_MODEL_PATH):
+		push_error("YD-7 Clover model is missing: %s" % CLOVER_MODEL_PATH)
+		return
+
+	var resource: Resource = load(CLOVER_MODEL_PATH)
+	if not (resource is PackedScene):
+		push_error("YD-7 Clover model did not import as a PackedScene: %s" % CLOVER_MODEL_PATH)
+		return
+
+	var model_instance: Node = (resource as PackedScene).instantiate()
+	if not (model_instance is Node3D):
+		model_instance.queue_free()
+		push_error("YD-7 Clover model root is not Node3D: %s" % CLOVER_MODEL_PATH)
+		return
+
+	var holder := Node3D.new()
+	holder.name = "CloverVisual"
+	add_child(holder)
+
+	var model := model_instance as Node3D
+	model.name = "FourLeafCloverModel"
+	holder.add_child(model)
+	_fit_external_visual(holder, 1.55)
+
+
+func _fit_external_visual(root: Node3D, target_dimension: float) -> void:
+	var meshes: Array[MeshInstance3D] = []
+	_collect_external_meshes(root, meshes)
+	if meshes.is_empty():
+		push_error("YD-7 Clover model contains no MeshInstance3D nodes.")
+		return
+
+	var root_inverse: Transform3D = root.global_transform.affine_inverse()
+	var found := false
+	var combined := AABB()
+
+	for mesh_instance: MeshInstance3D in meshes:
+		if mesh_instance.mesh == null:
+			continue
+		var mesh_transform: Transform3D = root_inverse * mesh_instance.global_transform
+		var transformed: AABB = mesh_transform * mesh_instance.get_aabb()
+		if not found:
+			combined = transformed
+			found = true
+		else:
+			combined = combined.merge(transformed)
+
+	if not found:
+		return
+
+	var largest_dimension := maxf(combined.size.x, maxf(combined.size.y, combined.size.z))
+	if largest_dimension <= 0.001:
+		return
+
+	var scale_factor := target_dimension / largest_dimension
+	var center := combined.position + combined.size * 0.5
+	root.scale = Vector3.ONE * scale_factor
+	root.position = -(center * scale_factor)
+
+
+func _collect_external_meshes(node: Node, output: Array[MeshInstance3D]) -> void:
+	for child: Node in node.get_children():
+		if child is MeshInstance3D:
+			output.append(child as MeshInstance3D)
+		_collect_external_meshes(child, output)
 
 func _build_plush_clover_leaf(
 	angle_degrees: float,
