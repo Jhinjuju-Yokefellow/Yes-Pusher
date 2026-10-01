@@ -5,7 +5,8 @@ class_name PusherToy
 @export var toy_instance_id: String = ""
 @export var source_wallet: String = ""
 
-const CLOVER_MODEL_PATH = "res://assets/toys/four_leaf_clover.glb"
+const HORSESHOE_MODEL_PATH = "res://assets/Toys/horseshoe.glb"
+const CLOVER_MODEL_PATH = "res://assets/Toys/four_leaf_clover.glb"
 
 var _gold_material: StandardMaterial3D
 var _green_material: StandardMaterial3D
@@ -88,72 +89,63 @@ func _build_toy() -> void:
 			_build_treasure_chest()
 
 func _build_horseshoe() -> void:
-	# The horseshoe is the showcase toy: a real open U-shaped body instead of
-	# three boxes, with a raised gold face, emerald inlay, rivets, and clover.
-	mass = 0.62
-	var deep_gold := _material(Color(0.84, 0.38, 0.035, 1.0), 0.90, 0.20)
-	var bright_gold := _material(Color(1.0, 0.68, 0.12, 1.0), 0.82, 0.14)
-	var emerald := _material(Color(0.015, 0.48, 0.09, 1.0), 0.30, 0.18)
-	var emerald_dark := _material(Color(0.005, 0.12, 0.025, 1.0), 0.18, 0.24)
+	# YD-7 Horseshoe: use the finished plush GLB as the gameplay visual.
+	mass = 0.60
+	linear_damp = 0.24
+	angular_damp = 0.40
+	_add_external_model_visual(
+		HORSESHOE_MODEL_PATH,
+		"HorseshoeVisual",
+		"HorseshoeModel",
+		1.55
+	)
 
-	# Thick lower casting, then a smaller raised face to give it a beveled edge.
-	_add_annular_sector(0.37, 0.90, 0.24, -138.0, 138.0, 30, Vector3(0.0, -0.02, 0.0), deep_gold)
-	_add_annular_sector(0.43, 0.84, 0.14, -138.0, 138.0, 30, Vector3(0.0, 0.13, 0.0), bright_gold)
-
-	# Recessed emerald stripe running through both arms.
-	_add_annular_sector(0.56, 0.64, 0.035, -121.0, 121.0, 26, Vector3(0.0, 0.218, 0.0), emerald_dark)
-	_add_annular_sector(0.575, 0.625, 0.046, -119.0, 119.0, 26, Vector3(0.0, 0.225, 0.0), emerald)
-
-	# Chunky capped heels make the opening read clearly from the game camera.
-	for angle_degrees in [-138.0, 138.0]:
-		var angle := deg_to_rad(angle_degrees)
-		var heel_position := Vector3(sin(angle) * 0.635, 0.045, cos(angle) * 0.635)
-		_add_box(Vector3(0.52, 0.34, 0.46), heel_position, Vector3(0.0, angle_degrees, 0.0), deep_gold)
-		_add_box(Vector3(0.43, 0.13, 0.37), heel_position + Vector3(0.0, 0.205, 0.0), Vector3(0.0, angle_degrees, 0.0), bright_gold)
-		_add_cylinder(0.060, 0.042, heel_position + Vector3(0.0, 0.295, 0.0), Vector3.ZERO, emerald_dark)
-		_add_cylinder(0.040, 0.050, heel_position + Vector3(0.0, 0.303, 0.0), Vector3.ZERO, emerald)
-
-	# Emerald nail heads along the face make it readable among the coin pile.
-	for angle_degrees in [-96.0, -66.0, 66.0, 96.0]:
-		var angle := deg_to_rad(angle_degrees)
-		var stud_position := Vector3(sin(angle) * 0.735, 0.225, cos(angle) * 0.735)
-		_add_cylinder(0.065, 0.032, stud_position, Vector3.ZERO, emerald_dark)
-		_add_cylinder(0.043, 0.040, stud_position + Vector3(0.0, 0.012, 0.0), Vector3.ZERO, emerald)
-
-	# Raised four-leaf-clover badge on the front of the shoe.
-	var clover_center := Vector3(0.0, 0.245, 0.675)
-	var leaf_offsets := [
-		Vector3(-0.115, 0.0, 0.0),
-		Vector3(0.115, 0.0, 0.0),
-		Vector3(0.0, 0.0, -0.115),
-		Vector3(0.0, 0.0, 0.115),
-	]
-	for offset in leaf_offsets:
-		_add_sphere(Vector3(0.155, 0.045, 0.155), clover_center + offset, bright_gold)
-	for offset in leaf_offsets:
-		_add_sphere(Vector3(0.112, 0.030, 0.112), clover_center + offset + Vector3(0.0, 0.045, 0.0), emerald)
-	_add_sphere(Vector3(0.105, 0.050, 0.105), clover_center + Vector3(0.0, 0.020, 0.0), bright_gold)
-	_add_sphere(Vector3(0.064, 0.030, 0.064), clover_center + Vector3(0.0, 0.070, 0.0), emerald)
-
-	# Compound collision follows the U instead of filling its center with one box.
-	var collision_segments := 14
-	for index in range(collision_segments):
-		var t := (float(index) + 0.5) / float(collision_segments)
-		var angle_degrees := lerpf(-135.0, 135.0, t)
-		var angle := deg_to_rad(angle_degrees)
-		var collision_position := Vector3(sin(angle) * 0.635, 0.015, cos(angle) * 0.635)
-		_add_box_collision(
-			Vector3(0.34, 0.34, 0.50),
-			collision_position,
-			Vector3(0.0, angle_degrees, 0.0)
-		)
+	# Broad, shallow compound collision approximates the plush U-shape. This
+	# keeps the opening clear while encouraging the toy to settle on either face.
+	var thickness := 0.22
+	_add_box_collision(
+		Vector3(0.34, 0.58, thickness),
+		Vector3(-0.43, 0.18, 0.0),
+		Vector3(0.0, 0.0, -10.0)
+	)
+	_add_box_collision(
+		Vector3(0.34, 0.58, thickness),
+		Vector3(0.43, 0.18, 0.0),
+		Vector3(0.0, 0.0, 10.0)
+	)
+	_add_box_collision(
+		Vector3(0.38, 0.50, thickness),
+		Vector3(-0.30, -0.30, 0.0),
+		Vector3(0.0, 0.0, -28.0)
+	)
+	_add_box_collision(
+		Vector3(0.38, 0.50, thickness),
+		Vector3(0.30, -0.30, 0.0),
+		Vector3(0.0, 0.0, 28.0)
+	)
+	_add_box_collision(Vector3(0.62, 0.30, thickness), Vector3(0.0, -0.52, 0.0))
+	_add_box_collision(
+		Vector3(0.42, 0.25, thickness),
+		Vector3(-0.44, 0.58, 0.0),
+		Vector3(0.0, 0.0, -6.0)
+	)
+	_add_box_collision(
+		Vector3(0.42, 0.25, thickness),
+		Vector3(0.44, 0.58, 0.0),
+		Vector3(0.0, 0.0, 6.0)
+	)
 
 func _build_clover() -> void:
 	# YD-7 Clover: use the finished shaded GLB as the gameplay visual.
 	mass = 0.52
 	linear_damp = 0.24
 	angular_damp = 0.42
-	_add_clover_model_visual()
+	_add_external_model_visual(
+		CLOVER_MODEL_PATH,
+		"CloverVisual",
+		"FourLeafCloverModel",
+		1.55
+	)
 
 	# The imported plush is broad in local X/Y and shallow in local Z. Match that
 	# with a deliberately thin compound collision profile so it can tumble, then
@@ -174,37 +166,42 @@ func _build_clover() -> void:
 	)
 
 
-func _add_clover_model_visual() -> void:
-	if not ResourceLoader.exists(CLOVER_MODEL_PATH):
-		push_error("YD-7 Clover model is missing: %s" % CLOVER_MODEL_PATH)
+func _add_external_model_visual(
+	model_path: String,
+	holder_name: String,
+	model_name: String,
+	target_dimension: float
+) -> void:
+	if not ResourceLoader.exists(model_path):
+		push_error("YD-7 model is missing: %s" % model_path)
 		return
 
-	var resource: Resource = load(CLOVER_MODEL_PATH)
+	var resource: Resource = load(model_path)
 	if not (resource is PackedScene):
-		push_error("YD-7 Clover model did not import as a PackedScene: %s" % CLOVER_MODEL_PATH)
+		push_error("YD-7 model did not import as a PackedScene: %s" % model_path)
 		return
 
 	var model_instance: Node = (resource as PackedScene).instantiate()
 	if not (model_instance is Node3D):
 		model_instance.queue_free()
-		push_error("YD-7 Clover model root is not Node3D: %s" % CLOVER_MODEL_PATH)
+		push_error("YD-7 model root is not Node3D: %s" % model_path)
 		return
 
 	var holder := Node3D.new()
-	holder.name = "CloverVisual"
+	holder.name = holder_name
 	add_child(holder)
 
 	var model := model_instance as Node3D
-	model.name = "FourLeafCloverModel"
+	model.name = model_name
 	holder.add_child(model)
-	_fit_external_visual(holder, 1.55)
+	_fit_external_visual(holder, target_dimension)
 
 
 func _fit_external_visual(root: Node3D, target_dimension: float) -> void:
 	var meshes: Array[MeshInstance3D] = []
 	_collect_external_meshes(root, meshes)
 	if meshes.is_empty():
-		push_error("YD-7 Clover model contains no MeshInstance3D nodes.")
+		push_error("YD-7 external model contains no MeshInstance3D nodes.")
 		return
 
 	var root_inverse: Transform3D = root.global_transform.affine_inverse()
