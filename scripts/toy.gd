@@ -8,6 +8,8 @@ class_name PusherToy
 const HORSESHOE_MODEL_PATH = "res://assets/Toys/horseshoe.glb"
 const CLOVER_MODEL_PATH = "res://assets/Toys/four_leaf_clover.glb"
 const LEPRECHAUN_MODEL_PATH = "res://assets/Toys/leprechaun.glb"
+const POT_OF_GOLD_MODEL_PATH = "res://assets/Toys/pot_of_gold.glb"
+const TREASURE_CHEST_MODEL_PATH = "res://assets/Toys/treasure_chest.glb"
 
 var _gold_material: StandardMaterial3D
 var _green_material: StandardMaterial3D
@@ -306,229 +308,41 @@ func _build_leprechaun() -> void:
 	_add_sphere_collision(0.30, Vector3(0.27, -0.49, -0.48))
 
 func _build_pot_of_gold() -> void:
-	# A proper showcase pot-of-gold toy: a rounded black cauldron with an
-	# oversized gold rim, loop handles, feet, emerald clover badge, and a
-	# layered pile of individual gold coins that stays readable in the machine.
+	# YD-7 Pot of Gold: use the finished GLB as the gameplay visual while
+	# preserving the existing rigid-body behavior and stable compound collision.
 	mass = 0.76
-	var iron_black := _material(Color(0.018, 0.022, 0.020, 1.0), 0.42, 0.28)
-	var iron_highlight := _material(Color(0.055, 0.065, 0.058, 1.0), 0.34, 0.24)
-	var deep_gold := _material(Color(0.78, 0.34, 0.025, 1.0), 0.92, 0.20)
-	var bright_gold := _material(Color(1.0, 0.68, 0.08, 1.0), 0.86, 0.13)
-	var coin_gold := _material(Color(1.0, 0.78, 0.16, 1.0), 0.82, 0.16)
-	var emerald_dark := _material(Color(0.004, 0.14, 0.025, 1.0), 0.25, 0.24)
-	var emerald := _material(Color(0.015, 0.62, 0.10, 1.0), 0.22, 0.16)
+	linear_damp = 0.24
+	angular_damp = 0.42
+	_add_external_model_visual(
+		POT_OF_GOLD_MODEL_PATH,
+		"PotOfGoldVisual",
+		"PotOfGoldModel",
+		1.55
+	)
 
-	# Layered cauldron body gives the pot a round belly without making it a
-	# perfect rolling ball. The raised front highlight keeps the silhouette clear.
-	_add_sphere(Vector3(0.57, 0.46, 0.53), Vector3(0.0, -0.06, 0.0), iron_black)
-	_add_sphere(Vector3(0.50, 0.39, 0.47), Vector3(0.0, 0.015, -0.055), iron_highlight)
-	_add_cylinder(0.50, 0.25, Vector3(0.0, 0.23, 0.0), Vector3.ZERO, iron_black, 0.56)
-
-	# Thick two-layer gold mouth with a dark inner opening beneath the coin pile.
-	_add_cylinder(0.64, 0.16, Vector3(0.0, 0.365, 0.0), Vector3.ZERO, deep_gold)
-	_add_cylinder(0.59, 0.105, Vector3(0.0, 0.430, 0.0), Vector3.ZERO, bright_gold)
-	_add_cylinder(0.47, 0.115, Vector3(0.0, 0.450, 0.0), Vector3.ZERO, iron_black)
-
-	# Gold loop handles sit outside the body so the toy reads as a cauldron from
-	# the normal camera angle. They remain visual-only to avoid physics snagging.
-	_add_annular_sector(0.105, 0.205, 0.085, 0.0, 360.0, 24, Vector3(-0.61, 0.05, 0.0), deep_gold, Vector3(0.0, 0.0, 90.0))
-	_add_annular_sector(0.105, 0.205, 0.085, 0.0, 360.0, 24, Vector3(0.61, 0.05, 0.0), deep_gold, Vector3(0.0, 0.0, 90.0))
-	_add_annular_sector(0.125, 0.180, 0.095, 0.0, 360.0, 24, Vector3(-0.61, 0.05, -0.010), bright_gold, Vector3(0.0, 0.0, 90.0))
-	_add_annular_sector(0.125, 0.180, 0.095, 0.0, 360.0, 24, Vector3(0.61, 0.05, -0.010), bright_gold, Vector3(0.0, 0.0, 90.0))
-	_add_sphere(Vector3(0.11, 0.12, 0.10), Vector3(-0.54, 0.16, 0.0), deep_gold)
-	_add_sphere(Vector3(0.11, 0.12, 0.10), Vector3(0.54, 0.16, 0.0), deep_gold)
-
-	# Three chunky feet keep the toy stable and add a premium arcade-toy shape.
-	_add_sphere(Vector3(0.18, 0.13, 0.18), Vector3(-0.34, -0.43, -0.18), deep_gold)
-	_add_sphere(Vector3(0.18, 0.13, 0.18), Vector3(0.34, -0.43, -0.18), deep_gold)
-	_add_sphere(Vector3(0.16, 0.12, 0.16), Vector3(0.0, -0.43, 0.30), deep_gold)
-	_add_sphere(Vector3(0.13, 0.09, 0.13), Vector3(-0.34, -0.39, -0.20), bright_gold)
-	_add_sphere(Vector3(0.13, 0.09, 0.13), Vector3(0.34, -0.39, -0.20), bright_gold)
-
-	# A layered pile of real coin discs instead of three generic gold blobs.
-	var coin_specs := [
-		[Vector3(-0.27, 0.505, -0.18), Vector3(8.0, 0.0, -12.0), 0.155],
-		[Vector3(-0.02, 0.515, -0.22), Vector3(-6.0, 0.0, 14.0), 0.165],
-		[Vector3(0.25, 0.505, -0.16), Vector3(10.0, 0.0, 18.0), 0.150],
-		[Vector3(-0.36, 0.535, 0.03), Vector3(-12.0, 0.0, -20.0), 0.145],
-		[Vector3(-0.12, 0.555, 0.02), Vector3(4.0, 0.0, 8.0), 0.170],
-		[Vector3(0.15, 0.550, 0.05), Vector3(-8.0, 0.0, -10.0), 0.160],
-		[Vector3(0.36, 0.530, 0.03), Vector3(13.0, 0.0, 18.0), 0.140],
-		[Vector3(-0.24, 0.610, 0.20), Vector3(5.0, 0.0, -6.0), 0.150],
-		[Vector3(0.02, 0.635, 0.18), Vector3(-4.0, 0.0, 12.0), 0.175],
-		[Vector3(0.27, 0.605, 0.18), Vector3(8.0, 0.0, 15.0), 0.148],
-		[Vector3(-0.13, 0.700, -0.02), Vector3(7.0, 0.0, -16.0), 0.160],
-		[Vector3(0.15, 0.690, -0.03), Vector3(-6.0, 0.0, 10.0), 0.155],
-	]
-	for index in range(coin_specs.size()):
-		var spec: Array = coin_specs[index]
-		var coin_position: Vector3 = spec[0]
-		var coin_rotation: Vector3 = spec[1]
-		var coin_radius: float = spec[2]
-		var coin_material: Material = bright_gold if index % 3 == 0 else coin_gold
-		_add_cylinder(coin_radius, 0.060, coin_position, coin_rotation, coin_material)
-
-	# Three visible top coins get emerald lucky centers so the pile remains
-	# visually different from the regular orange gameplay coins.
-	_add_cylinder(0.060, 0.018, Vector3(-0.13, 0.738, -0.022), Vector3(7.0, 0.0, -16.0), emerald)
-	_add_cylinder(0.058, 0.018, Vector3(0.15, 0.728, -0.032), Vector3(-6.0, 0.0, 10.0), emerald)
-	_add_cylinder(0.055, 0.018, Vector3(0.02, 0.674, 0.176), Vector3(-4.0, 0.0, 12.0), emerald)
-
-	# Raised emerald clover medallion on the front of the pot.
-	var badge_center := Vector3(0.0, -0.08, -0.505)
-	var badge_offsets := [
-		Vector3(-0.105, 0.0, 0.0),
-		Vector3(0.105, 0.0, 0.0),
-		Vector3(0.0, 0.105, 0.0),
-		Vector3(0.0, -0.105, 0.0),
-	]
-	for offset in badge_offsets:
-		_add_sphere(Vector3(0.135, 0.135, 0.045), badge_center + offset, bright_gold)
-	for offset in badge_offsets:
-		_add_sphere(Vector3(0.098, 0.098, 0.035), badge_center + offset + Vector3(0.0, 0.0, -0.045), emerald)
-	_add_sphere(Vector3(0.075, 0.075, 0.040), badge_center + Vector3(0.0, 0.0, -0.030), bright_gold)
-	_add_box(Vector3(0.060, 0.20, 0.055), Vector3(0.055, -0.255, -0.530), Vector3(0.0, 0.0, -20.0), bright_gold)
-	_add_box(Vector3(0.035, 0.16, 0.045), Vector3(0.055, -0.255, -0.565), Vector3(0.0, 0.0, -20.0), emerald_dark)
-
-	# Solid compound collision: stable belly, raised rim, and flat lower support.
-	# Decorative handles and loose-looking coin discs do not snag other objects.
+	# Keep collision simple and solid so decorative handles, coins, and trim
+	# from the imported model cannot snag other objects in the machine.
 	_add_cylinder_collision(0.51, 0.62, Vector3(0.0, -0.06, 0.0))
 	_add_cylinder_collision(0.63, 0.17, Vector3(0.0, 0.37, 0.0))
 	_add_box_collision(Vector3(0.70, 0.14, 0.58), Vector3(0.0, -0.43, 0.02))
 
 func _build_treasure_chest() -> void:
-	# A heavy Celtic treasure chest with an arched walnut lid, antique-gold
-	# armor, emerald knotwork panels, a clover seal, and visible bonus coins.
-	# The bright trim and broad silhouette keep it readable in the coin pile.
+	# YD-7 Treasure Chest: use the finished GLB as the gameplay visual while
+	# retaining the same heavy, stable collision profile used by the old toy.
 	mass = 0.86
-	var walnut_dark := _material(Color(0.11, 0.030, 0.010, 1.0), 0.01, 0.82)
-	var walnut := _material(Color(0.30, 0.085, 0.022, 1.0), 0.01, 0.70)
-	var walnut_light := _material(Color(0.48, 0.17, 0.045, 1.0), 0.02, 0.62)
-	var antique_gold := _material(Color(0.74, 0.36, 0.045, 1.0), 0.78, 0.26)
-	var bright_gold := _material(Color(1.0, 0.68, 0.11, 1.0), 0.86, 0.16)
-	var coin_gold := _material(Color(1.0, 0.77, 0.16, 1.0), 0.92, 0.12)
-	var emerald_dark := _material(Color(0.005, 0.11, 0.025, 1.0), 0.18, 0.28)
-	var emerald := _material(Color(0.015, 0.48, 0.09, 1.0), 0.26, 0.18)
-	var black_iron := _material(Color(0.025, 0.030, 0.027, 1.0), 0.58, 0.30)
+	linear_damp = 0.26
+	angular_damp = 0.44
+	_add_external_model_visual(
+		TREASURE_CHEST_MODEL_PATH,
+		"TreasureChestVisual",
+		"TreasureChestModel",
+		1.55
+	)
 
-	# Deep wooden lower chest with layered boards and armored gold rails.
-	_add_box(Vector3(1.24, 0.60, 0.84), Vector3(0.0, -0.16, 0.02), Vector3.ZERO, walnut_dark)
-	_add_box(Vector3(1.12, 0.50, 0.74), Vector3(0.0, -0.12, -0.01), Vector3.ZERO, walnut)
-	for board_y in [-0.30, -0.13, 0.04]:
-		_add_box(Vector3(1.08, 0.035, 0.045), Vector3(0.0, board_y, -0.395), Vector3.ZERO, walnut_light)
-
-	# Bottom rail, upper lip, corner guards, and oversized rivets.
-	_add_box(Vector3(1.30, 0.105, 0.90), Vector3(0.0, -0.46, 0.02), Vector3.ZERO, antique_gold)
-	_add_box(Vector3(1.26, 0.105, 0.88), Vector3(0.0, 0.16, 0.02), Vector3.ZERO, antique_gold)
-	_add_box(Vector3(1.14, 0.045, 0.78), Vector3(0.0, 0.215, 0.01), Vector3.ZERO, bright_gold)
-	for guard_x in [-0.54, 0.54]:
-		_add_box(Vector3(0.12, 0.70, 0.90), Vector3(guard_x, -0.13, 0.02), Vector3.ZERO, antique_gold)
-		for rivet_y in [-0.34, -0.05, 0.16]:
-			_add_sphere(Vector3(0.055, 0.055, 0.030), Vector3(guard_x, rivet_y, -0.455), bright_gold)
-
-	# Rounded barrel lid. A dark-gold cylinder sits under the smaller walnut
-	# barrel, leaving a metallic edge visible around the arched end caps.
-	var lid_center := Vector3(0.0, 0.35, 0.02)
-	_add_cylinder(0.48, 1.20, lid_center, Vector3(0.0, 0.0, 90.0), antique_gold)
-	_add_cylinder(0.415, 1.10, lid_center, Vector3(0.0, 0.0, 90.0), walnut)
-
-	# Long wooden lid slats follow the arch and break up the plain barrel.
-	for slat_angle in [-62.0, -31.0, 0.0, 31.0, 62.0]:
-		var slat_radians := deg_to_rad(slat_angle)
-		var slat_position := Vector3(
-			0.0,
-			lid_center.y + cos(slat_radians) * 0.425,
-			lid_center.z + sin(slat_radians) * 0.425
-		)
-		_add_box(
-			Vector3(1.07, 0.035, 0.155),
-			slat_position,
-			Vector3(slat_angle, 0.0, 0.0),
-			walnut_light if slat_angle == 0.0 else walnut_dark
-		)
-
-	# Three raised Celtic arch bands around the lid.
-	for band_x in [-0.46, 0.0, 0.46]:
-		_add_annular_sector(
-			0.405,
-			0.505,
-			0.115,
-			0.0,
-			180.0,
-			22,
-			Vector3(band_x, lid_center.y, lid_center.z),
-			antique_gold,
-			Vector3(0.0, 0.0, 90.0)
-		)
-		_add_annular_sector(
-			0.455,
-			0.495,
-			0.123,
-			8.0,
-			172.0,
-			20,
-			Vector3(band_x, lid_center.y, lid_center.z),
-			bright_gold,
-			Vector3(0.0, 0.0, 90.0)
-		)
-
-	# Front emerald panels framed in gold. The crossing padded strands read as
-	# Celtic knotwork without relying on a flat texture.
-	for panel_x in [-0.31, 0.31]:
-		_add_box(Vector3(0.46, 0.35, 0.075), Vector3(panel_x, -0.12, -0.435), Vector3.ZERO, antique_gold)
-		_add_box(Vector3(0.39, 0.28, 0.050), Vector3(panel_x, -0.12, -0.480), Vector3.ZERO, emerald_dark)
-		_add_capsule(0.031, 0.31, Vector3(panel_x - 0.075, -0.12, -0.520), bright_gold, Vector3(0.0, 0.0, -43.0))
-		_add_capsule(0.031, 0.31, Vector3(panel_x + 0.075, -0.12, -0.520), bright_gold, Vector3(0.0, 0.0, 43.0))
-		_add_capsule(0.025, 0.23, Vector3(panel_x, -0.035, -0.530), bright_gold, Vector3(0.0, 0.0, 90.0))
-		_add_capsule(0.025, 0.23, Vector3(panel_x, -0.205, -0.530), bright_gold, Vector3(0.0, 0.0, 90.0))
-
-	# Central lock plate and deep iron keyhole.
-	_add_box(Vector3(0.28, 0.38, 0.095), Vector3(0.0, -0.12, -0.455), Vector3.ZERO, antique_gold)
-	_add_box(Vector3(0.20, 0.30, 0.055), Vector3(0.0, -0.12, -0.515), Vector3.ZERO, bright_gold)
-	_add_sphere(Vector3(0.070, 0.085, 0.028), Vector3(0.0, -0.075, -0.560), black_iron)
-	_add_box(Vector3(0.055, 0.145, 0.045), Vector3(0.0, -0.185, -0.560), Vector3.ZERO, black_iron)
-
-	# Large emerald clover seal on the center lid band.
-	_add_cylinder(0.255, 0.070, Vector3(0.0, 0.39, -0.455), Vector3(90.0, 0.0, 0.0), antique_gold)
-	_add_cylinder(0.205, 0.082, Vector3(0.0, 0.39, -0.495), Vector3(90.0, 0.0, 0.0), emerald_dark)
-	var seal_center := Vector3(0.0, 0.39, -0.545)
-	var seal_offsets := [
-		Vector3(-0.080, 0.0, 0.0),
-		Vector3(0.080, 0.0, 0.0),
-		Vector3(0.0, 0.080, 0.0),
-		Vector3(0.0, -0.080, 0.0),
-	]
-	for offset in seal_offsets:
-		_add_sphere(Vector3(0.092, 0.092, 0.030), seal_center + offset, bright_gold)
-	for offset in seal_offsets:
-		_add_sphere(Vector3(0.065, 0.065, 0.025), seal_center + offset + Vector3(0.0, 0.0, -0.030), emerald)
-	_add_box(Vector3(0.038, 0.14, 0.035), Vector3(0.035, 0.265, -0.575), Vector3(0.0, 0.0, -20.0), bright_gold)
-
-	# A visible line of bonus coins tucked beneath the lid makes the chest's
-	# power immediately obvious without creating separate physics bodies.
-	var coin_positions := [
-		Vector3(-0.36, 0.205, -0.455),
-		Vector3(-0.18, 0.230, -0.475),
-		Vector3(0.0, 0.215, -0.490),
-		Vector3(0.18, 0.235, -0.475),
-		Vector3(0.36, 0.205, -0.455),
-	]
-	for coin_index in range(coin_positions.size()):
-		var coin_position: Vector3 = coin_positions[coin_index]
-		_add_cylinder(0.105, 0.040, coin_position, Vector3(90.0, 0.0, float(coin_index - 2) * 7.0), coin_gold)
-		_add_cylinder(0.056, 0.044, coin_position + Vector3(0.0, 0.0, -0.024), Vector3(90.0, 0.0, float(coin_index - 2) * 7.0), bright_gold)
-
-	# Four gold feet keep the chest from reading as another rectangular block.
-	for foot_x in [-0.48, 0.48]:
-		for foot_z in [-0.30, 0.30]:
-			_add_sphere(Vector3(0.13, 0.10, 0.13), Vector3(foot_x, -0.55, foot_z), antique_gold)
-			_add_sphere(Vector3(0.075, 0.055, 0.075), Vector3(foot_x, -0.60, foot_z), bright_gold)
-
-	# Stable compound collision follows the body and arched lid while ignoring
-	# the small knotwork, rivets, and coins so they cannot snag the pile.
+	# Stable compound collision follows the lower chest and arched lid while
+	# leaving decorative trim, rivets, and lock details visual-only.
 	_add_box_collision(Vector3(1.25, 0.62, 0.85), Vector3(0.0, -0.16, 0.02))
 	_add_box_collision(Vector3(1.16, 0.56, 0.78), Vector3(0.0, 0.38, 0.02))
-
 
 func _add_annular_sector(
 	inner_radius: float,
