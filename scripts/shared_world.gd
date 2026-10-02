@@ -14,6 +14,7 @@ signal remote_turn_finished(summary: Dictionary, wallet: String, lifetime_yes: i
 signal reward_wheel_available(values: PackedInt32Array)
 signal reward_wheel_result(value: int)
 signal nft_awarded(award: Dictionary)
+signal presentation_event(event: Dictionary)
 
 const FIXED_DROP_COUNT := 10
 const SKIN_DROP_EVERY_COINS := 100
@@ -26,6 +27,7 @@ const SETTLEMENT_RETRY_SECONDS := 10.0
 const WEBSOCKET_BUFFER_BYTES := 4194304
 const WEBSOCKET_SNAPSHOT_BACKPRESSURE_BYTES := 1048576
 const NFT_AWARD_MESSAGE_PREFIX := "__YES_PUSHER_NFT_AWARD__"
+const PRESENTATION_EVENT_MESSAGE_PREFIX := "__YES_PUSHER_PRESENTATION_EVENT__"
 
 var machine: YesPusherMachine
 var yf: YokefellowServerClient
@@ -66,6 +68,7 @@ func configure(target_machine: YesPusherMachine) -> void:
 	add_child(yf)
 	machine.reward_wheel_requested.connect(_on_authoritative_reward_wheel_requested)
 	machine.reward_wheel_awarded.connect(_on_authoritative_reward_wheel_awarded)
+	machine.toy_captured.connect(_on_authoritative_toy_captured)
 	_read_environment()
 	_start_mode()
 
@@ -409,6 +412,13 @@ func authoritative_turn_completed(summary: Dictionary) -> void:
 		_settlements.append(completed)
 	else:
 		milestones.clear()
+	_broadcast_presentation_event({
+		"kind": "turn_result",
+		"wallet": wallet,
+		"turn_id": String(completed.get("turn_id", "")),
+		"summary": safe_summary.duplicate(true),
+		"skin_drop_count": milestones.size(),
+	})
 	if not multiplayer.get_peers().is_empty():
 		_client_turn_completed.rpc(safe_summary, wallet, new_lifetime, milestones)
 	_live_player_presentation = {}
@@ -488,6 +498,14 @@ func _server_identify(wallet: String, session_token: String, requested_skin_fami
 	var normalized_wallet := String(verification.get("wallet", wallet)).to_lower()
 	var prior := _ensure_presentation_fixture(_player(normalized_wallet))
 	var cached_owned: Array[String] = _normalized_family_array(prior.get("owned_skin_families", []))
+	if _presentation_test_mode:
+		cached_owned = [
+			"horseshoe",
+			"four_leaf_clover",
+			"leprechaun",
+			"pot_of_gold",
+			"treasure_chest",
+		]
 	var requested := _normalize_family(requested_skin_family)
 	var selected := requested if requested.is_empty() or cached_owned.has(requested) or yf.allow_unverified_wallets else ""
 	prior["peer_id"] = peer_id
@@ -716,6 +734,14 @@ func _client_status(message: String) -> void:
 		else:
 			push_warning("Received an invalid NFT award payload from the shared server.")
 		return
+	if message.begins_with(PRESENTATION_EVENT_MESSAGE_PREFIX):
+		var encoded := message.substr(PRESENTATION_EVENT_MESSAGE_PREFIX.length())
+		var parsed: Variant = JSON.parse_string(encoded)
+		if parsed is Dictionary:
+			presentation_event.emit((parsed as Dictionary).duplicate(true))
+		else:
+			push_warning("Received an invalid presentation event from the shared server.")
+		return
 	status_changed.emit(message)
 
 @rpc("authority", "call_remote", "reliable")
@@ -912,7 +938,7 @@ func _process_settlement_outbox() -> void:
 			settlement["last_error"] = String(credit_result.get("error", "Winnings credit failed."))
 			_settlements[index] = settlement
 			_save_state()
-			settlement_changed.emit("Turn %s remains pending: %s" % [turn_id, settlement["last_error"]])
+			settlement_changed.emit("Result saved. YES credit is still confirming.")
 			continue
 		var milestone_failed := false
 		var milestones: Array = settlement.get("skin_milestones", [])
@@ -961,6 +987,14 @@ func _process_settlement_outbox() -> void:
 					"token_id": String(awarded_result.get("tokenId", "")),
 					"tx_hash": String(awarded_result.get("txHash", "")),
 				}
+				_broadcast_presentation_event({
+					"kind": "skin_nft",
+					"wallet": wallet,
+					"turn_id": turn_id,
+					"family": awarded_family,
+					"title": String(award.get("title", "Coin Skin NFT")),
+					"mint_status": String(award.get("mint_status", "")),
+				})
 				if awarded_peer_id > 1:
 					_client_skin_entitlements.rpc_id(awarded_peer_id, true, awarded_owned, "%s coin skin is ready to equip." % _skin_display_name(awarded_family))
 					_send_nft_award_to_peer(awarded_peer_id, award)
@@ -973,10 +1007,7 @@ func _process_settlement_outbox() -> void:
 		if milestone_failed:
 			_settlements[index] = settlement
 			_save_state()
-			settlement_changed.emit(
-				"Turn %s credited %d YES; skin milestone %d needs operator review before any retry."
-				% [turn_id, payout, int(settlement.get("skin_review_milestone", 0))]
-			)
+			settlement_changed.emit("YES result confirmed. Coin Skin NFT is still reconciling.")
 			continue
 
 		var toy_failed := false
@@ -1024,6 +1055,14 @@ func _process_settlement_outbox() -> void:
 				"token_id": String(toy_awarded_result.get("tokenId", "")),
 				"tx_hash": String(toy_awarded_result.get("txHash", "")),
 			}
+			_broadcast_presentation_event({
+				"kind": "toy_nft",
+				"wallet": wallet,
+				"turn_id": turn_id,
+				"family": toy_awarded_family,
+				"title": String(toy_award.get("title", "%s Toy NFT" % _skin_display_name(toy_awarded_family))),
+				"mint_status": toy_mint_status,
+			})
 			if toy_awarded_peer_id > 1:
 				_send_nft_award_to_peer(toy_awarded_peer_id, toy_award)
 			elif toy_awarded_peer_id == 1:
@@ -1035,17 +1074,20 @@ func _process_settlement_outbox() -> void:
 		if toy_failed:
 			_settlements[index] = settlement
 			_save_state()
-			settlement_changed.emit(
-				"Turn %s credited %d YES; toy %s needs operator review before any retry."
-				% [turn_id, payout, String(settlement.get("toy_review_instance_id", ""))]
-			)
+			settlement_changed.emit("YES result confirmed. Toy NFT is still reconciling.")
 			continue
 		settlement["status"] = "confirmed"
 		settlement["confirmed_at_unix"] = Time.get_unix_time_from_system()
 		settlement["last_error"] = ""
 		_settlements[index] = settlement
 		_save_state()
-		settlement_changed.emit("Turn %s settled: %d YES credited." % [turn_id, payout])
+		settlement_changed.emit("Result confirmed: %d YES credited." % payout)
+		_broadcast_presentation_event({
+			"kind": "settlement_confirmed",
+			"wallet": wallet,
+			"turn_id": turn_id,
+			"yes": payout,
+		})
 	_settlement_worker_active = false
 
 func retry_pending_settlements() -> void:
@@ -1059,6 +1101,27 @@ func _has_retryable_settlements() -> bool:
 		if String(settlement.get("status", "")) not in ["confirmed", "skin_review_required", "toy_review_required"]:
 			return true
 	return false
+
+func _broadcast_presentation_event(event: Dictionary) -> void:
+	var safe_event := event.duplicate(true)
+	if mode == "server":
+		presentation_event.emit(safe_event)
+		if not multiplayer.get_peers().is_empty():
+			_client_status.rpc(PRESENTATION_EVENT_MESSAGE_PREFIX + JSON.stringify(safe_event))
+	else:
+		presentation_event.emit(safe_event)
+
+func _on_authoritative_toy_captured(toy_family: String, toy_instance_id: String, _turn_generation: int, power_result: Dictionary) -> void:
+	if mode != "server" or _active_turn.is_empty():
+		return
+	_broadcast_presentation_event({
+		"kind": "toy_caught",
+		"wallet": String(_active_turn.get("wallet", "")),
+		"turn_id": String(_active_turn.get("turn_id", "")),
+		"family": toy_family,
+		"toy_instance_id": toy_instance_id,
+		"power_result": power_result.duplicate(true),
+	})
 
 func _on_authoritative_reward_wheel_requested(values: PackedInt32Array) -> void:
 	if mode == "server" and not _active_turn.is_empty():
