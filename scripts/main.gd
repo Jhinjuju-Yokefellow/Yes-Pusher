@@ -53,17 +53,27 @@ var _nft_award_queue: Array[Dictionary] = []
 var _nft_award_showing: bool = false
 var _nft_award_generation: int = 0
 var _active_nft_award: Dictionary = {}
+var _active_player_panel: PanelContainer
+var _active_player_initials: Label
+var _active_player_name: Label
+var _active_player_handle: Label
+var _active_player_wallet: Label
+var _active_player_source: Label
+var _active_player_skin: Label
+var _active_player_toys: VBoxContainer
 
 func _ready() -> void:
 	_build_power_panel()
 	_build_turn_result_panel()
 	_build_nft_award_panel()
+	_build_active_player_panel()
 	_shared_world = YesPusherSharedWorld.new()
 	_shared_world.name = "SharedWorld"
 	add_child(_shared_world)
 	_shared_world.status_changed.connect(_on_shared_status_changed)
 	_shared_world.queue_changed.connect(_on_shared_queue_changed)
 	_shared_world.active_player_changed.connect(_on_shared_active_player_changed)
+	_shared_world.active_player_presentation_changed.connect(_on_active_player_presentation_changed)
 	_shared_world.local_identity_changed.connect(_on_local_identity_changed)
 	_shared_world.owned_skins_changed.connect(_on_owned_skins_changed)
 	_shared_world.settlement_changed.connect(_on_settlement_changed)
@@ -334,6 +344,8 @@ func _on_shared_queue_changed(position: int, total: int) -> void:
 
 func _on_shared_active_player_changed(wallet: String, turn_id: String) -> void:
 	if wallet.is_empty():
+		if _active_player_panel != null:
+			_active_player_panel.visible = false
 		if _shared_world != null and _shared_world.mode == "client":
 			drop_button.disabled = not _shared_world.local_verified
 		return
@@ -342,6 +354,70 @@ func _on_shared_active_player_changed(wallet: String, turn_id: String) -> void:
 		drop_button.disabled = true
 	var owner := "your wallet" if is_local_turn else "%s…%s" % [wallet.left(6), wallet.right(4)]
 	status_label.text = "Active turn %s belongs to %s and drops 10 coins." % [turn_id, owner]
+
+func _on_active_player_presentation_changed(presentation: Dictionary) -> void:
+	_render_active_player_presentation(presentation)
+
+func _render_active_player_presentation(presentation: Dictionary) -> void:
+	if _active_player_panel == null:
+		return
+	if presentation.is_empty():
+		_active_player_panel.visible = false
+		return
+
+	var profile_value: Variant = presentation.get("profile", {})
+	var profile: Dictionary = profile_value as Dictionary if profile_value is Dictionary else {}
+	var display_name := String(profile.get("display_name", "Yokefellow Player")).strip_edges()
+	if display_name.is_empty():
+		display_name = "Yokefellow Player"
+	var handle := String(profile.get("handle", "")).strip_edges()
+	var wallet := String(presentation.get("wallet", "")).strip_edges()
+	var source := String(presentation.get("source", "")).strip_edges()
+	_active_player_initials.text = display_name.left(1).to_upper()
+	_active_player_name.text = display_name
+	_active_player_handle.text = "@%s" % handle if not handle.is_empty() else "Yokefellow Profile"
+	_active_player_wallet.text = "%s…%s" % [wallet.left(6), wallet.right(4)] if wallet.length() >= 10 else wallet
+	_active_player_source.text = "TEST PRESENTATION" if source == "test_fixture" else "YOKEFELLOW PROFILE"
+
+	var skin_value: Variant = presentation.get("equipped_skin", {})
+	var skin: Dictionary = skin_value as Dictionary if skin_value is Dictionary else {}
+	var skin_label := String(skin.get("label", "Default YES coin")).strip_edges()
+	if skin_label.is_empty():
+		skin_label = "Default YES coin"
+	_active_player_skin.text = "Equipped coin: %s" % skin_label
+
+	for child in _active_player_toys.get_children():
+		child.queue_free()
+	var toys_value: Variant = presentation.get("toys", [])
+	if toys_value is Array and not (toys_value as Array).is_empty():
+		for toy_value in toys_value:
+			if not (toy_value is Dictionary):
+				continue
+			var toy := toy_value as Dictionary
+			var family := String(toy.get("family", "")).strip_edges().to_lower()
+			var size := String(toy.get("size", "small")).strip_edges().to_lower()
+			var quantity := maxi(1, int(toy.get("quantity", 1)))
+			var row := Label.new()
+			row.text = "%s  ·  %s  ×%d" % [size.to_upper(), _toy_name(family), quantity]
+			row.add_theme_font_size_override("font_size", 16)
+			row.add_theme_color_override("font_color", _toy_size_color(size))
+			_active_player_toys.add_child(row)
+	else:
+		var empty_row := Label.new()
+		empty_row.text = "Toy collection will load from Yokefellow."
+		empty_row.add_theme_color_override("font_color", Color(0.66, 0.70, 0.67, 1.0))
+		_active_player_toys.add_child(empty_row)
+
+	_active_player_panel.visible = true
+
+func _toy_size_color(size: String) -> Color:
+	match size:
+		"large":
+			return Color(0.78, 0.58, 1.0, 1.0)
+		"medium":
+			return Color(1.0, 0.76, 0.22, 1.0)
+		_:
+			return Color(0.38, 0.92, 0.56, 1.0)
 
 func _on_local_identity_changed(wallet: String, verified: bool) -> void:
 	if _verify_button != null:
@@ -378,6 +454,119 @@ func _on_remote_turn_finished(summary: Dictionary, wallet: String, lifetime_yes:
 	else:
 		status_label.text = "%s…%s finished with %d YES." % [wallet.left(6), wallet.right(4), _current_turn_payout]
 	_show_turn_result(summary, true, lifetime_yes if is_local_turn else -1, milestones if is_local_turn else [], wallet)
+
+func _build_active_player_panel() -> void:
+	_active_player_panel = PanelContainer.new()
+	_active_player_panel.name = "ActivePlayerPanel"
+	_active_player_panel.visible = false
+	_active_player_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	interface_layer.add_child(_active_player_panel)
+	_active_player_panel.anchor_left = 1.0
+	_active_player_panel.anchor_right = 1.0
+	_active_player_panel.anchor_top = 0.0
+	_active_player_panel.anchor_bottom = 0.0
+	_active_player_panel.offset_left = -430.0
+	_active_player_panel.offset_right = -22.0
+	_active_player_panel.offset_top = 18.0
+	_active_player_panel.offset_bottom = 304.0
+
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.012, 0.020, 0.016, 0.955)
+	style.border_width_left = 2
+	style.border_width_top = 2
+	style.border_width_right = 2
+	style.border_width_bottom = 2
+	style.border_color = Color(0.84, 0.64, 0.18, 0.95)
+	style.corner_radius_top_left = 16
+	style.corner_radius_top_right = 16
+	style.corner_radius_bottom_left = 16
+	style.corner_radius_bottom_right = 16
+	style.content_margin_left = 18.0
+	style.content_margin_right = 18.0
+	style.content_margin_top = 14.0
+	style.content_margin_bottom = 14.0
+	_active_player_panel.add_theme_stylebox_override("panel", style)
+
+	var layout := VBoxContainer.new()
+	layout.add_theme_constant_override("separation", 7)
+	_active_player_panel.add_child(layout)
+
+	var heading := Label.new()
+	heading.text = "ACTIVE DROPPER"
+	heading.add_theme_font_size_override("font_size", 15)
+	heading.add_theme_color_override("font_color", Color(1.0, 0.76, 0.22, 1.0))
+	layout.add_child(heading)
+
+	var identity_row := HBoxContainer.new()
+	identity_row.add_theme_constant_override("separation", 12)
+	layout.add_child(identity_row)
+
+	var avatar := PanelContainer.new()
+	avatar.custom_minimum_size = Vector2(58.0, 58.0)
+	var avatar_style := StyleBoxFlat.new()
+	avatar_style.bg_color = Color(0.13, 0.25, 0.18, 1.0)
+	avatar_style.border_width_left = 2
+	avatar_style.border_width_top = 2
+	avatar_style.border_width_right = 2
+	avatar_style.border_width_bottom = 2
+	avatar_style.border_color = Color(0.92, 0.72, 0.22, 0.9)
+	avatar_style.corner_radius_top_left = 29
+	avatar_style.corner_radius_top_right = 29
+	avatar_style.corner_radius_bottom_left = 29
+	avatar_style.corner_radius_bottom_right = 29
+	avatar.add_theme_stylebox_override("panel", avatar_style)
+	identity_row.add_child(avatar)
+
+	_active_player_initials = Label.new()
+	_active_player_initials.text = "Y"
+	_active_player_initials.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_active_player_initials.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_active_player_initials.add_theme_font_size_override("font_size", 25)
+	_active_player_initials.add_theme_color_override("font_color", Color.WHITE)
+	avatar.add_child(_active_player_initials)
+
+	var identity_text := VBoxContainer.new()
+	identity_text.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	identity_text.add_theme_constant_override("separation", 1)
+	identity_row.add_child(identity_text)
+
+	_active_player_name = Label.new()
+	_active_player_name.add_theme_font_size_override("font_size", 21)
+	_active_player_name.add_theme_color_override("font_color", Color.WHITE)
+	identity_text.add_child(_active_player_name)
+
+	_active_player_handle = Label.new()
+	_active_player_handle.add_theme_font_size_override("font_size", 14)
+	_active_player_handle.add_theme_color_override("font_color", Color(0.50, 0.86, 0.62, 1.0))
+	identity_text.add_child(_active_player_handle)
+
+	_active_player_wallet = Label.new()
+	_active_player_wallet.add_theme_font_size_override("font_size", 13)
+	_active_player_wallet.add_theme_color_override("font_color", Color(0.64, 0.68, 0.65, 1.0))
+	identity_text.add_child(_active_player_wallet)
+
+	_active_player_source = Label.new()
+	_active_player_source.add_theme_font_size_override("font_size", 11)
+	_active_player_source.add_theme_color_override("font_color", Color(0.73, 0.62, 0.92, 1.0))
+	identity_text.add_child(_active_player_source)
+
+	var divider := HSeparator.new()
+	layout.add_child(divider)
+
+	_active_player_skin = Label.new()
+	_active_player_skin.add_theme_font_size_override("font_size", 15)
+	_active_player_skin.add_theme_color_override("font_color", Color(1.0, 0.79, 0.30, 1.0))
+	layout.add_child(_active_player_skin)
+
+	var toys_heading := Label.new()
+	toys_heading.text = "TOY SHOWCASE"
+	toys_heading.add_theme_font_size_override("font_size", 13)
+	toys_heading.add_theme_color_override("font_color", Color(0.72, 0.76, 0.73, 1.0))
+	layout.add_child(toys_heading)
+
+	_active_player_toys = VBoxContainer.new()
+	_active_player_toys.add_theme_constant_override("separation", 3)
+	layout.add_child(_active_player_toys)
 
 func _build_network_controls() -> void:
 	var layout := $Interface/Margin/Panel/Layout as VBoxContainer
@@ -801,8 +990,8 @@ func _build_turn_result_panel() -> void:
 	_turn_result_panel.anchor_bottom = 0.0
 	_turn_result_panel.offset_left = -410.0
 	_turn_result_panel.offset_right = -28.0
-	_turn_result_panel.offset_top = 92.0
-	_turn_result_panel.offset_bottom = 330.0
+	_turn_result_panel.offset_top = 326.0
+	_turn_result_panel.offset_bottom = 564.0
 
 	var panel_style := StyleBoxFlat.new()
 	panel_style.bg_color = Color(0.018, 0.026, 0.020, 0.96)
