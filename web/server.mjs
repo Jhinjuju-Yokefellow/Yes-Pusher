@@ -108,6 +108,9 @@ const server = http.createServer(async (request, response) => {
         ok: true,
         service: "yes-pusher-wallet-session",
         instantMintReady: instantMinterReady(),
+        workshopReady: Boolean(yokefellowOrigin && configuredBucketId && appApiKey),
+        communityContributionReady: Boolean(workshop.contributionSignerAddress),
+        machineBuildTarget: workshop.buildTarget,
       });
     }
     if (request.method === "GET" && requestUrl.pathname === "/config") {
