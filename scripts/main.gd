@@ -673,6 +673,8 @@ func _build_network_controls() -> void:
 	_free_turn_label.add_theme_font_size_override("font_size", 15)
 	_free_turn_label.add_theme_color_override("font_color", Color(0.96, 0.76, 0.24, 1.0))
 	layout.add_child(_free_turn_label)
+	var drop_controls := $Interface/Margin/Panel/Layout/DropControls as HBoxContainer
+	layout.move_child(_free_turn_label, drop_controls.get_index())
 
 	if _is_local_web_yd2_test():
 		_test_player_button = Button.new()
