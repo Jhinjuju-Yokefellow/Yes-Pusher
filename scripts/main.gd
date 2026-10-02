@@ -67,7 +67,7 @@ var _active_player_name: Label
 var _active_player_handle: Label
 var _active_player_tagline: Label
 var _active_player_featured_outputs: HBoxContainer
-var _active_player_toys: HBoxContainer
+var _active_player_toys: VBoxContainer
 var _active_player_showcase_generation: int = 0
 var _active_player_wallet: String = ""
 var _active_player_turn_id: String = ""
@@ -496,13 +496,15 @@ func _build_active_player_showcase() -> void:
 	_active_player_showcase_panel.visible = false
 	_active_player_showcase_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	interface_layer.add_child(_active_player_showcase_panel)
-	_active_player_showcase_panel.anchor_left = 0.0
-	_active_player_showcase_panel.anchor_right = 0.0
-	_active_player_showcase_panel.anchor_top = 1.0
+	# Mirror the main control menu as a vertical rail on the opposite side.
+	# Keep the center of the viewport clear so the machine remains unobstructed.
+	_active_player_showcase_panel.anchor_left = 1.0
+	_active_player_showcase_panel.anchor_right = 1.0
+	_active_player_showcase_panel.anchor_top = 0.0
 	_active_player_showcase_panel.anchor_bottom = 1.0
-	_active_player_showcase_panel.offset_left = 18.0
-	_active_player_showcase_panel.offset_right = 920.0
-	_active_player_showcase_panel.offset_top = -220.0
+	_active_player_showcase_panel.offset_left = -390.0
+	_active_player_showcase_panel.offset_right = -18.0
+	_active_player_showcase_panel.offset_top = 18.0
 	_active_player_showcase_panel.offset_bottom = -18.0
 
 	var style := StyleBoxFlat.new()
@@ -522,12 +524,12 @@ func _build_active_player_showcase() -> void:
 	style.content_margin_bottom = 14.0
 	_active_player_showcase_panel.add_theme_stylebox_override("panel", style)
 
-	var root := HBoxContainer.new()
-	root.add_theme_constant_override("separation", 16)
+	var root := VBoxContainer.new()
+	root.add_theme_constant_override("separation", 12)
 	_active_player_showcase_panel.add_child(root)
 
 	var profile_box := VBoxContainer.new()
-	profile_box.custom_minimum_size = Vector2(235.0, 0.0)
+	profile_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	profile_box.add_theme_constant_override("separation", 5)
 	root.add_child(profile_box)
 
@@ -595,11 +597,12 @@ func _build_active_player_showcase() -> void:
 	_active_player_featured_outputs.add_theme_constant_override("separation", 5)
 	profile_box.add_child(_active_player_featured_outputs)
 
-	var separator := VSeparator.new()
+	var separator := HSeparator.new()
 	root.add_child(separator)
 
 	var showcase_box := VBoxContainer.new()
 	showcase_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	showcase_box.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	showcase_box.add_theme_constant_override("separation", 7)
 	root.add_child(showcase_box)
 
@@ -609,10 +612,16 @@ func _build_active_player_showcase() -> void:
 	showcase_title.add_theme_color_override("font_color", Color(0.96, 0.76, 0.20, 1.0))
 	showcase_box.add_child(showcase_title)
 
-	_active_player_toys = HBoxContainer.new()
+	var toy_scroll := ScrollContainer.new()
+	toy_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	toy_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	toy_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	showcase_box.add_child(toy_scroll)
+
+	_active_player_toys = VBoxContainer.new()
 	_active_player_toys.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_active_player_toys.add_theme_constant_override("separation", 8)
-	showcase_box.add_child(_active_player_toys)
+	toy_scroll.add_child(_active_player_toys)
 
 
 func _hide_active_player_showcase() -> void:
@@ -766,7 +775,8 @@ func _render_toy_family_cards(toys: Array, generation: int) -> void:
 func _add_toy_family_card(family: String, counts: Dictionary, best: Dictionary, generation: int) -> void:
 	var tier := String(best.get("tier", "small")).strip_edges().to_lower()
 	var card := PanelContainer.new()
-	card.custom_minimum_size = Vector2(116.0 if tier == "large" else 106.0 if tier == "medium" else 98.0, 132.0)
+	card.custom_minimum_size = Vector2(0.0, 88.0)
+	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	card.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var style := StyleBoxFlat.new()
 	style.bg_color = Color(0.025, 0.044, 0.033, 0.96)
@@ -779,58 +789,60 @@ func _add_toy_family_card(family: String, counts: Dictionary, best: Dictionary, 
 	style.corner_radius_top_right = 10
 	style.corner_radius_bottom_left = 10
 	style.corner_radius_bottom_right = 10
-	style.content_margin_left = 6.0
-	style.content_margin_right = 6.0
-	style.content_margin_top = 6.0
-	style.content_margin_bottom = 6.0
+	style.content_margin_left = 8.0
+	style.content_margin_right = 8.0
+	style.content_margin_top = 7.0
+	style.content_margin_bottom = 7.0
 	card.add_theme_stylebox_override("panel", style)
 	_active_player_toys.add_child(card)
 
-	var layout := VBoxContainer.new()
-	layout.alignment = BoxContainer.ALIGNMENT_CENTER
-	layout.add_theme_constant_override("separation", 3)
+	var layout := HBoxContainer.new()
+	layout.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	layout.add_theme_constant_override("separation", 10)
 	card.add_child(layout)
 
 	var image := TextureRect.new()
-	image.custom_minimum_size = Vector2(72.0, 68.0)
+	image.custom_minimum_size = Vector2(72.0, 72.0)
 	image.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	image.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	image.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	layout.add_child(image)
 
+	var text_box := VBoxContainer.new()
+	text_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	text_box.alignment = BoxContainer.ALIGNMENT_CENTER
+	text_box.add_theme_constant_override("separation", 2)
+	layout.add_child(text_box)
+
 	var title := Label.new()
 	title.text = _toy_name(family)
-	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	title.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-	title.add_theme_font_size_override("font_size", 11)
+	title.add_theme_font_size_override("font_size", 13)
 	title.add_theme_color_override("font_color", Color.WHITE)
-	layout.add_child(title)
+	text_box.add_child(title)
 
 	var tier_label := Label.new()
 	tier_label.text = tier.to_upper()
-	tier_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	tier_label.add_theme_font_size_override("font_size", 10)
 	tier_label.add_theme_color_override(
 		"font_color",
 		Color(1.0, 0.78, 0.20, 1.0) if tier == "large" else Color(0.40, 0.90, 0.62, 1.0)
 	)
-	layout.add_child(tier_label)
+	text_box.add_child(tier_label)
 
 	var counts_label := Label.new()
-	counts_label.text = "S%d  M%d  L%d" % [
+	counts_label.text = "Small %d  ·  Medium %d  ·  Large %d" % [
 		int(counts.get("small", 0)),
 		int(counts.get("medium", 0)),
 		int(counts.get("large", 0)),
 	]
-	counts_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	counts_label.add_theme_font_size_override("font_size", 9)
+	counts_label.add_theme_font_size_override("font_size", 10)
 	counts_label.add_theme_color_override("font_color", Color(0.65, 0.72, 0.67, 1.0))
-	layout.add_child(counts_label)
+	text_box.add_child(counts_label)
 
 	var image_url := String(best.get("imageUrl", "")).strip_edges()
 	if not image_url.is_empty():
 		_load_showcase_texture(image_url, image, generation)
-
 
 func _toy_tier_rank(tier: String) -> int:
 	match tier:
