@@ -1062,12 +1062,12 @@ func _build_capture_panel() -> void:
 	interface_layer.add_child(_capture_panel)
 	_capture_panel.anchor_left = 0.5
 	_capture_panel.anchor_right = 0.5
-	_capture_panel.anchor_top = 0.0
-	_capture_panel.anchor_bottom = 0.0
+	_capture_panel.anchor_top = 1.0
+	_capture_panel.anchor_bottom = 1.0
 	_capture_panel.offset_left = -245.0
 	_capture_panel.offset_right = 245.0
-	_capture_panel.offset_top = 26.0
-	_capture_panel.offset_bottom = 145.0
+	_capture_panel.offset_top = -155.0
+	_capture_panel.offset_bottom = -28.0
 
 	var style := StyleBoxFlat.new()
 	style.bg_color = Color(0.012, 0.026, 0.017, 0.965)
