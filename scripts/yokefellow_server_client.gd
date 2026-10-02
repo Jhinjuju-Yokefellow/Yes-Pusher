@@ -651,9 +651,15 @@ func _family_from_loose_text(value: String) -> String:
 
 func _toy_tier_from_class(class_key: String, class_title: String) -> String:
 	var normalized := ("%s %s" % [class_key, class_title]).strip_edges().to_lower().replace("-", "_").replace(" ", "_").replace(".", "_").replace("/", "_")
+	if normalized.contains("_l3") or normalized.ends_with("l3") or normalized.contains("level_3") or normalized.contains("level3"):
+		return "large"
+	if normalized.contains("_l2") or normalized.ends_with("l2") or normalized.contains("level_2") or normalized.contains("level2"):
+		return "medium"
+	if normalized.contains("_l1") or normalized.ends_with("l1") or normalized.contains("level_1") or normalized.contains("level1"):
+		return "small"
 	for tier in ["giant", "large", "medium", "small", "base"]:
 		if normalized.contains(tier):
-			return tier
+			return "small" if tier == "base" else tier
 	return ""
 
 func _family_display_name(family: String) -> String:
