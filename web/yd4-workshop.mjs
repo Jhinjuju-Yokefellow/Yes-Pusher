@@ -44,7 +44,10 @@ function toyTier(classSlug, className) {
   const text = `${String(classSlug || "")} ${String(className || "")}`
     .trim()
     .toLowerCase()
-    .replace(/[-.\s/]+/g, "_");
+    .replace(/[-.\\s/]+/g, "_");
+  if (/(^|_)l3($|_)/.test(text) || text.includes("level_3") || text.includes("level3")) return "large";
+  if (/(^|_)l2($|_)/.test(text) || text.includes("level_2") || text.includes("level2")) return "medium";
+  if (/(^|_)l1($|_)/.test(text) || text.includes("level_1") || text.includes("level1")) return "small";
   for (const tier of ["large", "medium", "small", "base"]) {
     if (text.includes(tier)) return tier === "base" ? "small" : tier;
   }
@@ -52,7 +55,10 @@ function toyTier(classSlug, className) {
 }
 
 function isToyClass(classSlug, className) {
-  return /toy/i.test(`${classSlug || ""} ${className || ""}`.replace(/[_-]+/g, " "));
+  const normalized = `${classSlug || ""} ${className || ""}`
+    .toLowerCase()
+    .replace(/[_-]+/g, " ");
+  return normalized.includes("toy") || Boolean(toyTier(classSlug, className));
 }
 
 function familyDescriptor(family) {
