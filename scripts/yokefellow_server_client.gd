@@ -631,7 +631,7 @@ func _skin_family_from_class_key(class_key: String) -> String:
 func _toy_family_from_class(class_key: String, class_title: String) -> String:
 	var text := "%s %s" % [class_key, class_title]
 	var normalized := text.strip_edges().to_lower().replace("-", "_").replace(" ", "_").replace(".", "_").replace("/", "_")
-	if not normalized.contains("toy"):
+	if not normalized.contains("toy") and _toy_tier_from_class(class_key, class_title).is_empty():
 		return ""
 	return _family_from_loose_text(normalized)
 
