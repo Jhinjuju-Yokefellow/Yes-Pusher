@@ -438,13 +438,20 @@ func _finish_turn_when_ready(turn_token: int) -> void:
 	turn_finished.emit(payout)
 
 func complete_result_reveal() -> Dictionary:
-	# The payout trigger owns scoring. Bodies keep falling naturally and are
-	# removed by CleanupZone below the visible machine.
+	# Keep scoring open briefly after the pusher stops. Dense beds can continue
+	# to release coins under gravity after the final stroke; those falls belong
+	# to the turn that moved them, not the following idle/turn state.
 	await get_tree().physics_frame
 	_reconcile_front_bucket_bodies()
 	while _pending_clover_spins > 0:
 		await get_tree().create_timer(0.10).timeout
-	_reconcile_front_bucket_bodies()
+		_reconcile_front_bucket_bodies()
+
+	var quiet_ms := int(bucket_quiet_seconds * 1000.0)
+	while Time.get_ticks_msec() - _last_bucket_entry_ms < quiet_ms:
+		await get_tree().create_timer(0.10).timeout
+		_reconcile_front_bucket_bodies()
+
 	_last_turn_summary = get_turn_result_summary()
 	_result_waiting = false
 	return _last_turn_summary.duplicate(true)
