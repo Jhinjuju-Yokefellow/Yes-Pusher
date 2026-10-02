@@ -175,6 +175,32 @@ export function createWorkshopService({
       jsonRequest(sdkUrl(`/buckets/${encodedBucket}/catalog?wallet=${encodedWallet}`), { appApiKey: normalizedAppKey }),
       jsonRequest(sdkUrl(`/wallets/${encodedWallet}/entitlements?bucketId=${encodedBucket}`), { appApiKey: normalizedAppKey }),
     ]);
+
+    // The existing public Bucket offerings read exposes the saved craft rule IDs
+    // that the atomic craft SDK needs. Merge those rules into the SDK catalog
+    // response so Rainbow's End never hard-codes database identifiers.
+    const bucketSlug = String(catalog?.bucketSlug || catalog?.bucket?.slug || "").trim();
+    if (bucketSlug) {
+      try {
+        const full = await jsonRequest(
+          `${normalizedOrigin}/api/buckets/${encodeURIComponent(bucketSlug)}/offerings`,
+        );
+        const fullById = new Map(
+          (Array.isArray(full?.offerings) ? full.offerings : [])
+            .map((offering) => [String(offering?.id || ""), offering]),
+        );
+        catalog.offerings = (Array.isArray(catalog?.offerings) ? catalog.offerings : []).map((offering) => {
+          const fullOffering = fullById.get(String(offering?.id || ""));
+          return fullOffering
+            ? { ...offering, craftRules: Array.isArray(fullOffering.craftRules) ? fullOffering.craftRules : [] }
+            : offering;
+        });
+      } catch {
+        // Keep the SDK catalog usable for collection display. Craft buttons will
+        // remain disabled until recipe details can be read.
+      }
+    }
+
     return { catalog, entitlements };
   }
 
