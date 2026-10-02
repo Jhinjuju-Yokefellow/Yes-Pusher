@@ -1151,6 +1151,12 @@ func set_turn_seed(value: int) -> void:
 func get_reported_turn_payout() -> int:
 	return _reported_turn_payout
 
+func get_current_turn_payout() -> int:
+	return _current_turn_payout()
+
+func get_current_turn_caught_count() -> int:
+	return _turn_caught_coin_count
+
 func export_world_snapshot() -> Dictionary:
 	var coins: Array[Dictionary] = []
 	for node in coin_container.get_children():
