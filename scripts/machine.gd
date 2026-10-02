@@ -1055,6 +1055,10 @@ func _on_cleanup_body_entered(body: Node3D) -> void:
 	var was_paid_out := bool(body.get_meta("captured_in_front_bucket", false))
 
 	if body.is_in_group("toys"):
+		# A Toy that crosses the payout area has already been scored and had its
+		# power resolved. Once it reaches CleanupZone it should leave the physics
+		# world exactly like a paid coin; otherwise caught Toys accumulate below
+		# the cabinet forever.
 		if body is PusherToy and not was_paid_out:
 			var toy := body as PusherToy
 			toy_lost.emit(toy.toy_family, toy.toy_instance_id)
