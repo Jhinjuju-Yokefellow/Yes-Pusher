@@ -124,8 +124,13 @@ func _read_browser_bootstrap() -> void:
 		"(window.parent && window.parent.YES_PUSHER_BOOTSTRAP && window.parent.YES_PUSHER_BOOTSTRAP.serverUrl) || ''",
 		true
 	)
+	var skin_value: Variant = JavaScriptBridge.eval(
+		"(window.parent && window.parent.YES_PUSHER_BOOTSTRAP && window.parent.YES_PUSHER_BOOTSTRAP.skinFamily) || ''",
+		true
+	)
 	local_wallet = String(wallet_value).strip_edges().to_lower()
 	local_session_token = String(token_value).strip_edges()
+	local_skin_family = _normalize_family(String(skin_value))
 	var browser_server_url := String(server_value).strip_edges()
 	if not browser_server_url.is_empty():
 		_server_url = browser_server_url
@@ -1140,6 +1145,11 @@ func _load_live_player_presentation(wallet: String, turn_id: String) -> void:
 	presentation["turn_id"] = turn_id
 	presentation["loading"] = false
 	presentation["source"] = "yokefellow"
+	var equipped_family := _normalize_family(String(_active_turn.get("skin_family", "")))
+	presentation["equipped_skin"] = {
+		"family": equipped_family,
+		"label": _skin_display_name(equipped_family) if not equipped_family.is_empty() else "Default YES coin",
+	}
 	_live_player_presentation = presentation.duplicate(true)
 	active_player_presentation_changed.emit(_live_player_presentation.duplicate(true))
 	_broadcast_queue_state()
