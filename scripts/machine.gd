@@ -27,8 +27,8 @@ const REPLICA_RETIRE_SECONDS: float = 2.20
 @export var pusher_rear_z: float = -7.15
 @export var pusher_front_z: float = -2.55
 @export_range(0, 200, 1) var starting_coin_count: int = 72
-@export_range(4.0, 16.0, 0.5) var turn_settle_seconds: float = 8.0
-@export_range(0.5, 3.0, 0.1) var bucket_quiet_seconds: float = 1.2
+@export_range(4.0, 45.0, 0.5) var turn_settle_seconds: float = 28.0
+@export_range(0.5, 5.0, 0.1) var bucket_quiet_seconds: float = 2.5
 @export_range(1, 32, 1) var max_active_toys: int = 8
 @export_range(0.0, 20.0, 0.5) var toy_bonus_seconds: float = 5.0
 @export_range(0.0, 120.0, 1.0) var max_toy_bonus_seconds: float = 30.0
@@ -214,6 +214,10 @@ func _check_stuck_body(body: RigidBody3D, body_id: String, body_kind: String, no
 		_stuck_body_watch.erase(body_id)
 		return
 
+	if _recover_tunneled_body(body, body_kind):
+		_stuck_body_watch.erase(body_id)
+		return
+
 	var zone := _stuck_risk_zone(body.position)
 	if zone.is_empty():
 		_stuck_body_watch.erase(body_id)
@@ -242,6 +246,43 @@ func _check_stuck_body(body: RigidBody3D, body_id: String, body_kind: String, no
 		"last_moving_ms": now_ms,
 		"recoveries": recoveries,
 	}
+
+func _recover_tunneled_body(body: RigidBody3D, body_kind: String) -> bool:
+	var position := body.position
+	var corrected := position
+	var escaped := false
+
+	# Side containment. The visible cabinet walls remain the normal collision
+	# surface; this is only a fallback for bodies that tunnel under heavy load.
+	if absf(position.x) > 5.35 and position.y > -1.8 and position.z < 8.2:
+		var side := signf(position.x)
+		if is_zero_approx(side):
+			side = 1.0
+		corrected.x = side * 5.05
+		body.linear_velocity.x = -side * minf(absf(body.linear_velocity.x) * 0.35 + 0.10, 1.1)
+		escaped = true
+
+	# The peg field is a narrow channel between its back panel and front glass.
+	# Keep fast top-drop bodies inside that channel if a physics step misses one
+	# of those thin static shapes.
+	if position.y > 2.2:
+		if position.z < -5.14:
+			corrected.z = -4.92
+			body.linear_velocity.z = absf(body.linear_velocity.z) * 0.25
+			escaped = true
+		elif position.z > -4.43:
+			corrected.z = -4.64
+			body.linear_velocity.z = -absf(body.linear_velocity.z) * 0.25
+			escaped = true
+
+	if not escaped:
+		return false
+
+	body.position = corrected
+	body.sleeping = false
+	body.angular_velocity *= 0.65
+	body.set_meta("yd6_containment_recovery", int(body.get_meta("yd6_containment_recovery", 0)) + 1)
+	return true
 
 func _stuck_risk_zone(position: Vector3) -> String:
 	# Only watch places where an object should never remain parked. Sleeping
