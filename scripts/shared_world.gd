@@ -7,6 +7,7 @@ signal active_player_changed(wallet: String, turn_id: String)
 signal active_player_presentation_changed(presentation: Dictionary)
 signal local_identity_changed(wallet: String, verified: bool)
 signal owned_skins_changed(families: Array, equipped: String)
+signal free_turn_state_changed(state: Dictionary)
 signal settlement_changed(message: String)
 signal remote_turn_reveal_started(summary: Dictionary, wallet: String)
 signal remote_turn_finished(summary: Dictionary, wallet: String, lifetime_yes: int, milestones: Array)
@@ -33,6 +34,7 @@ var local_wallet: String = ""
 var local_session_token: String = ""
 var local_skin_family: String = ""
 var local_owned_skin_families: Array[String] = []
+var local_free_turn_state: Dictionary = {}
 var local_verified: bool = false
 var _client_connected: bool = false
 
@@ -361,9 +363,18 @@ func authoritative_turn_completed(summary: Dictionary) -> void:
 	completed["payout_yes"] = payout
 	completed["result_summary"] = safe_summary
 	completed["status"] = "settlement_pending"
-	completed["completed_at_unix"] = Time.get_unix_time_from_system()
+	completed["completed_at_unix"] = int(Time.get_unix_time_from_system())
 	var wallet := String(completed.get("wallet", ""))
 	var player: Dictionary = _player(wallet)
+	if String(completed.get("access_mode", "")) == "hourly_free":
+		var free_completed_at := int(completed.get("completed_at_unix", 0))
+		var next_free_at := free_completed_at + _free_turn_cooldown_seconds
+		player["next_free_turn_at_unix"] = next_free_at
+		player["free_turn_reserved_turn_id"] = ""
+		player["free_turn_reserved_at_unix"] = 0
+		player["last_free_turn_completed_at_unix"] = free_completed_at
+		player["last_free_turn_turn_id"] = String(completed.get("turn_id", ""))
+		completed["next_free_turn_at_unix"] = next_free_at
 	var old_lifetime: int = int(player.get("lifetime_yes", 0))
 	var new_lifetime: int = old_lifetime + payout
 	var paid_out_this_turn: int = maxi(0, int(safe_summary.get("caught_coin_count", safe_summary.get("caught_base_yes", 0))))
@@ -424,6 +435,8 @@ func _on_connection_failed() -> void:
 func _on_server_disconnected() -> void:
 	_client_connected = false
 	local_verified = false
+	local_free_turn_state = {}
+	free_turn_state_changed.emit({})
 	_report_browser_socket_state("closed")
 	status_changed.emit("Disconnected from the shared machine. Reconnect before joining another turn.")
 
@@ -488,6 +501,7 @@ func _server_identify(wallet: String, session_token: String, requested_skin_fami
 		cached_owned,
 		"Wallet verified. %s Loading owned skins…" % _turn_access_status_message(normalized_wallet)
 	)
+	_send_free_turn_state_to_peer(peer_id, normalized_wallet)
 	_broadcast_queue_state()
 	call_deferred("_server_load_identity_entitlements", peer_id, normalized_wallet, requested_skin_family)
 
@@ -534,6 +548,11 @@ func _client_identity_result(verified: bool, wallet: String, owned_families: Arr
 	local_identity_changed.emit(local_wallet, verified)
 	owned_skins_changed.emit(local_owned_skin_families.duplicate(), local_skin_family)
 	status_changed.emit(message)
+
+@rpc("authority", "call_remote", "reliable")
+func _client_free_turn_state(state: Dictionary) -> void:
+	local_free_turn_state = state.duplicate(true)
+	free_turn_state_changed.emit(local_free_turn_state.duplicate(true))
 
 @rpc("any_peer", "call_remote", "reliable")
 func _server_request_queue_join(requested_skin_family: String) -> void:
@@ -740,6 +759,9 @@ func _enqueue_player(peer_id: int, wallet: String, skin_family: String, presenta
 			return
 	_turn_sequence += 1
 	var request_id := "turn_%d_%d" % [int(Time.get_unix_time_from_system()), _turn_sequence]
+	var queued_access_mode := "deferred"
+	if not presentation_only and _reserve_hourly_free_turn(wallet, request_id):
+		queued_access_mode = "hourly_free"
 	_queue.append({
 		"peer_id": peer_id,
 		"wallet": wallet,
@@ -747,6 +769,7 @@ func _enqueue_player(peer_id: int, wallet: String, skin_family: String, presenta
 		"request_id": request_id,
 		"joined_at_unix": Time.get_unix_time_from_system(),
 		"presentation_only": presentation_only,
+		"access_mode": queued_access_mode,
 	})
 	_client_status_for(
 		peer_id,
@@ -765,7 +788,14 @@ func _process_next_turn() -> void:
 	var wallet := String(entry.get("wallet", "")).to_lower()
 	var seed := randi()
 	var presentation_only := bool(entry.get("presentation_only", false))
-	var turn_access := {"mode": "presentation_test", "next_free_turn_at_unix": 0, "earned_turns": 0} if presentation_only else _reserve_turn_access(wallet, turn_id)
+	var queued_access_mode := String(entry.get("access_mode", "deferred"))
+	var turn_access: Dictionary
+	if presentation_only:
+		turn_access = {"mode": "presentation_test", "next_free_turn_at_unix": 0, "earned_turns": 0}
+	elif queued_access_mode == "hourly_free" and _free_turn_reservation_matches(wallet, turn_id):
+		turn_access = _hourly_free_access_snapshot(wallet)
+	else:
+		turn_access = _reserve_turn_access(wallet, turn_id)
 	var access_mode := String(turn_access.get("mode", "paid"))
 	_active_turn = {
 		"turn_id": turn_id,
@@ -832,6 +862,8 @@ func _start_active_turn() -> void:
 func _recover_active_turn() -> void:
 	if _active_turn.is_empty():
 		return
+	if String(_active_turn.get("access_mode", "")) == "hourly_free":
+		_ensure_active_free_turn_reservation()
 	var pre_turn_world := _active_turn.get("pre_turn_world", {}) as Dictionary
 	if not pre_turn_world.is_empty():
 		machine.restore_authoritative_snapshot(pre_turn_world)
@@ -1057,8 +1089,12 @@ func _broadcast_queue_state() -> void:
 			entries.append({"wallet": String(entry.get("wallet", "")), "request_id": String(entry.get("request_id", ""))})
 		if not multiplayer.get_peers().is_empty():
 			_client_queue_state.rpc(entries, _public_active_turn())
+			_broadcast_free_turn_states()
 		var local_position := _queue_position_for_wallet(local_wallet)
 		queue_changed.emit(local_position, entries.size())
+		if _is_wallet(local_wallet):
+			local_free_turn_state = _free_turn_state_for_wallet(local_wallet)
+			free_turn_state_changed.emit(local_free_turn_state.duplicate(true))
 
 func _public_active_turn() -> Dictionary:
 	if _active_turn.is_empty():
@@ -1163,18 +1199,28 @@ func _client_status_for(peer_id: int, message: String) -> void:
 
 func _remove_wallet_from_queue(wallet: String) -> void:
 	var kept: Array[Dictionary] = []
+	var released := false
 	for entry in _queue:
 		if String(entry.get("wallet", "")) != wallet:
 			kept.append(entry)
+		else:
+			released = _release_free_turn_reservation(String(entry.get("wallet", "")), String(entry.get("request_id", ""))) or released
 	_queue = kept
+	if released:
+		_save_state()
 	_broadcast_queue_state()
 
 func _remove_peer_from_queue(peer_id: int) -> void:
 	var kept: Array[Dictionary] = []
+	var released := false
 	for entry in _queue:
 		if int(entry.get("peer_id", 0)) != peer_id:
 			kept.append(entry)
+		else:
+			released = _release_free_turn_reservation(String(entry.get("wallet", "")), String(entry.get("request_id", ""))) or released
 	_queue = kept
+	if released:
+		_save_state()
 
 func _queue_position_for_wallet(wallet: String) -> int:
 	for index in range(_queue.size()):
@@ -1202,6 +1248,10 @@ func _player(wallet: String) -> Dictionary:
 		"lifetime_yes": 0,
 		"lifetime_coins_paid_out": 0,
 		"next_free_turn_at_unix": 0,
+		"free_turn_reserved_turn_id": "",
+		"free_turn_reserved_at_unix": 0,
+		"last_free_turn_completed_at_unix": 0,
+		"last_free_turn_turn_id": "",
 		"earned_turns": 0,
 		"earned_turn_sources": {},
 	}
@@ -1233,48 +1283,157 @@ func _reserve_turn_access(wallet: String, turn_id: String) -> Dictionary:
 	var normalized := wallet.strip_edges().to_lower()
 	var player := _player(normalized)
 	var now := int(Time.get_unix_time_from_system())
-	var next_free_at := maxi(0, int(player.get("next_free_turn_at_unix", 0)))
 	var earned_turns := maxi(0, int(player.get("earned_turns", 0)))
 	var access_mode := "paid"
-	if yf != null and yf.test_free_turns:
-		access_mode = "test_free"
-	elif _free_turn_cooldown_seconds > 0 and now >= next_free_at:
+	if _reserve_hourly_free_turn(normalized, turn_id):
 		access_mode = "hourly_free"
-		next_free_at = now + _free_turn_cooldown_seconds
-		player["next_free_turn_at_unix"] = next_free_at
+		player = _player(normalized)
 	elif earned_turns > 0:
 		access_mode = "earned"
 		earned_turns -= 1
 		player["earned_turns"] = earned_turns
-	if access_mode != "paid":
 		player["last_turn_access_mode"] = access_mode
 		player["last_turn_access_turn_id"] = turn_id
 		player["last_turn_access_at_unix"] = now
 		_players[normalized] = player
 	return {
 		"mode": access_mode,
-		"next_free_turn_at_unix": next_free_at,
+		"next_free_turn_at_unix": maxi(0, int(player.get("next_free_turn_at_unix", 0))),
 		"earned_turns": earned_turns,
 	}
 
-func _turn_access_status_message(wallet: String) -> String:
-	if yf != null and yf.test_free_turns:
-		return "Free test drops are enabled."
-	var player := _player(wallet)
-	var earned_turns := maxi(0, int(player.get("earned_turns", 0)))
+func _reserve_hourly_free_turn(wallet: String, turn_id: String) -> bool:
 	if _free_turn_cooldown_seconds <= 0:
-		return "Earned drops: %d. Paid drops remain available." % earned_turns
+		return false
+	var normalized := wallet.strip_edges().to_lower()
+	if not _is_wallet(normalized) or turn_id.is_empty():
+		return false
+	var player := _player(normalized)
+	var existing := String(player.get("free_turn_reserved_turn_id", ""))
+	if existing == turn_id:
+		return true
+	if not existing.is_empty():
+		return false
 	var now := int(Time.get_unix_time_from_system())
 	var next_free_at := maxi(0, int(player.get("next_free_turn_at_unix", 0)))
-	if now >= next_free_at:
-		return "Your free hourly 10-coin drop is ready. Earned drops: %d." % earned_turns
-	var remaining_seconds := maxi(0, next_free_at - now)
-	var remaining_minutes := maxi(1, ceili(float(remaining_seconds) / 60.0))
-	return "Next free drop in about %d minute%s. Earned drops: %d. Paid drops remain available." % [
-		remaining_minutes,
-		"" if remaining_minutes == 1 else "s",
-		earned_turns,
-	]
+	if now < next_free_at:
+		return false
+	player["free_turn_reserved_turn_id"] = turn_id
+	player["free_turn_reserved_at_unix"] = now
+	player["last_turn_access_mode"] = "hourly_free"
+	player["last_turn_access_turn_id"] = turn_id
+	player["last_turn_access_at_unix"] = now
+	_players[normalized] = player
+	_save_state()
+	return true
+
+func _release_free_turn_reservation(wallet: String, turn_id: String) -> bool:
+	var normalized := wallet.strip_edges().to_lower()
+	if not _is_wallet(normalized) or turn_id.is_empty():
+		return false
+	var player := _player(normalized)
+	if String(player.get("free_turn_reserved_turn_id", "")) != turn_id:
+		return false
+	player["free_turn_reserved_turn_id"] = ""
+	player["free_turn_reserved_at_unix"] = 0
+	_players[normalized] = player
+	return true
+
+func _free_turn_reservation_matches(wallet: String, turn_id: String) -> bool:
+	var normalized := wallet.strip_edges().to_lower()
+	if not _is_wallet(normalized):
+		return false
+	return String(_player(normalized).get("free_turn_reserved_turn_id", "")) == turn_id
+
+func _hourly_free_access_snapshot(wallet: String) -> Dictionary:
+	var player := _player(wallet)
+	return {
+		"mode": "hourly_free",
+		"next_free_turn_at_unix": maxi(0, int(player.get("next_free_turn_at_unix", 0))),
+		"earned_turns": maxi(0, int(player.get("earned_turns", 0))),
+	}
+
+func _ensure_active_free_turn_reservation() -> void:
+	if _active_turn.is_empty() or String(_active_turn.get("access_mode", "")) != "hourly_free":
+		return
+	var wallet := String(_active_turn.get("wallet", "")).strip_edges().to_lower()
+	var turn_id := String(_active_turn.get("turn_id", ""))
+	if not _is_wallet(wallet) or turn_id.is_empty():
+		return
+	var player := _player(wallet)
+	player["free_turn_reserved_turn_id"] = turn_id
+	if int(player.get("free_turn_reserved_at_unix", 0)) <= 0:
+		player["free_turn_reserved_at_unix"] = int(Time.get_unix_time_from_system())
+	_players[wallet] = player
+	_save_state()
+
+func _free_turn_state_for_wallet(wallet: String) -> Dictionary:
+	var normalized := wallet.strip_edges().to_lower()
+	var now := int(Time.get_unix_time_from_system())
+	var enabled := _free_turn_cooldown_seconds > 0 and _is_wallet(normalized)
+	var player := _player(normalized)
+	var next_free_at := maxi(0, int(player.get("next_free_turn_at_unix", 0)))
+	var reserved_turn_id := String(player.get("free_turn_reserved_turn_id", ""))
+	var state := "disabled"
+	if enabled:
+		if not reserved_turn_id.is_empty():
+			state = "reserved"
+			if String(_active_turn.get("turn_id", "")) == reserved_turn_id:
+				state = "active"
+			else:
+				for entry in _queue:
+					if String(entry.get("request_id", "")) == reserved_turn_id:
+						state = "queued"
+						break
+		elif now >= next_free_at:
+			state = "available"
+		else:
+			state = "cooldown"
+	return {
+		"enabled": enabled,
+		"state": state,
+		"available": state == "available",
+		"reserved": state in ["queued", "active", "reserved"],
+		"server_time_unix": now,
+		"next_free_turn_at_unix": next_free_at,
+		"remaining_seconds": maxi(0, next_free_at - now),
+		"cooldown_seconds": _free_turn_cooldown_seconds,
+		"reserved_turn_id": reserved_turn_id,
+		"paid_charge_bypassed_for_test": yf != null and yf.test_free_turns,
+	}
+
+func _send_free_turn_state_to_peer(peer_id: int, wallet: String) -> void:
+	if peer_id <= 1 or not _is_wallet(wallet):
+		return
+	_client_free_turn_state.rpc_id(peer_id, _free_turn_state_for_wallet(wallet))
+
+func _broadcast_free_turn_states() -> void:
+	for peer_id in multiplayer.get_peers():
+		var wallet := _wallet_for_peer(peer_id)
+		if not wallet.is_empty():
+			_send_free_turn_state_to_peer(peer_id, wallet)
+
+func _turn_access_status_message(wallet: String) -> String:
+	var state := _free_turn_state_for_wallet(wallet)
+	var earned_turns := maxi(0, int(_player(wallet).get("earned_turns", 0)))
+	match String(state.get("state", "disabled")):
+		"available":
+			return "Your free hourly 10-coin drop is ready. Earned drops: %d." % earned_turns
+		"queued":
+			return "Your hourly free drop is reserved in the queue."
+		"active":
+			return "Your hourly free drop is in progress. The one-hour cooldown starts when it finishes."
+		"reserved":
+			return "Your hourly free drop is reserved."
+		"cooldown":
+			var remaining_seconds := maxi(0, int(state.get("remaining_seconds", 0)))
+			var remaining_minutes := maxi(1, ceili(float(remaining_seconds) / 60.0))
+			return "Next free drop in about %d minute%s. Earned drops: %d. Paid drops remain available." % [
+				remaining_minutes,
+				"" if remaining_minutes == 1 else "s",
+				earned_turns,
+			]
+	return "Earned drops: %d. Paid drops remain available." % earned_turns
 
 func _save_state() -> void:
 	if mode != "server":
@@ -1317,9 +1476,31 @@ func _load_state() -> void:
 			if value is Dictionary:
 				_settlements.append((value as Dictionary).duplicate(true))
 	_migrate_lifetime_paid_out_counts()
+	_reconcile_free_turn_reservations()
 	var world := state.get("world", {}) as Dictionary
 	if not world.is_empty():
 		machine.restore_authoritative_snapshot(world)
+
+func _reconcile_free_turn_reservations() -> void:
+	var active_wallet := String(_active_turn.get("wallet", "")).strip_edges().to_lower()
+	var active_turn_id := String(_active_turn.get("turn_id", ""))
+	var active_is_free := String(_active_turn.get("access_mode", "")) == "hourly_free"
+	for wallet_value in _players.keys():
+		if not (wallet_value is String) or not (_players.get(wallet_value) is Dictionary):
+			continue
+		var wallet := String(wallet_value).strip_edges().to_lower()
+		if not _is_wallet(wallet):
+			continue
+		var player := (_players.get(wallet_value) as Dictionary).duplicate(true)
+		var reservation := String(player.get("free_turn_reserved_turn_id", ""))
+		var should_keep := active_is_free and wallet == active_wallet and reservation == active_turn_id
+		if active_is_free and wallet == active_wallet and reservation.is_empty():
+			player["free_turn_reserved_turn_id"] = active_turn_id
+			player["free_turn_reserved_at_unix"] = maxi(1, int(_active_turn.get("started_at_unix", Time.get_unix_time_from_system())))
+		elif not reservation.is_empty() and not should_keep:
+			player["free_turn_reserved_turn_id"] = ""
+			player["free_turn_reserved_at_unix"] = 0
+		_players[wallet_value] = player
 
 func _migrate_lifetime_paid_out_counts() -> void:
 	for wallet_value in _players.keys():
