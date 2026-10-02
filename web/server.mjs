@@ -152,6 +152,16 @@ const server = http.createServer(async (request, response) => {
       const body = await readJson(request);
       return sendJson(response, 200, await workshop.equipSkin(session.wallet, body.family || ""));
     }
+    if (request.method === "POST" && requestUrl.pathname === "/app/funding/prepare") {
+      const session = requirePlayerSession(request);
+      const body = await readJson(request);
+      return sendJson(response, 200, await workshop.prepareFunding(session.wallet, body));
+    }
+    if (request.method === "POST" && requestUrl.pathname === "/app/funding/status") {
+      const session = requirePlayerSession(request);
+      const body = await readJson(request);
+      return sendJson(response, 200, await workshop.fundingStatus(session.wallet, body));
+    }
     if (request.method === "POST" && requestUrl.pathname === "/app/craft") {
       const session = requirePlayerSession(request);
       const body = await readJson(request);
