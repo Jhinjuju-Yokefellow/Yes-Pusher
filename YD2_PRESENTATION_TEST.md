@@ -72,3 +72,8 @@ The test fixtures are temporary. Later integration replaces the provider with:
 - equipped Coin Skin ownership/state.
 
 The machine and presentation UI should not change during that swap.
+
+
+## Reconciled YD-7 note
+
+The steady branch uses the current Rainbow's End game assets and the richer YD-7 Profile/Toy showcase. Presentation-test fixtures are only a deterministic regression provider; they no longer represent the final visual asset source.
