@@ -381,17 +381,26 @@
   async function performCraft(button) {
     const family = button.dataset.family || "";
     const fromTier = button.dataset.tier || "";
-    const targetTier = fromTier === "small" ? "Medium" : "Large";
+    const targetTier = fromTier === "small" ? "medium" : "large";
+    const before = toyCounts(playerState, family);
     const operationKey = `craft:${activeWallet}:${family}:${fromTier}`;
     const referenceId = operationReference(operationKey, "craft");
     setActionBusy(button, true, "CRAFTING…");
-    setAppMessage(`Crafting ${targetTier} ${familyLabel(family)}. The three input Toys will be permanently consumed.`, "");
+    setAppMessage(`Crafting ${targetTier.toUpperCase()} ${familyLabel(family)}. The three input Toys will be permanently consumed.`, "");
     try {
-      const result = await appPost("/app/craft", { family, fromTier, referenceId });
+      await appPost("/app/craft", { family, fromTier, referenceId });
       clearOperationReference(operationKey);
-      await wait(900);
-      await refreshPlayerState();
-      setAppMessage(`${targetTier} ${familyLabel(family)} crafted. Ownership refreshed from Yokefellow.`, "success");
+      const indexed = await waitForOwnershipChange((state) => {
+        const after = toyCounts(state, family);
+        return after[fromTier] <= Math.max(0, before[fromTier] - 3)
+          && after[targetTier] >= before[targetTier] + 1;
+      });
+      setAppMessage(
+        indexed
+          ? `${targetTier.toUpperCase()} ${familyLabel(family)} crafted. Three ${fromTier.toUpperCase()} Toys were consumed and Yokefellow now shows the new Toy.`
+          : `Craft confirmed. Yokefellow ownership indexing is still catching up; the Workshop will refresh again when reopened.`,
+        indexed ? "success" : "",
+      );
     } catch (error) {
       setAppMessage(`${error?.message || "Craft failed."} Retry uses the same craft reference.`, "error");
     } finally {
@@ -403,6 +412,7 @@
     const family = button.dataset.family || "";
     const toy = playerState?.toys?.find((item) => item.family === family);
     const points = toy?.buildPoints || 0;
+    const before = toyCounts(playerState, family);
     if (!window.confirm(`Permanently consume one Large ${familyLabel(family)} Toy for +${points} community build point${points === 1 ? "" : "s"}? This cannot be undone.`)) return;
 
     const operationKey = `contribute:${activeWallet}:${family}`;
@@ -412,15 +422,43 @@
     try {
       const result = await appPost("/app/contribute", { family, referenceId });
       clearOperationReference(operationKey);
-      await wait(900);
-      await refreshPlayerState();
+      const indexed = await waitForOwnershipChange((state) => {
+        const after = toyCounts(state, family);
+        return after.large <= Math.max(0, before.large - 1);
+      });
       const community = result.community;
-      setAppMessage(`Large ${familyLabel(family)} contributed. Community build is now ${community.progressPoints} / ${community.target} toward Machine #${community.nextMachineNumber}.`, "success");
+      setAppMessage(
+        `Large ${familyLabel(family)} contributed for +${points}. Community build is ${community.progressPoints} / ${community.target} toward Machine #${community.nextMachineNumber}.${indexed ? " Yokefellow ownership now reflects the burn." : " Ownership indexing is still catching up."}`,
+        "success",
+      );
     } catch (error) {
       setAppMessage(`${error?.message || "Contribution failed."} Retry uses the exact same contribution reference/transaction.`, "error");
     } finally {
       setActionBusy(button, false);
     }
+  }
+
+  async function waitForOwnershipChange(predicate) {
+    for (let attempt = 0; attempt < 15; attempt += 1) {
+      await wait(attempt === 0 ? 900 : 2000);
+      try {
+        const state = await refreshPlayerState();
+        if (state && predicate(state)) return true;
+      } catch {
+        // Keep polling: the onchain action may be confirmed before the ownership index catches up.
+      }
+    }
+    await refreshPlayerState().catch(() => null);
+    return false;
+  }
+
+  function toyCounts(state, family) {
+    const toy = state?.toys?.find((item) => item.family === family);
+    return {
+      small: safeQuantity(toy?.tiers?.small?.quantity),
+      medium: safeQuantity(toy?.tiers?.medium?.quantity),
+      large: safeQuantity(toy?.tiers?.large?.quantity),
+    };
   }
 
   async function ensureGameLoaded() {
