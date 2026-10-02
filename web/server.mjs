@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import http from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { createWorkshopService } from "./yd4-workshop.mjs";
 import {
   Contract,
   Interface,
@@ -27,6 +28,10 @@ const instantMintPrivateKey = (process.env.YF_NFT_MINT_PRIVATE_KEY || "").trim()
 const rpcUrl = (process.env.YF_RPC_URL || "https://sepolia.base.org").trim();
 const yokefellowOrigin = normalizeYokefellowOrigin(process.env.YF_API_BASE_URL || "");
 const configuredBucketId = (process.env.YF_BUCKET_ID || "").trim();
+const appApiKey = (process.env.YF_APP_API_KEY || process.env.YF_APP_KEY || "").trim();
+const contributionPrivateKey = (process.env.YF_CONTRIBUTION_BURN_PRIVATE_KEY || "").trim();
+const communityBuildStatePath = (process.env.YES_PUSHER_COMMUNITY_BUILD_STATE_PATH || path.join(localDir, "yd4-workshop-state.json")).trim();
+const communityBuildTarget = integerEnv("YES_PUSHER_MACHINE_BUILD_TARGET", 50, 1, 1_000_000);
 
 if (sessionSecret.length < 32 || sessionSecret === "REPLACE_WITH_A_LONG_RANDOM_SECRET") {
   throw new Error("SESSION_SECRET must be a private random value of at least 32 characters.");
@@ -34,6 +39,17 @@ if (sessionSecret.length < 32 || sessionSecret === "REPLACE_WITH_A_LONG_RANDOM_S
 if (!/^wss?:\/\//i.test(gameServerUrl)) {
   throw new Error("GAME_SERVER_URL must begin with ws:// or wss://.");
 }
+
+const workshop = createWorkshopService({
+  yokefellowOrigin,
+  bucketId: configuredBucketId,
+  appApiKey,
+  rpcUrl,
+  chainId,
+  contributionPrivateKey,
+  statePath: communityBuildStatePath,
+  buildTarget: communityBuildTarget,
+});
 
 let mintProvider = null;
 let mintSigner = null;
@@ -102,6 +118,11 @@ const server = http.createServer(async (request, response) => {
         gameReady: await fileExists(path.join(publicDir, "game", "index.html")),
         instantMintReady: instantMinterReady(),
         instantMintSigner: mintSigner?.address || null,
+        workshop: {
+          buildTarget: workshop.buildTarget,
+          families: workshop.families,
+          contributionSigner: workshop.contributionSignerAddress,
+        },
       });
     }
     if (request.method === "GET" && requestUrl.pathname === "/mint/config") {
@@ -116,6 +137,28 @@ const server = http.createServer(async (request, response) => {
     if (request.method === "POST" && requestUrl.pathname === "/auth/session/verify") {
       return handleSessionVerify(request, response);
     }
+    if (request.method === "GET" && requestUrl.pathname === "/app/community") {
+      return sendJson(response, 200, { ok: true, community: await workshop.getCommunity() });
+    }
+    if (request.method === "GET" && requestUrl.pathname === "/app/state") {
+      const session = requirePlayerSession(request);
+      return sendJson(response, 200, await workshop.getState(session.wallet));
+    }
+    if (request.method === "POST" && requestUrl.pathname === "/app/equip-skin") {
+      const session = requirePlayerSession(request);
+      const body = await readJson(request);
+      return sendJson(response, 200, await workshop.equipSkin(session.wallet, body.family || ""));
+    }
+    if (request.method === "POST" && requestUrl.pathname === "/app/craft") {
+      const session = requirePlayerSession(request);
+      const body = await readJson(request);
+      return sendJson(response, 200, await workshop.craft(session.wallet, body));
+    }
+    if (request.method === "POST" && requestUrl.pathname === "/app/contribute") {
+      const session = requirePlayerSession(request);
+      const body = await readJson(request);
+      return sendJson(response, 200, await workshop.contribute(session.wallet, body));
+    }
     if (request.method === "POST" && requestUrl.pathname === "/mint/instant") {
       return handleInstantMint(request, response);
     }
@@ -125,7 +168,12 @@ const server = http.createServer(async (request, response) => {
     return serveStatic(requestUrl.pathname, request.method === "HEAD", response);
   } catch (error) {
     console.error(error);
-    return sendJson(response, 500, {
+    const status = Number.isInteger(error?.statusCode)
+      ? error.statusCode
+      : Number.isInteger(error?.status)
+        ? error.status
+        : 500;
+    return sendJson(response, status, {
       ok: false,
       error: error instanceof Error ? error.message : "The wallet session service failed.",
     });
@@ -136,6 +184,10 @@ server.listen(port, "0.0.0.0", () => {
   console.log(`YES Pusher wallet player: ${publicOrigin}`);
   console.log(`Godot shared machine: ${gameServerUrl}`);
   console.log(`Godot session verifier: ${publicOrigin}/auth/session/verify`);
+  console.log(`YD-4 workshop: ${publicOrigin}/app/state · build target ${workshop.buildTarget}`);
+  if (workshop.contributionSignerAddress) {
+    console.log(`Community contribution burner: ${workshop.contributionSignerAddress}`);
+  }
   if (mintSigner) {
     console.log(`Instant NFT mint signer: ${mintSigner.address}`);
     console.log(`Instant minter setup: ${publicOrigin}/instant-mint.html`);
@@ -251,6 +303,19 @@ async function handleSessionVerify(request, response) {
     return sendJson(response, 401, { ok: false, error: "The wallet session is invalid or expired." });
   }
   return sendJson(response, 200, { ok: true, wallet: payload.wallet, expiresAt: payload.expiresAt });
+}
+
+function requirePlayerSession(request) {
+  const authorization = String(request.headers.authorization || "").trim();
+  const token = authorization.replace(/^Bearer\s+/i, "").trim();
+  const payload = verifySession(token);
+  const now = Math.floor(Date.now() / 1000);
+  if (!payload || !(["yes-pusher", "rainbows-end"].includes(payload.app)) || !payload.wallet || payload.expiresAt <= now) {
+    const error = new Error("The Rainbow's End wallet session is invalid or expired.");
+    error.statusCode = 401;
+    throw error;
+  }
+  return payload;
 }
 
 async function handleMintConfig(response) {
