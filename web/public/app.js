@@ -155,10 +155,13 @@
       appShell.hidden = false;
       walletLabel.textContent = shortWallet(activeWallet);
       setBusy(false, "");
-      await refreshPlayerState({ announce: false });
-      switchView("home");
+      await switchView("home");
     } catch (error) {
-      setBusy(false, error?.message || "Wallet login failed.");
+      if (activeWallet && sessionToken && !appShell.hidden) {
+        setAppMessage(error?.message || "Rainbow's End collection state could not be loaded yet.", "error");
+      } else {
+        setBusy(false, error?.message || "Wallet login failed.");
+      }
     }
   }
 
