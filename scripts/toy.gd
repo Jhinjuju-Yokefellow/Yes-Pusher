@@ -29,13 +29,13 @@ func _ready() -> void:
 	max_contacts_reported = 12
 	can_sleep = true
 	mass = 0.42
-	linear_damp = 0.20
-	angular_damp = 0.28
+	linear_damp = 0.14
+	angular_damp = 0.24
 	collision_layer = 1
 	collision_mask = 1
 
 	var physics := PhysicsMaterial.new()
-	physics.friction = 0.44
+	physics.friction = 0.36
 	physics.bounce = 0.08
 	physics.rough = false
 	physics.absorbent = false
@@ -93,9 +93,9 @@ func _build_toy() -> void:
 
 func _build_horseshoe() -> void:
 	# YD-7 Horseshoe: use the finished plush GLB as the gameplay visual.
-	mass = 0.60
-	linear_damp = 0.24
-	angular_damp = 0.40
+	mass = 0.54
+	linear_damp = 0.15
+	angular_damp = 0.28
 	_add_external_model_visual(
 		HORSESHOE_MODEL_PATH,
 		"HorseshoeVisual",
@@ -140,9 +140,9 @@ func _build_horseshoe() -> void:
 
 func _build_clover() -> void:
 	# YD-7 Clover: use the finished shaded GLB as the gameplay visual.
-	mass = 0.52
-	linear_damp = 0.24
-	angular_damp = 0.42
+	mass = 0.48
+	linear_damp = 0.15
+	angular_damp = 0.28
 	_add_external_model_visual(
 		CLOVER_MODEL_PATH,
 		"CloverVisual",
@@ -285,9 +285,9 @@ func _build_plush_clover_leaf(
 func _build_leprechaun() -> void:
 	# YD-7 Leprechaun: use the finished GLB as the gameplay visual while
 	# preserving the existing rigid-body behavior and compound collision.
-	mass = 0.72
-	linear_damp = 0.24
-	angular_damp = 0.42
+	mass = 0.64
+	linear_damp = 0.15
+	angular_damp = 0.29
 	_add_external_model_visual(
 		LEPRECHAUN_MODEL_PATH,
 		"LeprechaunVisual",
@@ -310,9 +310,9 @@ func _build_leprechaun() -> void:
 func _build_pot_of_gold() -> void:
 	# YD-7 Pot of Gold: use the finished GLB as the gameplay visual while
 	# preserving the existing rigid-body behavior and stable compound collision.
-	mass = 0.76
-	linear_damp = 0.24
-	angular_damp = 0.42
+	mass = 0.68
+	linear_damp = 0.15
+	angular_damp = 0.29
 	_add_external_model_visual(
 		POT_OF_GOLD_MODEL_PATH,
 		"PotOfGoldVisual",
@@ -329,9 +329,9 @@ func _build_pot_of_gold() -> void:
 func _build_treasure_chest() -> void:
 	# YD-7 Treasure Chest: use the finished GLB as the gameplay visual while
 	# retaining the same heavy, stable collision profile used by the old toy.
-	mass = 0.86
-	linear_damp = 0.26
-	angular_damp = 0.44
+	mass = 0.76
+	linear_damp = 0.17
+	angular_damp = 0.31
 	_add_external_model_visual(
 		TREASURE_CHEST_MODEL_PATH,
 		"TreasureChestVisual",
