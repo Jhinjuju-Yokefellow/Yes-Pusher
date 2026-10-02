@@ -23,8 +23,10 @@ var _using_fallback_skin: bool = false
 func _ready() -> void:
 	add_to_group("coins")
 	continuous_cd = true
-	contact_monitor = true
-	max_contacts_reported = 8
+	# Collision response does not require contact monitoring. At several hundred
+	# coins, collecting unused contact reports is expensive in the web build.
+	contact_monitor = false
+	max_contacts_reported = 0
 	can_sleep = true
 
 	var base_mesh: MeshInstance3D = get_node_or_null("Mesh") as MeshInstance3D
@@ -170,6 +172,7 @@ func _add_skin_face(
 	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	material.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS_ANISOTROPIC
 	face.material_override = material
+	face.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 
 	face.position = Vector3(0.0, y_position, 0.0)
 	if flip_for_bottom:
