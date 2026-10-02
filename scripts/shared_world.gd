@@ -734,6 +734,7 @@ func _client_status(message: String) -> void:
 		else:
 			push_warning("Received an invalid NFT award payload from the shared server.")
 		return
+		return
 	if message.begins_with(PRESENTATION_EVENT_MESSAGE_PREFIX):
 		var event_encoded := message.substr(PRESENTATION_EVENT_MESSAGE_PREFIX.length())
 		var event_parsed: Variant = JSON.parse_string(event_encoded)
@@ -741,6 +742,7 @@ func _client_status(message: String) -> void:
 			presentation_event.emit((event_parsed as Dictionary).duplicate(true))
 		else:
 			push_warning("Received an invalid presentation event from the shared server.")
+		return
 		return
 	status_changed.emit(message)
 
@@ -938,7 +940,7 @@ func _process_settlement_outbox() -> void:
 			settlement["last_error"] = String(credit_result.get("error", "Winnings credit failed."))
 			_settlements[index] = settlement
 			_save_state()
-			settlement_changed.emit("Result saved. YES credit is still confirming.")
+			_publish_settlement_message("Result saved. YES credit is still confirming.", wallet, turn_id)
 			continue
 		var milestone_failed := false
 		var milestones: Array = settlement.get("skin_milestones", [])
@@ -1007,7 +1009,7 @@ func _process_settlement_outbox() -> void:
 		if milestone_failed:
 			_settlements[index] = settlement
 			_save_state()
-			settlement_changed.emit("YES result confirmed. Coin Skin NFT is still reconciling.")
+			_publish_settlement_message("YES result confirmed. Coin Skin NFT is still reconciling.", wallet, turn_id)
 			continue
 
 		var toy_failed := false
@@ -1074,14 +1076,14 @@ func _process_settlement_outbox() -> void:
 		if toy_failed:
 			_settlements[index] = settlement
 			_save_state()
-			settlement_changed.emit("YES result confirmed. Toy NFT is still reconciling.")
+			_publish_settlement_message("YES result confirmed. Toy NFT is still reconciling.", wallet, turn_id)
 			continue
 		settlement["status"] = "confirmed"
 		settlement["confirmed_at_unix"] = Time.get_unix_time_from_system()
 		settlement["last_error"] = ""
 		_settlements[index] = settlement
 		_save_state()
-		settlement_changed.emit("Result confirmed: %d YES credited." % payout)
+		_publish_settlement_message("Result confirmed: %d YES credited." % payout, wallet, turn_id)
 		_broadcast_presentation_event({
 			"kind": "settlement_confirmed",
 			"wallet": wallet,
@@ -1110,6 +1112,15 @@ func _broadcast_presentation_event(event: Dictionary) -> void:
 			_client_status.rpc(PRESENTATION_EVENT_MESSAGE_PREFIX + JSON.stringify(safe_event))
 	else:
 		presentation_event.emit(safe_event)
+
+func _publish_settlement_message(message: String, wallet: String, turn_id: String) -> void:
+	settlement_changed.emit(message)
+	_broadcast_presentation_event({
+		"kind": "settlement_state",
+		"wallet": wallet,
+		"turn_id": turn_id,
+		"message": message,
+	})
 
 func _on_authoritative_toy_captured(toy_family: String, toy_instance_id: String, _turn_generation: int, power_result: Dictionary) -> void:
 	if mode != "server" or _active_turn.is_empty():
