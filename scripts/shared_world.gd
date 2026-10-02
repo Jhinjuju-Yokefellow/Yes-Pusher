@@ -86,6 +86,8 @@ func _read_environment() -> void:
 	if _server_url.is_empty():
 		_server_url = "ws://%s:%d" % [_server_host, _server_port]
 	_snapshot_interval = 1.0 / float(_env_int("YES_PUSHER_SNAPSHOT_RATE", 10, 5, 15))
+	if _presentation_test_mode:
+		_snapshot_interval = 1.0 / 5.0
 	_state_path = _env_or("YES_PUSHER_STATE_PATH", "user://yes-pusher-shared-state.json")
 	_free_turn_cooldown_seconds = _env_int(
 		"YES_PUSHER_FREE_TURN_COOLDOWN_SECONDS",
@@ -172,15 +174,30 @@ func _start_server() -> void:
 	multiplayer.multiplayer_peer = created_peer
 	multiplayer.peer_connected.connect(_on_peer_connected)
 	multiplayer.peer_disconnected.connect(_on_peer_disconnected)
-	_load_state()
-	# A previously saved empty snapshot can clear the freshly seeded bed. An
-	# empty shared machine cannot run a useful coin-pusher turn, so repair only
-	# that invalid startup state and immediately persist the corrected bed.
-	if _active_turn.is_empty() and machine.active_coin_count() <= 0:
+	if _presentation_test_mode:
+		# YD-2 presentation acceptance must be deterministic and must not inherit
+		# old wallets, queued turns, settlements, or a huge accumulated machine bed.
+		# The same authoritative machine remains intact across the A -> B test;
+		# this reset happens only once when the dedicated test server starts.
+		_turn_sequence = 0
+		_queue.clear()
+		_players.clear()
+		_active_turn = {}
+		_settlements.clear()
 		machine.reset_machine()
 		while machine.is_resetting():
 			await get_tree().process_frame
 		_save_state()
+	else:
+		_load_state()
+		# A previously saved empty snapshot can clear the freshly seeded bed. An
+		# empty shared machine cannot run a useful coin-pusher turn, so repair only
+		# that invalid startup state and immediately persist the corrected bed.
+		if _active_turn.is_empty() and machine.active_coin_count() <= 0:
+			machine.reset_machine()
+			while machine.is_resetting():
+				await get_tree().process_frame
+			_save_state()
 	status_changed.emit("Authoritative shared machine listening on %s port %d." % [_transport, _server_port])
 	call_deferred("_server_bootstrap")
 
@@ -1116,7 +1133,7 @@ func _presentation_for_wallet(wallet: String, selected_skin: String) -> Dictiona
 			{"family": "leprechaun", "size": "medium", "quantity": 1},
 		]
 
-	var equipped_family := selected_skin if not selected_skin.is_empty() else fixture_skin
+	var equipped_family := fixture_skin
 	return {
 		"version": 1,
 		"source": "test_fixture",
@@ -1132,18 +1149,10 @@ func _presentation_for_wallet(wallet: String, selected_skin: String) -> Dictiona
 func _ensure_presentation_fixture(player: Dictionary) -> Dictionary:
 	if not _presentation_test_mode:
 		return player
-	var current := int(player.get("presentation_fixture", -1))
-	if current in [0, 1]:
-		return player
-	var assigned_wallets := 0
-	for key_value in _players.keys():
-		if not (_players.get(key_value) is Dictionary):
-			continue
-		var existing := _players.get(key_value) as Dictionary
-		var existing_wallet := String(existing.get("wallet", "")).strip_edges().to_lower()
-		if _is_wallet(existing_wallet) and int(existing.get("presentation_fixture", -1)) in [0, 1]:
-			assigned_wallets += 1
-	player["presentation_fixture"] = assigned_wallets % 2
+	var wallet := String(player.get("wallet", "")).strip_edges().to_lower()
+	# The synthetic opponent is always B. Any real verified wallet is always A.
+	# Persisted player counts never influence the fixture identity.
+	player["presentation_fixture"] = 1 if wallet == "0x00000000000000000000000000000000000000b2" else 0
 	return player
 
 func _client_status_for(peer_id: int, message: String) -> void:
