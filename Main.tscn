@@ -118,14 +118,10 @@ text = "Coins in machine: 0"
 layout_mode = 2
 theme_override_constants/separation = 8
 
-[node name="CountLabel" type="Label" parent="Interface/Margin/Panel/Layout/DropControls" unique_id=1752274947]
-layout_mode = 2
-text = "10 coins per turn"
-vertical_alignment = 1
-
 [node name="DropButton" type="Button" parent="Interface/Margin/Panel/Layout/DropControls" unique_id=807491495]
 custom_minimum_size = Vector2(150, 42)
 layout_mode = 2
+size_flags_horizontal = 3
 text = "JOIN / DROP 10"
 
 
