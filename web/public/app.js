@@ -758,7 +758,11 @@
 
   async function appGet(url) {
     const response = await fetch(url, {
-      headers: { Accept: "application/json", Authorization: `Bearer ${sessionToken}` },
+      headers: {
+        Accept: "application/json",
+        Authorization: `Bearer ${sessionToken}`,
+        "X-YES-DROP-Wallet": activeWallet,
+      },
       cache: "no-store",
     });
     const body = await response.json().catch(() => ({}));
@@ -773,6 +777,7 @@
         "Content-Type": "application/json",
         Accept: "application/json",
         Authorization: `Bearer ${sessionToken}`,
+        "X-YES-DROP-Wallet": activeWallet,
       },
       body: JSON.stringify(body),
       cache: "no-store",
