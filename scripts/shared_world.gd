@@ -1325,6 +1325,14 @@ func _env_or(name: String, fallback: String) -> String:
 	var value := OS.get_environment(name).strip_edges()
 	return value if not value.is_empty() else fallback
 
+func _env_bool(name: String, fallback: bool) -> bool:
+	var value := OS.get_environment(name).strip_edges().to_lower()
+	if value in ["1", "true", "yes", "on"]:
+		return true
+	if value in ["0", "false", "no", "off"]:
+		return false
+	return fallback
+
 func _env_int(name: String, fallback: int, minimum: int, maximum: int) -> int:
 	var value := OS.get_environment(name).strip_edges()
 	if not value.is_valid_int():
