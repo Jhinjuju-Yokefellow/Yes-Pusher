@@ -7,6 +7,7 @@ signal active_player_changed(wallet: String, turn_id: String)
 signal active_player_presentation_changed(presentation: Dictionary)
 signal local_identity_changed(wallet: String, verified: bool)
 signal owned_skins_changed(families: Array, equipped: String)
+signal free_turn_state_changed(state: Dictionary)
 signal settlement_changed(message: String)
 signal remote_turn_reveal_started(summary: Dictionary, wallet: String)
 signal remote_turn_finished(summary: Dictionary, wallet: String, lifetime_yes: int, milestones: Array)
@@ -33,6 +34,7 @@ var local_wallet: String = ""
 var local_session_token: String = ""
 var local_skin_family: String = ""
 var local_owned_skin_families: Array[String] = []
+var local_free_turn_state: Dictionary = {}
 var local_verified: bool = false
 var _client_connected: bool = false
 
@@ -48,13 +50,14 @@ var _turn_sequence: int = 0
 var _queue: Array[Dictionary] = []
 var _players: Dictionary = {}
 var _active_turn: Dictionary = {}
-var _active_player_presentation: Dictionary = {}
+var _live_player_presentation: Dictionary = {}
 var _settlements: Array[Dictionary] = []
 var _processing_queue: bool = false
 var _settlement_worker_active: bool = false
 var _settlement_retry_elapsed: float = 0.0
 var _state_path: String = "user://yes-pusher-shared-state.json"
 var _free_turn_cooldown_seconds: int = DEFAULT_FREE_TURN_COOLDOWN_SECONDS
+var _presentation_test_mode: bool = false
 
 func configure(target_machine: YesPusherMachine) -> void:
 	machine = target_machine
@@ -75,6 +78,7 @@ func _read_environment() -> void:
 		mode = "client"
 	if mode not in ["server", "client", "local"]:
 		mode = "client" if not OS.get_environment("YES_PUSHER_SERVER_HOST").strip_edges().is_empty() else "local"
+	_presentation_test_mode = _env_bool("YES_PUSHER_PRESENTATION_TEST_MODE", args.has("--presentation-test"))
 	_server_host = _env_or("YES_PUSHER_SERVER_HOST", "127.0.0.1")
 	_server_bind = _env_or("YES_PUSHER_SERVER_BIND", "*")
 	_server_port = _env_int("YES_PUSHER_SERVER_PORT", DEFAULT_PORT, 1, 65535)
@@ -85,6 +89,8 @@ func _read_environment() -> void:
 	if _server_url.is_empty():
 		_server_url = "ws://%s:%d" % [_server_host, _server_port]
 	_snapshot_interval = 1.0 / float(_env_int("YES_PUSHER_SNAPSHOT_RATE", 10, 5, 15))
+	if _presentation_test_mode:
+		_snapshot_interval = 1.0 / 5.0
 	_state_path = _env_or("YES_PUSHER_STATE_PATH", "user://yes-pusher-shared-state.json")
 	_free_turn_cooldown_seconds = _env_int(
 		"YES_PUSHER_FREE_TURN_COOLDOWN_SECONDS",
@@ -171,20 +177,36 @@ func _start_server() -> void:
 	multiplayer.multiplayer_peer = created_peer
 	multiplayer.peer_connected.connect(_on_peer_connected)
 	multiplayer.peer_disconnected.connect(_on_peer_disconnected)
-	_load_state()
-	# A previously saved empty snapshot can clear the freshly seeded bed. An
-	# empty shared machine cannot run a useful coin-pusher turn, so repair only
-	# that invalid startup state and immediately persist the corrected bed.
-	if _active_turn.is_empty() and machine.active_coin_count() <= 0:
+	if _presentation_test_mode:
+		# YD-2 presentation acceptance must be deterministic and must not inherit
+		# old wallets, queued turns, settlements, or a huge accumulated machine bed.
+		# The same authoritative machine remains intact across the A -> B test;
+		# this reset happens only once when the dedicated test server starts.
+		_turn_sequence = 0
+		_queue.clear()
+		_players.clear()
+		_active_turn = {}
+		_settlements.clear()
 		machine.reset_machine()
 		while machine.is_resetting():
 			await get_tree().process_frame
 		_save_state()
+	else:
+		_load_state()
+		# A previously saved empty snapshot can clear the freshly seeded bed. An
+		# empty shared machine cannot run a useful coin-pusher turn, so repair only
+		# that invalid startup state and immediately persist the corrected bed.
+		if _active_turn.is_empty() and machine.active_coin_count() <= 0:
+			machine.reset_machine()
+			while machine.is_resetting():
+				await get_tree().process_frame
+			_save_state()
 	status_changed.emit("Authoritative shared machine listening on %s port %d." % [_transport, _server_port])
 	call_deferred("_server_bootstrap")
 
 func _start_client() -> void:
 	machine.set_authoritative(false)
+	_report_browser_socket_state("connecting")
 	var error := OK
 	var created_peer: MultiplayerPeer
 	if _transport == "enet":
@@ -200,6 +222,7 @@ func _start_client() -> void:
 		created_peer = websocket_peer
 		_websocket_peer = websocket_peer
 	if error != OK:
+		_report_browser_socket_state("error")
 		status_changed.emit("Could not connect to the shared machine: %s" % error_string(error))
 		return
 	multiplayer.multiplayer_peer = created_peer
@@ -279,6 +302,12 @@ func leave_queue() -> void:
 	elif mode == "server":
 		_remove_wallet_from_queue(local_wallet)
 
+func request_presentation_test_opponent() -> void:
+	if mode != "client" or not _client_connected:
+		status_changed.emit("Connect to the shared machine before queueing the YD-2 test player.")
+		return
+	_server_request_presentation_test_opponent.rpc_id(1)
+
 func set_local_skin_family(value: String) -> void:
 	var requested := _normalize_family(value)
 	if mode == "client" and local_verified and not requested.is_empty() and not local_owned_skin_families.has(requested):
@@ -335,9 +364,18 @@ func authoritative_turn_completed(summary: Dictionary) -> void:
 	completed["payout_yes"] = payout
 	completed["result_summary"] = safe_summary
 	completed["status"] = "settlement_pending"
-	completed["completed_at_unix"] = Time.get_unix_time_from_system()
+	completed["completed_at_unix"] = int(Time.get_unix_time_from_system())
 	var wallet := String(completed.get("wallet", ""))
 	var player: Dictionary = _player(wallet)
+	if String(completed.get("access_mode", "")) == "hourly_free":
+		var free_completed_at := int(completed.get("completed_at_unix", 0))
+		var next_free_at := free_completed_at + _free_turn_cooldown_seconds
+		player["next_free_turn_at_unix"] = next_free_at
+		player["free_turn_reserved_turn_id"] = ""
+		player["free_turn_reserved_at_unix"] = 0
+		player["last_free_turn_completed_at_unix"] = free_completed_at
+		player["last_free_turn_turn_id"] = String(completed.get("turn_id", ""))
+		completed["next_free_turn_at_unix"] = next_free_at
 	var old_lifetime: int = int(player.get("lifetime_yes", 0))
 	var new_lifetime: int = old_lifetime + payout
 	var paid_out_this_turn: int = maxi(0, int(safe_summary.get("caught_coin_count", safe_summary.get("caught_base_yes", 0))))
@@ -361,14 +399,19 @@ func authoritative_turn_completed(summary: Dictionary) -> void:
 		completed_toy_captures = (completed_toy_captures_value as Array).duplicate(true)
 	completed["toy_captures"] = completed_toy_captures
 	completed["toy_captures_confirmed"] = []
-	_settlements.append(completed)
+	var presentation_only := bool(completed.get("presentation_only", false))
+	if not presentation_only:
+		_settlements.append(completed)
+	else:
+		milestones.clear()
 	if not multiplayer.get_peers().is_empty():
 		_client_turn_completed.rpc(safe_summary, wallet, new_lifetime, milestones)
+	_live_player_presentation = {}
 	_active_turn = {}
-	_clear_active_player_presentation()
 	_save_state()
 	_broadcast_queue_state()
 	active_player_changed.emit("", "")
+	active_player_presentation_changed.emit({})
 	call_deferred("_process_settlement_outbox")
 	call_deferred("_process_next_turn")
 
@@ -378,6 +421,7 @@ func authoritative_payout_corrected(corrected_payout: int) -> void:
 
 func _on_connected_to_server() -> void:
 	_client_connected = true
+	_report_browser_socket_state("open")
 	if local_wallet.is_empty():
 		status_changed.emit("Connected as a spectator. Enter a wallet session to join the queue.")
 	else:
@@ -387,17 +431,35 @@ func _on_connected_to_server() -> void:
 func _on_connection_failed() -> void:
 	_client_connected = false
 	local_verified = false
+	_report_browser_socket_state("error")
 	status_changed.emit("Connection to the shared machine failed.")
 
 func _on_server_disconnected() -> void:
 	_client_connected = false
 	local_verified = false
+	local_free_turn_state = {}
+	free_turn_state_changed.emit({})
+	_report_browser_socket_state("closed")
 	status_changed.emit("Disconnected from the shared machine. Reconnect before joining another turn.")
+
+func _report_browser_socket_state(state: String) -> void:
+	if not OS.has_feature("web"):
+		return
+	var safe_state := state if state in ["connecting", "open", "error", "closed"] else "error"
+	JavaScriptBridge.eval(
+		"""(() => {
+			const launch = new URLSearchParams(window.location.search).get('launch') || '';
+			window.parent && window.parent.postMessage(
+				{type:'yes-pusher-socket-state', state:'%s', launch},
+				window.location.origin
+			);
+		})()""" % safe_state,
+		true
+	)
 
 func _on_peer_connected(peer_id: int) -> void:
 	_players[str(peer_id)] = {"peer_id": peer_id, "wallet": "", "verified": false, "skin_family": "", "lifetime_yes": 0, "lifetime_coins_paid_out": 0}
 	_broadcast_queue_state()
-	call_deferred("_send_active_player_presentation_to_peer", peer_id)
 
 func _on_peer_disconnected(peer_id: int) -> void:
 	var wallet := _wallet_for_peer(peer_id)
@@ -419,7 +481,7 @@ func _server_identify(wallet: String, session_token: String, requested_skin_fami
 		_client_identity_result.rpc_id(peer_id, false, "", [], String(verification.get("error", "Wallet verification failed.")))
 		return
 	var normalized_wallet := String(verification.get("wallet", wallet)).to_lower()
-	var prior := _player(normalized_wallet)
+	var prior := _ensure_presentation_fixture(_player(normalized_wallet))
 	var cached_owned: Array[String] = _normalized_family_array(prior.get("owned_skin_families", []))
 	var requested := _normalize_family(requested_skin_family)
 	var selected := requested if requested.is_empty() or cached_owned.has(requested) or yf.allow_unverified_wallets else ""
@@ -441,6 +503,7 @@ func _server_identify(wallet: String, session_token: String, requested_skin_fami
 		cached_owned,
 		"Wallet verified. %s Loading owned skins…" % _turn_access_status_message(normalized_wallet)
 	)
+	_send_free_turn_state_to_peer(peer_id, normalized_wallet)
 	_broadcast_queue_state()
 	call_deferred("_server_load_identity_entitlements", peer_id, normalized_wallet, requested_skin_family)
 
@@ -488,6 +551,11 @@ func _client_identity_result(verified: bool, wallet: String, owned_families: Arr
 	owned_skins_changed.emit(local_owned_skin_families.duplicate(), local_skin_family)
 	status_changed.emit(message)
 
+@rpc("authority", "call_remote", "reliable")
+func _client_free_turn_state(state: Dictionary) -> void:
+	local_free_turn_state = state.duplicate(true)
+	free_turn_state_changed.emit(local_free_turn_state.duplicate(true))
+
 @rpc("any_peer", "call_remote", "reliable")
 func _server_request_queue_join(requested_skin_family: String) -> void:
 	if not multiplayer.is_server():
@@ -514,6 +582,33 @@ func _server_request_queue_leave() -> void:
 	var peer_id := multiplayer.get_remote_sender_id()
 	_remove_peer_from_queue(peer_id)
 	_broadcast_queue_state()
+
+@rpc("any_peer", "call_remote", "reliable")
+func _server_request_presentation_test_opponent() -> void:
+	if not multiplayer.is_server():
+		return
+	var peer_id := multiplayer.get_remote_sender_id()
+	if not _presentation_test_mode:
+		_client_status.rpc_id(peer_id, "YD-2 presentation test mode is not enabled on the authoritative server.")
+		return
+	var test_wallet := "0x00000000000000000000000000000000000000b2"
+	if String(_active_turn.get("wallet", "")).to_lower() == test_wallet:
+		_client_status.rpc_id(peer_id, "Rainbow Player B is already active.")
+		return
+	for entry in _queue:
+		if String(entry.get("wallet", "")).to_lower() == test_wallet:
+			_client_status.rpc_id(peer_id, "Rainbow Player B is already waiting in the queue.")
+			return
+	var player := _player(test_wallet)
+	player["peer_id"] = 0
+	player["wallet"] = test_wallet
+	player["verified"] = true
+	player["skin_family"] = "pot_of_gold"
+	player["owned_skin_families"] = ["pot_of_gold"]
+	player["presentation_fixture"] = 1
+	_players[test_wallet] = player
+	_enqueue_player(0, test_wallet, "pot_of_gold", true)
+	_client_status.rpc_id(peer_id, "Rainbow Player B added behind the current player for the YD-2 transition test.")
 
 @rpc("any_peer", "call_remote", "reliable")
 func _server_set_skin_family(requested_skin_family: String) -> void:
@@ -618,46 +713,6 @@ func _client_status(message: String) -> void:
 		return
 	status_changed.emit(message)
 
-func _load_active_player_presentation(wallet: String, turn_id: String) -> void:
-	if mode != "server" or yf == null:
-		return
-	var presentation: Dictionary = await yf.load_player_presentation(wallet)
-	if _active_turn.is_empty():
-		return
-	if String(_active_turn.get("wallet", "")).to_lower() != wallet.to_lower():
-		return
-	if String(_active_turn.get("turn_id", "")) != turn_id:
-		return
-	presentation["wallet"] = wallet.to_lower()
-	presentation["turn_id"] = turn_id
-	presentation["loading"] = false
-	_active_player_presentation = presentation.duplicate(true)
-	active_player_presentation_changed.emit(_active_player_presentation.duplicate(true))
-	if not multiplayer.get_peers().is_empty():
-		_client_active_player_presentation.rpc(_active_player_presentation.duplicate(true))
-
-
-func _send_active_player_presentation_to_peer(peer_id: int) -> void:
-	if mode != "server" or _active_player_presentation.is_empty():
-		return
-	if peer_id <= 1 or not multiplayer.get_peers().has(peer_id):
-		return
-	_client_active_player_presentation.rpc_id(peer_id, _active_player_presentation.duplicate(true))
-
-
-func _clear_active_player_presentation() -> void:
-	_active_player_presentation = {}
-	active_player_presentation_changed.emit({})
-	if mode == "server" and not multiplayer.get_peers().is_empty():
-		_client_active_player_presentation.rpc({})
-
-
-@rpc("authority", "call_remote", "reliable")
-func _client_active_player_presentation(presentation: Dictionary) -> void:
-	_active_player_presentation = presentation.duplicate(true)
-	active_player_presentation_changed.emit(_active_player_presentation.duplicate(true))
-
-
 @rpc("authority", "call_remote", "reliable")
 func _client_queue_state(entries: Array, active: Dictionary) -> void:
 	var position := -1
@@ -670,6 +725,9 @@ func _client_queue_state(entries: Array, active: Dictionary) -> void:
 	var active_wallet := String(active.get("wallet", ""))
 	var active_turn_id := String(active.get("turn_id", ""))
 	active_player_changed.emit(active_wallet, active_turn_id)
+	var presentation_value: Variant = active.get("presentation", {})
+	var presentation: Dictionary = presentation_value as Dictionary if presentation_value is Dictionary else {}
+	active_player_presentation_changed.emit(presentation.duplicate(true))
 
 @rpc("authority", "call_remote", "unreliable_ordered", 0)
 func _client_world_snapshot(snapshot: Dictionary) -> void:
@@ -685,7 +743,7 @@ func _client_world_snapshot(snapshot: Dictionary) -> void:
 			status_changed.emit("Your 10-coin turn is running. Current caught value: %d YES." % payout)
 
 func _server_enqueue_local(wallet: String, skin_family: String) -> void:
-	var player := _player(wallet)
+	var player := _ensure_presentation_fixture(_player(wallet))
 	player["peer_id"] = 1
 	player["wallet"] = wallet
 	player["verified"] = true
@@ -693,7 +751,7 @@ func _server_enqueue_local(wallet: String, skin_family: String) -> void:
 	_players[wallet] = player
 	_enqueue_player(1, wallet, skin_family)
 
-func _enqueue_player(peer_id: int, wallet: String, skin_family: String) -> void:
+func _enqueue_player(peer_id: int, wallet: String, skin_family: String, presentation_only: bool = false) -> void:
 	if _active_turn.get("wallet", "") == wallet:
 		_client_status_for(peer_id, "Your turn is already active.")
 		return
@@ -703,12 +761,17 @@ func _enqueue_player(peer_id: int, wallet: String, skin_family: String) -> void:
 			return
 	_turn_sequence += 1
 	var request_id := "turn_%d_%d" % [int(Time.get_unix_time_from_system()), _turn_sequence]
+	var queued_access_mode := "deferred"
+	if not presentation_only and _reserve_hourly_free_turn(wallet, request_id):
+		queued_access_mode = "hourly_free"
 	_queue.append({
 		"peer_id": peer_id,
 		"wallet": wallet,
 		"skin_family": skin_family,
 		"request_id": request_id,
 		"joined_at_unix": Time.get_unix_time_from_system(),
+		"presentation_only": presentation_only,
+		"access_mode": queued_access_mode,
 	})
 	_client_status_for(
 		peer_id,
@@ -726,7 +789,15 @@ func _process_next_turn() -> void:
 	var turn_id := String(entry.get("request_id", ""))
 	var wallet := String(entry.get("wallet", "")).to_lower()
 	var seed := randi()
-	var turn_access := _reserve_turn_access(wallet, turn_id)
+	var presentation_only := bool(entry.get("presentation_only", false))
+	var queued_access_mode := String(entry.get("access_mode", "deferred"))
+	var turn_access: Dictionary
+	if presentation_only:
+		turn_access = {"mode": "presentation_test", "next_free_turn_at_unix": 0, "earned_turns": 0}
+	elif queued_access_mode == "hourly_free" and _free_turn_reservation_matches(wallet, turn_id):
+		turn_access = _hourly_free_access_snapshot(wallet)
+	else:
+		turn_access = _reserve_turn_access(wallet, turn_id)
 	var access_mode := String(turn_access.get("mode", "paid"))
 	_active_turn = {
 		"turn_id": turn_id,
@@ -739,6 +810,7 @@ func _process_next_turn() -> void:
 		"access_mode": access_mode,
 		"next_free_turn_at_unix": int(turn_access.get("next_free_turn_at_unix", 0)),
 		"earned_turns_remaining": int(turn_access.get("earned_turns", 0)),
+		"presentation_only": presentation_only,
 		"pre_turn_world": machine.export_world_snapshot(),
 		"latest_payout_yes": 0,
 		"started_at_unix": 0,
@@ -767,24 +839,15 @@ func _start_active_turn() -> void:
 		return
 	_active_turn["status"] = "running"
 	_active_turn["started_at_unix"] = Time.get_unix_time_from_system()
+	_live_player_presentation = {}
 	_save_state()
 	var wallet := String(_active_turn.get("wallet", ""))
 	var turn_id := String(_active_turn.get("turn_id", ""))
-	_active_player_presentation = {
-		"ok": false,
-		"wallet": wallet,
-		"turn_id": turn_id,
-		"loading": true,
-		"profile": {},
-		"toys": [],
-		"errors": [],
-	}
 	active_player_changed.emit(wallet, turn_id)
-	active_player_presentation_changed.emit(_active_player_presentation.duplicate(true))
+	active_player_presentation_changed.emit(_active_player_presentation())
 	_broadcast_queue_state()
-	if not multiplayer.get_peers().is_empty():
-		_client_active_player_presentation.rpc(_active_player_presentation.duplicate(true))
-	call_deferred("_load_active_player_presentation", wallet, turn_id)
+	if not _presentation_test_mode:
+		call_deferred("_load_live_player_presentation", wallet, turn_id)
 	var access_mode := String(_active_turn.get("access_mode", "paid"))
 	var start_message := "Your paid 10-coin turn is starting."
 	match access_mode:
@@ -794,6 +857,8 @@ func _start_active_turn() -> void:
 			start_message = "Your earned 10-coin drop is starting. %s" % _turn_access_status_message(wallet)
 		"test_free":
 			start_message = "Your free test 10-coin drop is starting."
+		"presentation_test":
+			start_message = "Rainbow Player B presentation test turn is starting."
 	_client_status_for(int(_active_turn.get("peer_id", 0)), start_message)
 	machine.set_turn_seed(int(_active_turn.get("seed", 0)))
 	machine.queue_turn_toy(String(_active_turn.get("skin_family", "")))
@@ -802,6 +867,8 @@ func _start_active_turn() -> void:
 func _recover_active_turn() -> void:
 	if _active_turn.is_empty():
 		return
+	if String(_active_turn.get("access_mode", "")) == "hourly_free":
+		_ensure_active_free_turn_reservation()
 	var pre_turn_world := _active_turn.get("pre_turn_world", {}) as Dictionary
 	if not pre_turn_world.is_empty():
 		machine.restore_authoritative_snapshot(pre_turn_world)
@@ -1027,8 +1094,12 @@ func _broadcast_queue_state() -> void:
 			entries.append({"wallet": String(entry.get("wallet", "")), "request_id": String(entry.get("request_id", ""))})
 		if not multiplayer.get_peers().is_empty():
 			_client_queue_state.rpc(entries, _public_active_turn())
+			_broadcast_free_turn_states()
 		var local_position := _queue_position_for_wallet(local_wallet)
 		queue_changed.emit(local_position, entries.size())
+		if _is_wallet(local_wallet):
+			local_free_turn_state = _free_turn_state_for_wallet(local_wallet)
+			free_turn_state_changed.emit(local_free_turn_state.duplicate(true))
 
 func _public_active_turn() -> Dictionary:
 	if _active_turn.is_empty():
@@ -1039,7 +1110,125 @@ func _public_active_turn() -> Dictionary:
 		"drop_count": FIXED_DROP_COUNT,
 		"status": String(_active_turn.get("status", "")),
 		"latest_payout_yes": int(_active_turn.get("latest_payout_yes", 0)),
+		"presentation": _active_player_presentation(),
 	}
+
+func _active_player_presentation() -> Dictionary:
+	if _active_turn.is_empty():
+		return {}
+	var wallet := String(_active_turn.get("wallet", "")).strip_edges().to_lower()
+	if not _is_wallet(wallet):
+		return {}
+	var turn_id := String(_active_turn.get("turn_id", ""))
+	if not _presentation_test_mode and not _live_player_presentation.is_empty():
+		if String(_live_player_presentation.get("wallet", "")).to_lower() == wallet and String(_live_player_presentation.get("turn_id", "")) == turn_id:
+			return _live_player_presentation.duplicate(true)
+	var selected_skin := _normalize_family(String(_active_turn.get("skin_family", "")))
+	return _presentation_for_wallet(wallet, selected_skin)
+
+func _load_live_player_presentation(wallet: String, turn_id: String) -> void:
+	if mode != "server" or yf == null or _presentation_test_mode:
+		return
+	var presentation: Dictionary = await yf.load_player_presentation(wallet)
+	if _active_turn.is_empty():
+		return
+	if String(_active_turn.get("wallet", "")).to_lower() != wallet.to_lower():
+		return
+	if String(_active_turn.get("turn_id", "")) != turn_id:
+		return
+	presentation["wallet"] = wallet.to_lower()
+	presentation["turn_id"] = turn_id
+	presentation["loading"] = false
+	presentation["source"] = "yokefellow"
+	_live_player_presentation = presentation.duplicate(true)
+	active_player_presentation_changed.emit(_live_player_presentation.duplicate(true))
+	_broadcast_queue_state()
+
+func _presentation_for_wallet(wallet: String, selected_skin: String) -> Dictionary:
+	var player := _player(wallet)
+	var short_wallet := "%s…%s" % [wallet.left(6), wallet.right(4)]
+	if not _presentation_test_mode:
+		return {
+			"version": 1,
+			"source": "wallet_only",
+			"wallet": wallet,
+			"profile": {
+				"displayName": "Player %s" % short_wallet,
+				"display_name": "Player %s" % short_wallet,
+				"handle": "",
+				"avatarUrl": "",
+				"avatar_url": "",
+				"profile_picture_url": "",
+				"cardSettings": {},
+				"featuredOutputs": [],
+			},
+			"equipped_skin": {
+				"family": selected_skin,
+				"label": _skin_display_name(selected_skin) if not selected_skin.is_empty() else "Default YES coin",
+			},
+			"toys": [],
+		}
+
+	var fixture_index := int(player.get("presentation_fixture", 0))
+	var profile: Dictionary
+	var fixture_skin := ""
+	var toys: Array[Dictionary] = []
+	if fixture_index % 2 == 0:
+		profile = {
+			"displayName": "Rainbow Player A",
+			"display_name": "Rainbow Player A",
+			"handle": "rainbow-player-a",
+			"avatarUrl": "",
+			"avatar_url": "",
+			"profile_picture_url": "",
+			"cardSettings": {"tagline": "YD-2 presentation fixture"},
+			"featuredOutputs": [],
+		}
+		fixture_skin = "horseshoe"
+		toys = [
+			{"family": "horseshoe", "tier": "small", "size": "small", "title": "Small Horseshoe Toy", "quantity": 2, "imageUrl": ""},
+			{"family": "horseshoe", "tier": "medium", "size": "medium", "title": "Medium Horseshoe Toy", "quantity": 1, "imageUrl": ""},
+			{"family": "four_leaf_clover", "tier": "small", "size": "small", "title": "Small Four Leaf Clover Toy", "quantity": 1, "imageUrl": ""},
+		]
+	else:
+		profile = {
+			"displayName": "Rainbow Player B",
+			"display_name": "Rainbow Player B",
+			"handle": "rainbow-player-b",
+			"avatarUrl": "",
+			"avatar_url": "",
+			"profile_picture_url": "",
+			"cardSettings": {"tagline": "YD-2 presentation fixture"},
+			"featuredOutputs": [],
+		}
+		fixture_skin = "pot_of_gold"
+		toys = [
+			{"family": "pot_of_gold", "tier": "large", "size": "large", "title": "Large Pot of Gold Toy", "quantity": 1, "imageUrl": ""},
+			{"family": "treasure_chest", "tier": "small", "size": "small", "title": "Small Treasure Chest Toy", "quantity": 3, "imageUrl": ""},
+			{"family": "leprechaun", "tier": "medium", "size": "medium", "title": "Medium Leprechaun Toy", "quantity": 1, "imageUrl": ""},
+		]
+
+	var equipped_family := fixture_skin
+	return {
+		"version": 1,
+		"source": "test_fixture",
+		"wallet": wallet,
+		"profile": profile,
+		"equipped_skin": {
+			"family": equipped_family,
+			"label": "%s YES Skin" % _skin_display_name(equipped_family),
+		},
+		"toys": toys,
+	}
+
+func _ensure_presentation_fixture(player: Dictionary) -> Dictionary:
+	if not _presentation_test_mode:
+		return player
+	var wallet := String(player.get("wallet", "")).strip_edges().to_lower()
+	# The synthetic opponent is always B. Any real verified wallet is always A.
+	# Persisted player counts never influence the fixture identity.
+	player["presentation_fixture"] = 1 if wallet == "0x00000000000000000000000000000000000000b2" else 0
+	return player
 
 func _client_status_for(peer_id: int, message: String) -> void:
 	if peer_id <= 1:
@@ -1049,18 +1238,28 @@ func _client_status_for(peer_id: int, message: String) -> void:
 
 func _remove_wallet_from_queue(wallet: String) -> void:
 	var kept: Array[Dictionary] = []
+	var released := false
 	for entry in _queue:
 		if String(entry.get("wallet", "")) != wallet:
 			kept.append(entry)
+		else:
+			released = _release_free_turn_reservation(String(entry.get("wallet", "")), String(entry.get("request_id", ""))) or released
 	_queue = kept
+	if released:
+		_save_state()
 	_broadcast_queue_state()
 
 func _remove_peer_from_queue(peer_id: int) -> void:
 	var kept: Array[Dictionary] = []
+	var released := false
 	for entry in _queue:
 		if int(entry.get("peer_id", 0)) != peer_id:
 			kept.append(entry)
+		else:
+			released = _release_free_turn_reservation(String(entry.get("wallet", "")), String(entry.get("request_id", ""))) or released
 	_queue = kept
+	if released:
+		_save_state()
 
 func _queue_position_for_wallet(wallet: String) -> int:
 	for index in range(_queue.size()):
@@ -1088,6 +1287,10 @@ func _player(wallet: String) -> Dictionary:
 		"lifetime_yes": 0,
 		"lifetime_coins_paid_out": 0,
 		"next_free_turn_at_unix": 0,
+		"free_turn_reserved_turn_id": "",
+		"free_turn_reserved_at_unix": 0,
+		"last_free_turn_completed_at_unix": 0,
+		"last_free_turn_turn_id": "",
 		"earned_turns": 0,
 		"earned_turn_sources": {},
 	}
@@ -1119,48 +1322,157 @@ func _reserve_turn_access(wallet: String, turn_id: String) -> Dictionary:
 	var normalized := wallet.strip_edges().to_lower()
 	var player := _player(normalized)
 	var now := int(Time.get_unix_time_from_system())
-	var next_free_at := maxi(0, int(player.get("next_free_turn_at_unix", 0)))
 	var earned_turns := maxi(0, int(player.get("earned_turns", 0)))
 	var access_mode := "paid"
-	if yf != null and yf.test_free_turns:
-		access_mode = "test_free"
-	elif _free_turn_cooldown_seconds > 0 and now >= next_free_at:
+	if _reserve_hourly_free_turn(normalized, turn_id):
 		access_mode = "hourly_free"
-		next_free_at = now + _free_turn_cooldown_seconds
-		player["next_free_turn_at_unix"] = next_free_at
+		player = _player(normalized)
 	elif earned_turns > 0:
 		access_mode = "earned"
 		earned_turns -= 1
 		player["earned_turns"] = earned_turns
-	if access_mode != "paid":
 		player["last_turn_access_mode"] = access_mode
 		player["last_turn_access_turn_id"] = turn_id
 		player["last_turn_access_at_unix"] = now
 		_players[normalized] = player
 	return {
 		"mode": access_mode,
-		"next_free_turn_at_unix": next_free_at,
+		"next_free_turn_at_unix": maxi(0, int(player.get("next_free_turn_at_unix", 0))),
 		"earned_turns": earned_turns,
 	}
 
-func _turn_access_status_message(wallet: String) -> String:
-	if yf != null and yf.test_free_turns:
-		return "Free test drops are enabled."
-	var player := _player(wallet)
-	var earned_turns := maxi(0, int(player.get("earned_turns", 0)))
+func _reserve_hourly_free_turn(wallet: String, turn_id: String) -> bool:
 	if _free_turn_cooldown_seconds <= 0:
-		return "Earned drops: %d. Paid drops remain available." % earned_turns
+		return false
+	var normalized := wallet.strip_edges().to_lower()
+	if not _is_wallet(normalized) or turn_id.is_empty():
+		return false
+	var player := _player(normalized)
+	var existing := String(player.get("free_turn_reserved_turn_id", ""))
+	if existing == turn_id:
+		return true
+	if not existing.is_empty():
+		return false
 	var now := int(Time.get_unix_time_from_system())
 	var next_free_at := maxi(0, int(player.get("next_free_turn_at_unix", 0)))
-	if now >= next_free_at:
-		return "Your free hourly 10-coin drop is ready. Earned drops: %d." % earned_turns
-	var remaining_seconds := maxi(0, next_free_at - now)
-	var remaining_minutes := maxi(1, ceili(float(remaining_seconds) / 60.0))
-	return "Next free drop in about %d minute%s. Earned drops: %d. Paid drops remain available." % [
-		remaining_minutes,
-		"" if remaining_minutes == 1 else "s",
-		earned_turns,
-	]
+	if now < next_free_at:
+		return false
+	player["free_turn_reserved_turn_id"] = turn_id
+	player["free_turn_reserved_at_unix"] = now
+	player["last_turn_access_mode"] = "hourly_free"
+	player["last_turn_access_turn_id"] = turn_id
+	player["last_turn_access_at_unix"] = now
+	_players[normalized] = player
+	_save_state()
+	return true
+
+func _release_free_turn_reservation(wallet: String, turn_id: String) -> bool:
+	var normalized := wallet.strip_edges().to_lower()
+	if not _is_wallet(normalized) or turn_id.is_empty():
+		return false
+	var player := _player(normalized)
+	if String(player.get("free_turn_reserved_turn_id", "")) != turn_id:
+		return false
+	player["free_turn_reserved_turn_id"] = ""
+	player["free_turn_reserved_at_unix"] = 0
+	_players[normalized] = player
+	return true
+
+func _free_turn_reservation_matches(wallet: String, turn_id: String) -> bool:
+	var normalized := wallet.strip_edges().to_lower()
+	if not _is_wallet(normalized):
+		return false
+	return String(_player(normalized).get("free_turn_reserved_turn_id", "")) == turn_id
+
+func _hourly_free_access_snapshot(wallet: String) -> Dictionary:
+	var player := _player(wallet)
+	return {
+		"mode": "hourly_free",
+		"next_free_turn_at_unix": maxi(0, int(player.get("next_free_turn_at_unix", 0))),
+		"earned_turns": maxi(0, int(player.get("earned_turns", 0))),
+	}
+
+func _ensure_active_free_turn_reservation() -> void:
+	if _active_turn.is_empty() or String(_active_turn.get("access_mode", "")) != "hourly_free":
+		return
+	var wallet := String(_active_turn.get("wallet", "")).strip_edges().to_lower()
+	var turn_id := String(_active_turn.get("turn_id", ""))
+	if not _is_wallet(wallet) or turn_id.is_empty():
+		return
+	var player := _player(wallet)
+	player["free_turn_reserved_turn_id"] = turn_id
+	if int(player.get("free_turn_reserved_at_unix", 0)) <= 0:
+		player["free_turn_reserved_at_unix"] = int(Time.get_unix_time_from_system())
+	_players[wallet] = player
+	_save_state()
+
+func _free_turn_state_for_wallet(wallet: String) -> Dictionary:
+	var normalized := wallet.strip_edges().to_lower()
+	var now := int(Time.get_unix_time_from_system())
+	var enabled := _free_turn_cooldown_seconds > 0 and _is_wallet(normalized)
+	var player := _player(normalized)
+	var next_free_at := maxi(0, int(player.get("next_free_turn_at_unix", 0)))
+	var reserved_turn_id := String(player.get("free_turn_reserved_turn_id", ""))
+	var state := "disabled"
+	if enabled:
+		if not reserved_turn_id.is_empty():
+			state = "reserved"
+			if String(_active_turn.get("turn_id", "")) == reserved_turn_id:
+				state = "active"
+			else:
+				for entry in _queue:
+					if String(entry.get("request_id", "")) == reserved_turn_id:
+						state = "queued"
+						break
+		elif now >= next_free_at:
+			state = "available"
+		else:
+			state = "cooldown"
+	return {
+		"enabled": enabled,
+		"state": state,
+		"available": state == "available",
+		"reserved": state in ["queued", "active", "reserved"],
+		"server_time_unix": now,
+		"next_free_turn_at_unix": next_free_at,
+		"remaining_seconds": maxi(0, next_free_at - now),
+		"cooldown_seconds": _free_turn_cooldown_seconds,
+		"reserved_turn_id": reserved_turn_id,
+		"paid_charge_bypassed_for_test": yf != null and yf.test_free_turns,
+	}
+
+func _send_free_turn_state_to_peer(peer_id: int, wallet: String) -> void:
+	if peer_id <= 1 or not _is_wallet(wallet):
+		return
+	_client_free_turn_state.rpc_id(peer_id, _free_turn_state_for_wallet(wallet))
+
+func _broadcast_free_turn_states() -> void:
+	for peer_id in multiplayer.get_peers():
+		var wallet := _wallet_for_peer(peer_id)
+		if not wallet.is_empty():
+			_send_free_turn_state_to_peer(peer_id, wallet)
+
+func _turn_access_status_message(wallet: String) -> String:
+	var state := _free_turn_state_for_wallet(wallet)
+	var earned_turns := maxi(0, int(_player(wallet).get("earned_turns", 0)))
+	match String(state.get("state", "disabled")):
+		"available":
+			return "Your free hourly 10-coin drop is ready. Earned drops: %d." % earned_turns
+		"queued":
+			return "Your hourly free drop is reserved in the queue."
+		"active":
+			return "Your hourly free drop is in progress. The one-hour cooldown starts when it finishes."
+		"reserved":
+			return "Your hourly free drop is reserved."
+		"cooldown":
+			var remaining_seconds := maxi(0, int(state.get("remaining_seconds", 0)))
+			var remaining_minutes := maxi(1, ceili(float(remaining_seconds) / 60.0))
+			return "Next free drop in about %d minute%s. Earned drops: %d. Paid drops remain available." % [
+				remaining_minutes,
+				"" if remaining_minutes == 1 else "s",
+				earned_turns,
+			]
+	return "Earned drops: %d. Paid drops remain available." % earned_turns
 
 func _save_state() -> void:
 	if mode != "server":
@@ -1203,9 +1515,31 @@ func _load_state() -> void:
 			if value is Dictionary:
 				_settlements.append((value as Dictionary).duplicate(true))
 	_migrate_lifetime_paid_out_counts()
+	_reconcile_free_turn_reservations()
 	var world := state.get("world", {}) as Dictionary
 	if not world.is_empty():
 		machine.restore_authoritative_snapshot(world)
+
+func _reconcile_free_turn_reservations() -> void:
+	var active_wallet := String(_active_turn.get("wallet", "")).strip_edges().to_lower()
+	var active_turn_id := String(_active_turn.get("turn_id", ""))
+	var active_is_free := String(_active_turn.get("access_mode", "")) == "hourly_free"
+	for wallet_value in _players.keys():
+		if not (wallet_value is String) or not (_players.get(wallet_value) is Dictionary):
+			continue
+		var wallet := String(wallet_value).strip_edges().to_lower()
+		if not _is_wallet(wallet):
+			continue
+		var player := (_players.get(wallet_value) as Dictionary).duplicate(true)
+		var reservation := String(player.get("free_turn_reserved_turn_id", ""))
+		var should_keep := active_is_free and wallet == active_wallet and reservation == active_turn_id
+		if active_is_free and wallet == active_wallet and reservation.is_empty():
+			player["free_turn_reserved_turn_id"] = active_turn_id
+			player["free_turn_reserved_at_unix"] = maxi(1, int(_active_turn.get("started_at_unix", Time.get_unix_time_from_system())))
+		elif not reservation.is_empty() and not should_keep:
+			player["free_turn_reserved_turn_id"] = ""
+			player["free_turn_reserved_at_unix"] = 0
+		_players[wallet_value] = player
 
 func _migrate_lifetime_paid_out_counts() -> void:
 	for wallet_value in _players.keys():
@@ -1281,6 +1615,14 @@ func _family_from_skin_key(value: String) -> String:
 func _env_or(name: String, fallback: String) -> String:
 	var value := OS.get_environment(name).strip_edges()
 	return value if not value.is_empty() else fallback
+
+func _env_bool(name: String, fallback: bool) -> bool:
+	var value := OS.get_environment(name).strip_edges().to_lower()
+	if value in ["1", "true", "yes", "on"]:
+		return true
+	if value in ["0", "false", "no", "off"]:
+		return false
+	return fallback
 
 func _env_int(name: String, fallback: int, minimum: int, maximum: int) -> int:
 	var value := OS.get_environment(name).strip_edges()
