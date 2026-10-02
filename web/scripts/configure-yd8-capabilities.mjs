@@ -11,7 +11,6 @@ const turnPrice = positiveInteger(
   process.env.YES_PUSHER_TURN_PRICE_YES_RAW || "10000000000000000000",
   "YES_PUSHER_TURN_PRICE_YES_RAW",
 );
-const payoutMaxRaw = String(process.env.YES_DROP_MAX_TURN_PAYOUT_YES_RAW || "").trim();
 
 if (!appApiKey.startsWith("yfk_")) {
   throw new Error("YF_NETWORK_APP_API_KEY must be the server-side yfk_ key for coin-pusher.");
@@ -195,33 +194,27 @@ function buildDefinitions(targets) {
     },
   ];
 
-  if (payoutMaxRaw) {
-    const maxAmount = positiveInteger(
-      payoutMaxRaw,
-      "YES_DROP_MAX_TURN_PAYOUT_YES_RAW",
-    );
-    definitions.push({
-      key: "yes_drop.turn.payout",
-      configuration: {
-        state: "active",
-        appId,
-        executorType: "credit.grant.v1",
-        executorConfig: { maxAmount },
-        participantRequirements: {
-          required: true,
-          walletRequired: true,
-          assurance: "APP_ATTESTED",
-        },
-        sponsorship: { mode: "network_relayer", policyId: null },
-        descriptor: {
-          source: "yes_drop.game",
-          operation: "turn_payout",
-          label: "YES drop turn payout",
-          maxAmountYesRaw: maxAmount,
-        },
+  definitions.push({
+    key: "yes_drop.turn.payout",
+    configuration: {
+      state: "active",
+      appId,
+      executorType: "credit.grant.v1",
+      executorConfig: {},
+      participantRequirements: {
+        required: true,
+        walletRequired: true,
+        assurance: "APP_ATTESTED",
       },
-    });
-  }
+      sponsorship: { mode: "network_relayer", policyId: null },
+      descriptor: {
+        source: "yes_drop.game",
+        operation: "turn_payout",
+        label: "YES drop turn payout",
+        backingConstraint: "bucket_reserve",
+      },
+    },
+  });
 
   for (const [family, label, points] of FAMILIES) {
     const target = targets.get(family);
@@ -306,7 +299,7 @@ const missingLarge = FAMILIES
   .filter((family) => !largeTargets.has(family));
 
 const report = {
-  ok: !missingLarge.length && Boolean(payoutMaxRaw),
+  ok: !missingLarge.length,
   mode: APPLY ? "apply" : "dry_run",
   networkBaseUrl,
   bucketId,
@@ -315,7 +308,7 @@ const report = {
   configuredPathCapabilities: existing.length,
   resolvedLargeToyFamilies: [...largeTargets.keys()],
   missingLargeToyFamilies: missingLarge,
-  payoutCeilingConfigured: Boolean(payoutMaxRaw),
+  payoutConstraint: "Bucket reserve only",
   capabilityKeys: definitions.map((item) => item.key),
   definitions,
 };
@@ -323,20 +316,13 @@ const report = {
 if (!APPLY) {
   console.log(JSON.stringify({
     ...report,
-    next: !payoutMaxRaw
-      ? "Set YES_DROP_MAX_TURN_PAYOUT_YES_RAW after choosing the launch turn-payout ceiling. Then rerun dry-run."
-      : missingLarge.length
-        ? "Deploy/configure the ten Toy craft Paths first so every Large class is discoverable, then rerun."
-        : "Dry-run is complete. Re-run with --apply and YES_DROP_CONTROLLER_PRIVATE_KEY only after reviewing these definitions.",
+    next: missingLarge.length
+      ? "Deploy/configure the ten Toy craft Paths first so every Large class is discoverable, then rerun."
+      : "Dry-run is complete. Re-run with --apply and YES_DROP_CONTROLLER_PRIVATE_KEY only after reviewing these definitions.",
   }, null, 2));
   process.exit(report.ok ? 0 : 2);
 }
 
-if (!payoutMaxRaw) {
-  throw new Error(
-    "YES_DROP_MAX_TURN_PAYOUT_YES_RAW is required for --apply. The current game has no intrinsic finite payout ceiling.",
-  );
-}
 if (missingLarge.length) {
   throw new Error(
     `Cannot apply until Large Toy classes are discoverable from configured Path capabilities: ${missingLarge.join(", ")}.`,
