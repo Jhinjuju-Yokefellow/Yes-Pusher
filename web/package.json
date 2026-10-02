@@ -4,7 +4,7 @@
   "type": "module",
   "scripts": {
     "start": "node --env-file=../.env.server --env-file=.env server.mjs",
-    "check": "node --check server.mjs"
+    "check": "node --check server.mjs && node --check yd4-workshop.mjs && node --check public/app.js"
   },
   "dependencies": {
     "ethers": "^6.15.0"
