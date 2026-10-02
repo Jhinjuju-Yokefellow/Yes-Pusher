@@ -69,11 +69,16 @@ Properties:
 - no YES is minted;
 - no direct App wallet/private key.
 
-Proposed semantic capability:
+Semantic capability:
 
 ```text
 yes_drop.turn.payout -> credit.grant.v1
 ```
+
+YES drop does not use an arbitrary per-turn payout ceiling. The hard authorization
+boundary is the Bucket reserve itself: `grantByNetwork` cannot grant more YES
+than `capturedOf[bucketId]`, so unusually large Toy-powered results remain
+fully backed without requiring gameplay to know a fixed maximum in advance.
 
 Paid turn capture remains:
 
