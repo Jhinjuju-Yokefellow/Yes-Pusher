@@ -145,6 +145,7 @@ export function createWorkshopService({
   let contributionProvider = null;
   let contributionSigner = null;
   let contributionLock = Promise.resolve();
+  let cachedBucketSlug = "";
   if (/^0x[a-fA-F0-9]{64}$/.test(String(contributionPrivateKey || "").trim())) {
     contributionProvider = new JsonRpcProvider(rpcUrl, chainId, { staticNetwork: true });
     contributionSigner = new Wallet(String(contributionPrivateKey).trim(), contributionProvider);
@@ -187,6 +188,7 @@ export function createWorkshopService({
     // response so Rainbow's End never hard-codes database identifiers.
     const bucketSlug = String(catalog?.bucketSlug || catalog?.bucket?.slug || "").trim();
     if (bucketSlug) {
+      cachedBucketSlug = bucketSlug;
       try {
         const full = await jsonRequest(
           `${normalizedOrigin}/api/buckets/${encodeURIComponent(bucketSlug)}/offerings`,
@@ -372,11 +374,42 @@ export function createWorkshopService({
     const recipes = resolveRecipes(catalog, inventory);
     const preferred = normalizeFamily(localState.preferences?.[normalizedWallet]?.equippedSkin || "");
     const equippedSkin = preferred && inventory.skins.some((skin) => skin.family === preferred) ? preferred : "";
+
+    let funding = {
+      ready: false,
+      credit: null,
+      source: null,
+      error: "Participant funding is waiting for Yokefellow Network.",
+    };
+    try {
+      const bucketSlug = String(catalog?.bucketSlug || cachedBucketSlug || "").trim();
+      if (bucketSlug) {
+        const creditResult = await jsonRequest(
+          `${normalizedOrigin}/api/buckets/${encodeURIComponent(bucketSlug)}/credits?wallet=${encodeURIComponent(normalizedWallet)}`,
+        );
+        funding = {
+          ready: true,
+          credit: creditResult.credit || null,
+          source: creditResult.source || "network_base",
+          error: "",
+        };
+      }
+    } catch (error) {
+      funding = {
+        ready: false,
+        credit: null,
+        source: null,
+        error: error instanceof Error ? error.message : "Participant funding is unavailable.",
+      };
+    }
+
     return {
       ok: true,
       wallet: normalizedWallet,
+      bucketSlug: String(catalog?.bucketSlug || cachedBucketSlug || ""),
       bucket: catalog?.bucket || null,
       accountCredit: entitlements?.accountCredit || catalog?.commerce?.bucketCredit || null,
+      funding,
       equippedSkin,
       skins: inventory.skins,
       toys: inventory.toys.map((row) => ({
@@ -616,6 +649,63 @@ export function createWorkshopService({
     return next;
   }
 
+  async function resolveBucketSlug(wallet) {
+    if (cachedBucketSlug) return cachedBucketSlug;
+    const normalizedWallet = getAddress(wallet).toLowerCase();
+    const remote = await loadRemote(normalizedWallet);
+    const slug = String(remote?.catalog?.bucketSlug || "").trim();
+    if (!slug) throw new Error("Rainbow's End could not resolve its Yokefellow Bucket slug.");
+    cachedBucketSlug = slug;
+    return slug;
+  }
+
+  async function prepareFunding(wallet, { operation, amountYesRaw, referenceId }) {
+    const normalizedWallet = getAddress(wallet).toLowerCase();
+    const op = String(operation || "").toLowerCase();
+    if (!["deposit", "withdrawal"].includes(op)) {
+      throw new Error("Funding operation must be deposit or withdrawal.");
+    }
+    const amount = String(amountYesRaw || "").trim();
+    if (!/^[1-9]\d*$/.test(amount)) throw new Error("Funding amount must be greater than zero.");
+    const reference = validReference(referenceId);
+    if (!reference) throw new Error("A stable funding reference is required.");
+    const slug = await resolveBucketSlug(normalizedWallet);
+    const pathname = op === "deposit"
+      ? `/api/buckets/${encodeURIComponent(slug)}/deposits`
+      : `/api/buckets/${encodeURIComponent(slug)}/credits/withdraw`;
+    return jsonRequest(`${normalizedOrigin}${pathname}`, {
+      method: "POST",
+      body: {
+        phase: "prepare",
+        walletAddress: normalizedWallet,
+        amountYesRaw: amount,
+        referenceId: reference,
+      },
+    });
+  }
+
+  async function fundingStatus(wallet, { operation, referenceId }) {
+    const normalizedWallet = getAddress(wallet).toLowerCase();
+    const op = String(operation || "").toLowerCase();
+    if (!["deposit", "withdrawal"].includes(op)) {
+      throw new Error("Funding operation must be deposit or withdrawal.");
+    }
+    const reference = validReference(referenceId);
+    if (!reference) throw new Error("A stable funding reference is required.");
+    const slug = await resolveBucketSlug(normalizedWallet);
+    const pathname = op === "deposit"
+      ? `/api/buckets/${encodeURIComponent(slug)}/deposits`
+      : `/api/buckets/${encodeURIComponent(slug)}/credits/withdraw`;
+    return jsonRequest(`${normalizedOrigin}${pathname}`, {
+      method: "POST",
+      body: {
+        phase: "status",
+        walletAddress: normalizedWallet,
+        referenceId: reference,
+      },
+    });
+  }
+
   async function getCommunity() {
     return communityFromState(await readStateFile());
   }
@@ -628,6 +718,8 @@ export function createWorkshopService({
     equipSkin,
     craft,
     contribute,
+    prepareFunding,
+    fundingStatus,
     getCommunity,
   };
 }
