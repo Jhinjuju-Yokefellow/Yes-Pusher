@@ -21,6 +21,13 @@
   const homeBuildDetail = document.querySelector("#home-build-detail");
   const homePlay = document.querySelector("#home-play");
   const homeWorkshop = document.querySelector("#home-workshop");
+  const fundingBalance = document.querySelector("#funding-balance");
+  const fundingStatus = document.querySelector("#funding-status");
+  const fundingRefresh = document.querySelector("#funding-refresh");
+  const depositAmount = document.querySelector("#deposit-amount");
+  const depositButton = document.querySelector("#deposit-button");
+  const withdrawAmount = document.querySelector("#withdraw-amount");
+  const withdrawButton = document.querySelector("#withdraw-button");
 
   const workshopBuildTitle = document.querySelector("#workshop-build-title");
   const workshopBuildCount = document.querySelector("#workshop-build-count");
@@ -52,6 +59,9 @@
   retryConnectionButton?.addEventListener("click", retryConnectionNow);
   homePlay?.addEventListener("click", () => switchView("play"));
   homeWorkshop?.addEventListener("click", () => switchView("workshop"));
+  fundingRefresh?.addEventListener("click", () => refreshPlayerState({ announce: false }));
+  depositButton?.addEventListener("click", () => performFunding("deposit", depositButton, depositAmount));
+  withdrawButton?.addEventListener("click", () => performFunding("withdrawal", withdrawButton, withdrawAmount));
   nav?.addEventListener("click", (event) => {
     const button = event.target.closest("[data-view]");
     if (!button) return;
@@ -225,6 +235,7 @@
   function renderPlayerState() {
     if (!playerState) return;
     renderEquipped();
+    renderFunding();
     renderToySummary();
     renderCommunity();
     renderWorkshop();
@@ -252,6 +263,36 @@
           <span>Rarity ${skin.rarity} · equipped</span>
         </div>
       </div>`;
+  }
+
+  function renderFunding() {
+    if (!fundingBalance || !fundingStatus) return;
+    const funding = playerState?.funding;
+    const ready = Boolean(funding?.ready && funding?.credit);
+
+    if (!ready) {
+      fundingBalance.textContent = "Unavailable";
+      fundingStatus.textContent = "Unavailable";
+      if (depositAmount) depositAmount.disabled = true;
+      if (withdrawAmount) withdrawAmount.disabled = true;
+      if (depositButton) depositButton.disabled = true;
+      if (withdrawButton) withdrawButton.disabled = true;
+      if (fundingRefresh) fundingRefresh.disabled = false;
+      return;
+    }
+
+    const participantRaw = funding.credit?.participantBackedRaw
+      ?? funding.credit?.withdrawableRaw
+      ?? "0";
+    const withdrawableRaw = funding.credit?.withdrawableRaw ?? "0";
+    fundingBalance.textContent = `${formatYesRaw(participantRaw)} YES`;
+    fundingStatus.textContent = `Withdrawable: ${formatYesRaw(withdrawableRaw)} YES`;
+
+    if (depositAmount) depositAmount.disabled = false;
+    if (withdrawAmount) withdrawAmount.disabled = false;
+    if (depositButton) depositButton.disabled = false;
+    if (withdrawButton) withdrawButton.disabled = BigInt(withdrawableRaw || "0") <= 0n;
+    if (fundingRefresh) fundingRefresh.disabled = false;
   }
 
   function renderToySummary() {
@@ -362,6 +403,100 @@
     for (const button of skinList.querySelectorAll("[data-skin]")) {
       button.addEventListener("click", () => equipSkin(button.dataset.skin || "", button));
     }
+  }
+
+  async function performFunding(operation, button, input) {
+    if (!playerState?.funding?.ready) {
+      setAppMessage("Unavailable", "");
+      return;
+    }
+    const amountRaw = parseYesRaw(input?.value || "");
+    if (!amountRaw || BigInt(amountRaw) <= 0n) {
+      setAppMessage("Enter a YES amount greater than zero.", "error");
+      return;
+    }
+
+    const prefix = operation === "deposit" ? "deposit" : "withdraw";
+    const operationKey = `${prefix}:${activeWallet}`;
+    const referenceId = operationReference(operationKey, prefix);
+    setActionBusy(button, true, operation === "deposit" ? "DEPOSITING…" : "WITHDRAWING…");
+
+    try {
+      await ensureChain(config.chainId);
+      const preparedResult = await appPost("/app/funding/prepare", {
+        operation,
+        amountYesRaw: amountRaw,
+        referenceId,
+      });
+      const prepared = preparedResult.operation;
+      if (!prepared) throw new Error("Unavailable");
+
+      if (prepared.status === "already_applied") {
+        clearOperationReference(operationKey);
+        await refreshPlayerState();
+        setAppMessage(operation === "deposit" ? "Deposit confirmed." : "Withdrawal confirmed.", "success");
+        return;
+      }
+
+      if (prepared.approval) {
+        await sendPreparedWalletTransaction(prepared.approval);
+      }
+      if (!prepared.transaction) throw new Error("Unavailable");
+      await sendPreparedWalletTransaction(prepared.transaction);
+
+      const confirmed = await waitForFundingStatus(operation, referenceId);
+      if (!confirmed) throw new Error("Transaction sent. Refresh in a moment.");
+
+      clearOperationReference(operationKey);
+      await refreshPlayerState();
+      setAppMessage(operation === "deposit" ? "Deposit confirmed." : "Withdrawal confirmed.", "success");
+    } catch (error) {
+      const message = error?.message || "Unavailable";
+      setAppMessage(message.includes("registered with Yokefellow Network") ? "Unavailable" : message, "error");
+    } finally {
+      setActionBusy(button, false);
+    }
+  }
+
+  async function sendPreparedWalletTransaction(transaction) {
+    const tx = {
+      from: activeWallet,
+      to: transaction.to,
+      data: transaction.data || "0x",
+      value: hexQuantity(transaction.value || "0"),
+    };
+    const hash = await window.ethereum.request({
+      method: "eth_sendTransaction",
+      params: [tx],
+    });
+    await waitForWalletReceipt(hash);
+    return hash;
+  }
+
+  async function waitForWalletReceipt(hash) {
+    for (let attempt = 0; attempt < 80; attempt += 1) {
+      const receipt = await window.ethereum.request({
+        method: "eth_getTransactionReceipt",
+        params: [hash],
+      });
+      if (receipt) {
+        if (receipt.status && String(receipt.status).toLowerCase() === "0x0") {
+          throw new Error("Transaction failed.");
+        }
+        return receipt;
+      }
+      await wait(1500);
+    }
+    throw new Error("Transaction is still pending.");
+  }
+
+  async function waitForFundingStatus(operation, referenceId) {
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      const result = await appPost("/app/funding/status", { operation, referenceId });
+      if (result.operation?.status === "confirmed") return true;
+      await wait(1500);
+    }
+    return false;
   }
 
   async function equipSkin(family, button) {
@@ -709,6 +844,32 @@
   function safeQuantity(value) {
     const parsed = Number.parseInt(String(value ?? "0"), 10);
     return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+  }
+
+  function parseYesRaw(value) {
+    const text = String(value || "").trim();
+    if (!/^\d+(?:\.\d{0,18})?$/.test(text)) return "";
+    const [whole, fraction = ""] = text.split(".");
+    return (BigInt(whole || "0") * 10n ** 18n + BigInt((fraction + "0".repeat(18)).slice(0, 18))).toString();
+  }
+
+  function formatYesRaw(value) {
+    try {
+      const raw = BigInt(String(value || "0"));
+      const whole = raw / 10n ** 18n;
+      const fraction = (raw % 10n ** 18n).toString().padStart(18, "0").replace(/0+$/, "");
+      return fraction ? `${whole}.${fraction.slice(0, 4)}` : whole.toString();
+    } catch {
+      return "0";
+    }
+  }
+
+  function hexQuantity(value) {
+    try {
+      return `0x${BigInt(String(value || "0")).toString(16)}`;
+    } catch {
+      return "0x0";
+    }
   }
 
   function familyLabel(family) {
