@@ -186,6 +186,7 @@ func _start_server() -> void:
 
 func _start_client() -> void:
 	machine.set_authoritative(false)
+	_report_browser_socket_state("connecting")
 	var error := OK
 	var created_peer: MultiplayerPeer
 	if _transport == "enet":
@@ -201,6 +202,7 @@ func _start_client() -> void:
 		created_peer = websocket_peer
 		_websocket_peer = websocket_peer
 	if error != OK:
+		_report_browser_socket_state("error")
 		status_changed.emit("Could not connect to the shared machine: %s" % error_string(error))
 		return
 	multiplayer.multiplayer_peer = created_peer
@@ -279,6 +281,12 @@ func leave_queue() -> void:
 		_server_request_queue_leave.rpc_id(1)
 	elif mode == "server":
 		_remove_wallet_from_queue(local_wallet)
+
+func request_presentation_test_opponent() -> void:
+	if mode != "client" or not _client_connected:
+		status_changed.emit("Connect to the shared machine before queueing the YD-2 test player.")
+		return
+	_server_request_presentation_test_opponent.rpc_id(1)
 
 func set_local_skin_family(value: String) -> void:
 	var requested := _normalize_family(value)
@@ -362,7 +370,11 @@ func authoritative_turn_completed(summary: Dictionary) -> void:
 		completed_toy_captures = (completed_toy_captures_value as Array).duplicate(true)
 	completed["toy_captures"] = completed_toy_captures
 	completed["toy_captures_confirmed"] = []
-	_settlements.append(completed)
+	var presentation_only := bool(completed.get("presentation_only", false))
+	if not presentation_only:
+		_settlements.append(completed)
+	else:
+		milestones.clear()
 	if not multiplayer.get_peers().is_empty():
 		_client_turn_completed.rpc(safe_summary, wallet, new_lifetime, milestones)
 	_active_turn = {}
@@ -379,6 +391,7 @@ func authoritative_payout_corrected(corrected_payout: int) -> void:
 
 func _on_connected_to_server() -> void:
 	_client_connected = true
+	_report_browser_socket_state("open")
 	if local_wallet.is_empty():
 		status_changed.emit("Connected as a spectator. Enter a wallet session to join the queue.")
 	else:
@@ -388,12 +401,29 @@ func _on_connected_to_server() -> void:
 func _on_connection_failed() -> void:
 	_client_connected = false
 	local_verified = false
+	_report_browser_socket_state("error")
 	status_changed.emit("Connection to the shared machine failed.")
 
 func _on_server_disconnected() -> void:
 	_client_connected = false
 	local_verified = false
+	_report_browser_socket_state("closed")
 	status_changed.emit("Disconnected from the shared machine. Reconnect before joining another turn.")
+
+func _report_browser_socket_state(state: String) -> void:
+	if not OS.has_feature("web"):
+		return
+	var safe_state := state if state in ["connecting", "open", "error", "closed"] else "error"
+	JavaScriptBridge.eval(
+		"""(() => {
+			const launch = new URLSearchParams(window.location.search).get('launch') || '';
+			window.parent && window.parent.postMessage(
+				{type:'yes-pusher-socket-state', state:'%s', launch},
+				window.location.origin
+			);
+		})()""" % safe_state,
+		true
+	)
 
 func _on_peer_connected(peer_id: int) -> void:
 	_players[str(peer_id)] = {"peer_id": peer_id, "wallet": "", "verified": false, "skin_family": "", "lifetime_yes": 0, "lifetime_coins_paid_out": 0}
@@ -514,6 +544,33 @@ func _server_request_queue_leave() -> void:
 	var peer_id := multiplayer.get_remote_sender_id()
 	_remove_peer_from_queue(peer_id)
 	_broadcast_queue_state()
+
+@rpc("any_peer", "call_remote", "reliable")
+func _server_request_presentation_test_opponent() -> void:
+	if not multiplayer.is_server():
+		return
+	var peer_id := multiplayer.get_remote_sender_id()
+	if not _presentation_test_mode:
+		_client_status.rpc_id(peer_id, "YD-2 presentation test mode is not enabled on the authoritative server.")
+		return
+	var test_wallet := "0x00000000000000000000000000000000000000b2"
+	if String(_active_turn.get("wallet", "")).to_lower() == test_wallet:
+		_client_status.rpc_id(peer_id, "Rainbow Player B is already active.")
+		return
+	for entry in _queue:
+		if String(entry.get("wallet", "")).to_lower() == test_wallet:
+			_client_status.rpc_id(peer_id, "Rainbow Player B is already waiting in the queue.")
+			return
+	var player := _player(test_wallet)
+	player["peer_id"] = 0
+	player["wallet"] = test_wallet
+	player["verified"] = true
+	player["skin_family"] = "pot_of_gold"
+	player["owned_skin_families"] = ["pot_of_gold"]
+	player["presentation_fixture"] = 1
+	_players[test_wallet] = player
+	_enqueue_player(0, test_wallet, "pot_of_gold", true)
+	_client_status.rpc_id(peer_id, "Rainbow Player B added behind the current player for the YD-2 transition test.")
 
 @rpc("any_peer", "call_remote", "reliable")
 func _server_set_skin_family(requested_skin_family: String) -> void:
@@ -656,7 +713,7 @@ func _server_enqueue_local(wallet: String, skin_family: String) -> void:
 	_players[wallet] = player
 	_enqueue_player(1, wallet, skin_family)
 
-func _enqueue_player(peer_id: int, wallet: String, skin_family: String) -> void:
+func _enqueue_player(peer_id: int, wallet: String, skin_family: String, presentation_only: bool = false) -> void:
 	if _active_turn.get("wallet", "") == wallet:
 		_client_status_for(peer_id, "Your turn is already active.")
 		return
@@ -672,6 +729,7 @@ func _enqueue_player(peer_id: int, wallet: String, skin_family: String) -> void:
 		"skin_family": skin_family,
 		"request_id": request_id,
 		"joined_at_unix": Time.get_unix_time_from_system(),
+		"presentation_only": presentation_only,
 	})
 	_client_status_for(
 		peer_id,
@@ -689,7 +747,8 @@ func _process_next_turn() -> void:
 	var turn_id := String(entry.get("request_id", ""))
 	var wallet := String(entry.get("wallet", "")).to_lower()
 	var seed := randi()
-	var turn_access := _reserve_turn_access(wallet, turn_id)
+	var presentation_only := bool(entry.get("presentation_only", false))
+	var turn_access := {"mode": "presentation_test", "next_free_turn_at_unix": 0, "earned_turns": 0} if presentation_only else _reserve_turn_access(wallet, turn_id)
 	var access_mode := String(turn_access.get("mode", "paid"))
 	_active_turn = {
 		"turn_id": turn_id,
@@ -702,6 +761,7 @@ func _process_next_turn() -> void:
 		"access_mode": access_mode,
 		"next_free_turn_at_unix": int(turn_access.get("next_free_turn_at_unix", 0)),
 		"earned_turns_remaining": int(turn_access.get("earned_turns", 0)),
+		"presentation_only": presentation_only,
 		"pre_turn_world": machine.export_world_snapshot(),
 		"latest_payout_yes": 0,
 		"started_at_unix": 0,
@@ -745,6 +805,8 @@ func _start_active_turn() -> void:
 			start_message = "Your earned 10-coin drop is starting. %s" % _turn_access_status_message(wallet)
 		"test_free":
 			start_message = "Your free test 10-coin drop is starting."
+		"presentation_test":
+			start_message = "Rainbow Player B presentation test turn is starting."
 	_client_status_for(int(_active_turn.get("peer_id", 0)), start_message)
 	machine.set_turn_seed(int(_active_turn.get("seed", 0)))
 	machine.queue_turn_toy(String(_active_turn.get("skin_family", "")))
