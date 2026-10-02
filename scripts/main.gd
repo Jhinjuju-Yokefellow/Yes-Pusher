@@ -1123,6 +1123,12 @@ func _on_presentation_event(event: Dictionary) -> void:
 				Color(0.38, 0.82, 1.0, 1.0),
 				4.0
 			)
+		"settlement_state":
+			var settlement_message := String(event.get("message", "")).strip_edges()
+			if not settlement_message.is_empty():
+				status_label.text = settlement_message
+				if _turn_result_status != null:
+					_turn_result_status.text = settlement_message
 		"settlement_confirmed":
 			if _turn_result_status != null:
 				_turn_result_status.text = "Confirmed · %d YES credited" % maxi(0, int(event.get("yes", 0)))
