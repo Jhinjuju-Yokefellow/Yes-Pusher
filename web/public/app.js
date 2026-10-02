@@ -374,9 +374,9 @@
   }
 
   function craftReadinessNote(toy, small, medium, large) {
-    if (!playerState?.craftCatalogReady) return "Craft Paths are waiting for the Yokefellow craft catalog.";
+    if (!playerState?.craftCatalogReady) return "Craft Paths are not live yet.";
     if (!toy.craft?.medium || !toy.craft?.large) return "One or more craft Paths for this family are not live yet.";
-    if (large > 0 && !playerState?.contributionReady) return "Large contribution signer is not configured yet.";
+    if (large > 0 && !playerState?.contributionReady) return "Large contribution is not live yet.";
     if (small < 3 && medium < 3 && large < 1) return "Earn more Toys to unlock Workshop actions.";
     return "Crafting permanently consumes the three input Toys. Contribution permanently consumes one Large Toy.";
   }
@@ -540,7 +540,7 @@
         indexed ? "success" : "",
       );
     } catch (error) {
-      setAppMessage(`${error?.message || "Craft failed."} Retry uses the same craft reference.`, "error");
+      setAppMessage(`${error?.message || "Craft failed."} Retry uses the same Network reference.`, "error");
     } finally {
       setActionBusy(button, false);
     }
@@ -570,7 +570,7 @@
         "success",
       );
     } catch (error) {
-      setAppMessage(`${error?.message || "Contribution failed."} Retry uses the exact same contribution reference/transaction.`, "error");
+      setAppMessage(`${error?.message || "Contribution failed."} Retry uses the same Network reference.`, "error");
     } finally {
       setActionBusy(button, false);
     }
