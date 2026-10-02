@@ -1191,7 +1191,7 @@ func _presentation_for_wallet(wallet: String, selected_skin: String) -> Dictiona
 			"avatarUrl": "",
 			"avatar_url": "",
 			"profile_picture_url": "",
-			"cardSettings": {"tagline": "YD-2 presentation fixture"},
+			"cardSettings": {"tagline": "Local test presentation"},
 			"featuredOutputs": [],
 		}
 		fixture_skin = "horseshoe"
@@ -1208,7 +1208,7 @@ func _presentation_for_wallet(wallet: String, selected_skin: String) -> Dictiona
 			"avatarUrl": "",
 			"avatar_url": "",
 			"profile_picture_url": "",
-			"cardSettings": {"tagline": "YD-2 presentation fixture"},
+			"cardSettings": {"tagline": "Local test presentation"},
 			"featuredOutputs": [],
 		}
 		fixture_skin = "pot_of_gold"
