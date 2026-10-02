@@ -32,6 +32,12 @@ var _session_input: LineEdit
 var _verify_button: Button
 var _leave_queue_button: Button
 var _queue_label: Label
+var _free_turn_label: Label
+var _free_turn_state: Dictionary = {}
+var _free_turn_server_offset_seconds: int = 0
+var _free_turn_last_rendered_second: int = -1
+var _local_queue_position: int = -1
+var _local_turn_active: bool = false
 var _test_player_button: Button
 var _skin_selector: OptionButton
 var _refresh_skins_button: Button
@@ -77,6 +83,7 @@ func _ready() -> void:
 	_shared_world.active_player_presentation_changed.connect(_on_active_player_presentation_changed)
 	_shared_world.local_identity_changed.connect(_on_local_identity_changed)
 	_shared_world.owned_skins_changed.connect(_on_owned_skins_changed)
+	_shared_world.free_turn_state_changed.connect(_on_free_turn_state_changed)
 	_shared_world.settlement_changed.connect(_on_settlement_changed)
 	_shared_world.remote_turn_reveal_started.connect(_on_remote_turn_reveal_started)
 	_shared_world.remote_turn_finished.connect(_on_remote_turn_finished)
@@ -123,6 +130,7 @@ func _process(_delta: float) -> void:
 		machine.active_coin_count(),
 		machine.active_toy_count(),
 	]
+	_refresh_free_turn_ui()
 
 func _unhandled_key_input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and not event.echo:
@@ -336,23 +344,25 @@ func _on_shared_status_changed(message: String) -> void:
 	status_label.text = message
 
 func _on_shared_queue_changed(position: int, total: int) -> void:
+	_local_queue_position = position
 	if _queue_label != null:
 		_queue_label.text = "Queue: %d waiting%s" % [total, " · you are #%d" % position if position > 0 else ""]
 	if position > 0:
 		status_label.text = "Queue position %d of %d. Your turn will drop 10 coins." % [position, total]
 	elif total > 0 and not machine.is_turn_active():
 		status_label.text = "%d player%s waiting for the shared machine." % [total, "" if total == 1 else "s"]
+	_update_network_drop_button()
 
 func _on_shared_active_player_changed(wallet: String, turn_id: String) -> void:
 	if wallet.is_empty():
+		_local_turn_active = false
 		if _active_player_panel != null:
 			_active_player_panel.visible = false
-		if _shared_world != null and _shared_world.mode == "client":
-			drop_button.disabled = not _shared_world.local_verified
+		_update_network_drop_button()
 		return
 	var is_local_turn: bool = wallet.to_lower() == _shared_world.local_wallet.to_lower()
-	if is_local_turn and _shared_world.mode == "client":
-		drop_button.disabled = true
+	_local_turn_active = is_local_turn
+	_update_network_drop_button()
 	var owner := "your wallet" if is_local_turn else "%s…%s" % [wallet.left(6), wallet.right(4)]
 	status_label.text = "Active turn %s belongs to %s and drops 10 coins." % [turn_id, owner]
 
@@ -424,14 +434,86 @@ func _on_local_identity_changed(wallet: String, verified: bool) -> void:
 	if _verify_button != null:
 		_verify_button.disabled = false
 		_verify_button.text = "VERIFIED" if verified else "VERIFY WALLET SESSION"
-	if _shared_world != null and _shared_world.mode == "client":
-		drop_button.disabled = not verified
 	if _refresh_skins_button != null:
 		_refresh_skins_button.disabled = not verified
+	_update_network_drop_button()
 	if verified:
 		status_label.text = "Wallet %s…%s verified for the shared machine." % [wallet.left(6), wallet.right(4)]
 	else:
 		status_label.text = "Wallet verification failed. Spectator mode only."
+
+func _on_free_turn_state_changed(state: Dictionary) -> void:
+	_free_turn_state = state.duplicate(true)
+	var server_now := int(_free_turn_state.get("server_time_unix", 0))
+	if server_now > 0:
+		_free_turn_server_offset_seconds = server_now - int(Time.get_unix_time_from_system())
+	_free_turn_last_rendered_second = -1
+	_refresh_free_turn_ui()
+
+func _refresh_free_turn_ui() -> void:
+	if _free_turn_label == null or _shared_world == null or _shared_world.mode == "local":
+		return
+	if _free_turn_state.is_empty():
+		_free_turn_label.text = "FREE DROP · CHECKING…"
+		return
+	if not bool(_free_turn_state.get("enabled", false)):
+		_free_turn_label.text = "HOURLY FREE DROP · UNAVAILABLE"
+		_update_network_drop_button()
+		return
+
+	var state := String(_free_turn_state.get("state", "disabled"))
+	var estimated_server_now := int(Time.get_unix_time_from_system()) + _free_turn_server_offset_seconds
+	var next_free_at := maxi(0, int(_free_turn_state.get("next_free_turn_at_unix", 0)))
+	var remaining := maxi(0, next_free_at - estimated_server_now)
+
+	if state == "cooldown" and remaining <= 0:
+		state = "available"
+	if state == "cooldown" and remaining == _free_turn_last_rendered_second:
+		return
+	_free_turn_last_rendered_second = remaining
+
+	match state:
+		"available":
+			_free_turn_label.text = "FREE DROP AVAILABLE NOW"
+		"queued":
+			_free_turn_label.text = "FREE DROP RESERVED · QUEUED"
+		"active":
+			_free_turn_label.text = "FREE DROP IN PROGRESS · COOLDOWN STARTS WHEN TURN ENDS"
+		"reserved":
+			_free_turn_label.text = "FREE DROP RESERVED"
+		"cooldown":
+			_free_turn_label.text = "NEXT FREE DROP · %s" % _format_free_turn_countdown(remaining)
+		_:
+			_free_turn_label.text = "HOURLY FREE DROP · UNAVAILABLE"
+	_update_network_drop_button(state)
+
+func _format_free_turn_countdown(total_seconds: int) -> String:
+	var seconds := maxi(0, total_seconds)
+	var hours := seconds / 3600
+	var minutes := (seconds % 3600) / 60
+	var remainder := seconds % 60
+	if hours > 0:
+		return "%d:%02d:%02d" % [hours, minutes, remainder]
+	return "%02d:%02d" % [minutes, remainder]
+
+func _update_network_drop_button(override_free_state: String = "") -> void:
+	if _shared_world == null or _shared_world.mode == "local":
+		return
+	var free_state := override_free_state
+	if free_state.is_empty():
+		free_state = String(_free_turn_state.get("state", ""))
+		if free_state == "cooldown":
+			var estimated_server_now := int(Time.get_unix_time_from_system()) + _free_turn_server_offset_seconds
+			if estimated_server_now >= int(_free_turn_state.get("next_free_turn_at_unix", 0)):
+				free_state = "available"
+	var can_queue := _shared_world.local_verified and _local_queue_position <= 0 and not _local_turn_active
+	drop_button.disabled = not can_queue
+	if free_state == "available":
+		drop_button.text = "FREE DROP · 10 COINS"
+	elif bool(_free_turn_state.get("paid_charge_bypassed_for_test", false)):
+		drop_button.text = "DROP 10 COINS · TEST NO CHARGE"
+	else:
+		drop_button.text = "DROP 10 COINS · 10 YES"
 
 func _on_settlement_changed(message: String) -> void:
 	status_label.text = message
@@ -586,6 +668,12 @@ func _build_network_controls() -> void:
 	_queue_label.text = "Queue: 0 waiting"
 	layout.add_child(_queue_label)
 
+	_free_turn_label = Label.new()
+	_free_turn_label.text = "FREE DROP · CHECKING…"
+	_free_turn_label.add_theme_font_size_override("font_size", 15)
+	_free_turn_label.add_theme_color_override("font_color", Color(0.96, 0.76, 0.24, 1.0))
+	layout.add_child(_free_turn_label)
+
 	if _is_local_web_yd2_test():
 		_test_player_button = Button.new()
 		_test_player_button.text = "QUEUE TEST PLAYER B"
@@ -649,7 +737,7 @@ func _build_network_controls() -> void:
 	_leave_queue_button.text = "LEAVE QUEUE"
 	_leave_queue_button.pressed.connect(_on_leave_queue_pressed)
 	identity_actions.add_child(_leave_queue_button)
-	drop_button.disabled = not _shared_world.local_verified
+	_update_network_drop_button()
 
 func _on_owned_skins_changed(families: Array, equipped: String) -> void:
 	_rebuild_skin_selector(families, equipped)
