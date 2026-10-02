@@ -424,6 +424,20 @@ func authoritative_turn_completed(summary: Dictionary) -> void:
 	})
 	if not multiplayer.get_peers().is_empty():
 		_client_turn_completed.rpc(safe_summary, wallet, new_lifetime, milestones)
+	call_deferred(
+		"_publish_network_event",
+		"coin_drop_completed",
+		"turn:%s:result" % String(completed.get("turn_id", "")),
+		wallet,
+		{
+			"turnId": String(completed.get("turn_id", "")),
+			"payoutYes": payout,
+			"caughtCoinCount": paid_out_this_turn,
+			"lifetimeCoinsPaidOut": new_lifetime_paid_out,
+			"skinMilestones": milestones.duplicate(),
+			"toyCaptures": completed_toy_captures.duplicate(true),
+		}
+	)
 	_live_player_presentation = {}
 	_active_turn = {}
 	_save_state()
@@ -911,6 +925,18 @@ func _start_active_turn() -> void:
 		"presentation_test":
 			start_message = "Rainbow Player B presentation test turn is starting."
 	_client_status_for(int(_active_turn.get("peer_id", 0)), start_message)
+	call_deferred(
+		"_publish_network_event",
+		"coin_drop_started",
+		"turn:%s:started" % turn_id,
+		wallet,
+		{
+			"turnId": turn_id,
+			"accessMode": access_mode,
+			"dropCount": FIXED_DROP_COUNT,
+			"skinFamily": String(_active_turn.get("skin_family", "")),
+		}
+	)
 	machine.set_turn_seed(int(_active_turn.get("seed", 0)))
 	machine.queue_turn_toy(String(_active_turn.get("skin_family", "")))
 	machine.drop_coins(FIXED_DROP_COUNT)
@@ -1030,6 +1056,18 @@ func _process_settlement_outbox() -> void:
 				elif awarded_peer_id == 1:
 					nft_awarded.emit(award.duplicate(true))
 			confirmed_milestones.append(milestone_number)
+			call_deferred(
+				"_publish_network_event",
+				"skin_drop_earned",
+				"skin:%s:%d:confirmed" % [wallet.to_lower(), milestone_number],
+				wallet,
+				{
+					"turnId": turn_id,
+					"milestoneNumber": milestone_number,
+					"classId": awarded_class_id,
+					"family": awarded_family,
+				}
+			)
 			settlement["skin_milestones_confirmed"] = confirmed_milestones
 			_settlements[index] = settlement
 			_save_state()
@@ -1140,6 +1178,26 @@ func _broadcast_presentation_event(event: Dictionary) -> void:
 	else:
 		presentation_event.emit(safe_event)
 
+func _publish_network_event(
+	event_type: String,
+	reference_id: String,
+	wallet: String,
+	data: Dictionary
+) -> void:
+	if yf == null or not yf.integration_ready():
+		return
+	var result: Dictionary = await yf.publish_app_event(
+		event_type,
+		reference_id,
+		wallet,
+		data
+	)
+	if not bool(result.get("ok", false)):
+		push_warning(
+			"Yokefellow Network App event %s was not recorded: %s"
+			% [event_type, String(result.get("error", "unknown error"))]
+	)
+
 func _publish_settlement_message(message: String, wallet: String, turn_id: String) -> void:
 	settlement_changed.emit(message)
 	_broadcast_presentation_event({
@@ -1152,14 +1210,28 @@ func _publish_settlement_message(message: String, wallet: String, turn_id: Strin
 func _on_authoritative_toy_captured(toy_family: String, toy_instance_id: String, _turn_generation: int, power_result: Dictionary) -> void:
 	if mode != "server" or _active_turn.is_empty():
 		return
+	var wallet := String(_active_turn.get("wallet", ""))
+	var turn_id := String(_active_turn.get("turn_id", ""))
 	_broadcast_presentation_event({
 		"kind": "toy_caught",
-		"wallet": String(_active_turn.get("wallet", "")),
-		"turn_id": String(_active_turn.get("turn_id", "")),
+		"wallet": wallet,
+		"turn_id": turn_id,
 		"family": toy_family,
 		"toy_instance_id": toy_instance_id,
 		"power_result": power_result.duplicate(true),
 	})
+	call_deferred(
+		"_publish_network_event",
+		"toy_caught",
+		"turn:%s:toy:%s:caught" % [turn_id, toy_instance_id],
+		wallet,
+		{
+			"turnId": turn_id,
+			"toyInstanceId": toy_instance_id,
+			"toyFamily": toy_family,
+			"powerResult": power_result.duplicate(true),
+		}
+	)
 
 func _on_authoritative_reward_wheel_requested(values: PackedInt32Array) -> void:
 	if mode == "server" and not _active_turn.is_empty():
