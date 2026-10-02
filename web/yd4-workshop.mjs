@@ -379,7 +379,7 @@ export function createWorkshopService({
       ready: false,
       credit: null,
       source: null,
-      error: "Participant funding is waiting for Yokefellow Network.",
+      error: "Unavailable",
     };
     try {
       const bucketSlug = String(catalog?.bucketSlug || cachedBucketSlug || "").trim();
@@ -399,7 +399,7 @@ export function createWorkshopService({
         ready: false,
         credit: null,
         source: null,
-        error: error instanceof Error ? error.message : "Participant funding is unavailable.",
+        error: "Unavailable",
       };
     }
 
