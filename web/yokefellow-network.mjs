@@ -89,7 +89,13 @@ export function createYokefellowNetworkClient({
       });
     },
 
-    async invokeAction({ key, referenceId, wallet, data = {} }) {
+    async invokeAction({
+      key,
+      referenceId,
+      wallet,
+      participantSessionToken = "",
+      data = {},
+    }) {
       return request("/v1/actions/invoke", {
         method: "POST",
         body: JSON.stringify({
@@ -97,6 +103,9 @@ export function createYokefellowNetworkClient({
           key,
           referenceId,
           participant: { wallet },
+          ...(participantSessionToken
+            ? { participantSessionToken }
+            : {}),
           data,
         }),
       });
@@ -112,6 +121,13 @@ export function createYokefellowNetworkClient({
 
     async reconcileAction(actionId) {
       return request(`/v1/actions/${encodeURIComponent(actionId)}/reconcile`, {
+        method: "POST",
+        body: JSON.stringify({}),
+      });
+    },
+
+    async resumeAction(actionId) {
+      return request(`/v1/actions/${encodeURIComponent(actionId)}/resume`, {
         method: "POST",
         body: JSON.stringify({}),
       });
