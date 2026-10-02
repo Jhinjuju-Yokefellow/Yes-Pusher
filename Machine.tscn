@@ -41,7 +41,7 @@ size = Vector3(3.937671, 3.6, 0.55)
 size = Vector3(3.9183533, 3.6, 0.55)
 
 [sub_resource type="StandardMaterial3D" id="Material_pusher"]
-albedo_color = Color(0.56, 0.6, 0.57, 1)
+albedo_color = Color(0.62, 0.68, 0.64, 1)
 metallic = 0.82
 roughness = 0.22
 
@@ -91,7 +91,7 @@ size = Vector3(11.45, 0.22, 0.42)
 [sub_resource type="StandardMaterial3D" id="Material_glass"]
 transparency = 1
 cull_mode = 2
-albedo_color = Color(0.58, 0.83, 0.92, 0.16)
+albedo_color = Color(0.58, 0.83, 0.92, 0.10)
 metallic = 0.08
 roughness = 0.08
 
@@ -144,16 +144,16 @@ size = Vector3(11.6, 1.15, 0.35)
 size = Vector3(11.6, 1.15, 0.35)
 
 [sub_resource type="BoxMesh" id="Mesh_front_guide"]
-size = Vector3(0.65, 1.15, 2.45)
+size = Vector3(0.55, 0.95, 2.35)
 
 [sub_resource type="BoxShape3D" id="Shape_front_guide"]
-size = Vector3(0.65, 1.15, 2.45)
+size = Vector3(0.55, 0.95, 2.35)
 
 [sub_resource type="BoxMesh" id="Mesh_front_edge_guard"]
-size = Vector3(0.5, 1, 2.7453125)
+size = Vector3(0.42, 0.82, 2.15)
 
 [sub_resource type="BoxShape3D" id="Shape_front_edge_guard"]
-size = Vector3(0.5, 1, 2.7711914)
+size = Vector3(0.42, 0.82, 2.15)
 
 [sub_resource type="BoxMesh" id="Mesh_header_panel"]
 size = Vector3(12.3, 1.1, 0.8)
@@ -381,7 +381,7 @@ mesh = SubResource("Mesh_front_guide")
 shape = SubResource("Shape_front_guide")
 
 [node name="LeftFrontGuideExtension" type="StaticBody3D" parent="." unique_id=300100022]
-transform = Transform3D(0.9998555, 0, -0.016998688, 0, 1, 0, 0.016998688, 0, 0.9998555, -4.624816, 0.72, 2.945549)
+transform = Transform3D(0.990268, 0, -0.139173, 0, 1, 0, 0.139173, 0, 0.990268, -4.48, 0.66, 2.68)
 
 [node name="Mesh" type="MeshInstance3D" parent="LeftFrontGuideExtension" unique_id=300100023]
 material_override = SubResource("Material_wall")
@@ -391,7 +391,7 @@ mesh = SubResource("Mesh_front_edge_guard")
 shape = SubResource("Shape_front_edge_guard")
 
 [node name="RightFrontGuideExtension" type="StaticBody3D" parent="." unique_id=300100025]
-transform = Transform3D(0.9998555, 0, 0.016998688, 0, 1, 0, -0.016998688, 0, 0.9998555, 4.624816, 0.72, 2.945549)
+transform = Transform3D(0.990268, 0, 0.139173, 0, 1, 0, -0.139173, 0, 0.990268, 4.48, 0.66, 2.68)
 
 [node name="Mesh" type="MeshInstance3D" parent="RightFrontGuideExtension" unique_id=300100026]
 material_override = SubResource("Material_wall")
