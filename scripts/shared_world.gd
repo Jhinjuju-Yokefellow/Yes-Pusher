@@ -769,11 +769,12 @@ func _client_world_snapshot(snapshot: Dictionary) -> void:
 	machine.apply_world_snapshot(snapshot.get("world", {}) as Dictionary)
 	var active := snapshot.get("active_turn", {}) as Dictionary
 	var payout := int(active.get("latest_payout_yes", 0))
+	var caught := int(active.get("caught_coin_count", 0))
 	if not active.is_empty() and String(active.get("wallet", "")) == local_wallet:
 		if String(active.get("status", "")) == "revealing_result":
-			status_changed.emit("Your turn is settling. Current payout: %d YES." % payout)
+			status_changed.emit("Your turn is settling. Caught: %d coins · %d YES." % [caught, payout])
 		else:
-			status_changed.emit("Your 10-coin turn is running. Current caught value: %d YES." % payout)
+			status_changed.emit("Your turn is running. Caught: %d coins · %d YES." % [caught, payout])
 
 func _server_enqueue_local(wallet: String, skin_family: String) -> void:
 	var player := _ensure_presentation_fixture(_player(wallet))
@@ -1183,12 +1184,19 @@ func _broadcast_queue_state() -> void:
 func _public_active_turn() -> Dictionary:
 	if _active_turn.is_empty():
 		return {}
+	var live_payout := int(_active_turn.get("latest_payout_yes", 0))
+	var live_caught := 0
+	if machine != null:
+		live_payout = machine.get_current_turn_payout()
+		live_caught = machine.get_current_turn_caught_count()
+	_active_turn["latest_payout_yes"] = live_payout
 	return {
 		"turn_id": String(_active_turn.get("turn_id", "")),
 		"wallet": String(_active_turn.get("wallet", "")),
 		"drop_count": FIXED_DROP_COUNT,
 		"status": String(_active_turn.get("status", "")),
-		"latest_payout_yes": int(_active_turn.get("latest_payout_yes", 0)),
+		"latest_payout_yes": live_payout,
+		"caught_coin_count": live_caught,
 		"presentation": _active_player_presentation(),
 	}
 
