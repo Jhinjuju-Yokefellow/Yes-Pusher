@@ -735,10 +735,10 @@ func _client_status(message: String) -> void:
 			push_warning("Received an invalid NFT award payload from the shared server.")
 		return
 	if message.begins_with(PRESENTATION_EVENT_MESSAGE_PREFIX):
-		var encoded := message.substr(PRESENTATION_EVENT_MESSAGE_PREFIX.length())
-		var parsed: Variant = JSON.parse_string(encoded)
-		if parsed is Dictionary:
-			presentation_event.emit((parsed as Dictionary).duplicate(true))
+		var event_encoded := message.substr(PRESENTATION_EVENT_MESSAGE_PREFIX.length())
+		var event_parsed: Variant = JSON.parse_string(event_encoded)
+		if event_parsed is Dictionary:
+			presentation_event.emit((event_parsed as Dictionary).duplicate(true))
 		else:
 			push_warning("Received an invalid presentation event from the shared server.")
 		return
