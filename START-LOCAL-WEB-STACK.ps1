@@ -32,5 +32,4 @@ Start-Sleep -Seconds 3
 Start-Process "http://127.0.0.1:8080" | Out-Null
 
 Write-Host "Opened the wallet login page."
-Write-Host "Two terminal windows are running: wallet/instant-mint service and authoritative Godot server."
-Write-Host "Instant mint owner setup: http://127.0.0.1:8080/instant-mint.html"
+Write-Host "Two terminal windows are running: YES drop web shell and authoritative Godot server."
