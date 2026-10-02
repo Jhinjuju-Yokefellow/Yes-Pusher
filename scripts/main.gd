@@ -32,6 +32,7 @@ var _session_input: LineEdit
 var _verify_button: Button
 var _leave_queue_button: Button
 var _queue_label: Label
+var _test_player_button: Button
 var _skin_selector: OptionButton
 var _refresh_skins_button: Button
 var _updating_skin_selector: bool = false
@@ -585,6 +586,13 @@ func _build_network_controls() -> void:
 	_queue_label.text = "Queue: 0 waiting"
 	layout.add_child(_queue_label)
 
+	if _is_local_web_yd2_test():
+		_test_player_button = Button.new()
+		_test_player_button.text = "QUEUE TEST PLAYER B"
+		_test_player_button.tooltip_text = "Adds a presentation-only second player. No wallet switch or Yokefellow settlement."
+		_test_player_button.pressed.connect(_on_queue_test_player_pressed)
+		layout.add_child(_test_player_button)
+
 	var skin_title := Label.new()
 	skin_title.text = "EQUIPPED COIN"
 	skin_title.add_theme_color_override("font_color", Color(0.96, 0.76, 0.24, 1.0))
@@ -698,6 +706,23 @@ func _on_verify_wallet_pressed() -> void:
 
 func _on_leave_queue_pressed() -> void:
 	_shared_world.leave_queue()
+
+func _on_queue_test_player_pressed() -> void:
+	if _test_player_button != null:
+		_test_player_button.disabled = true
+	_shared_world.request_presentation_test_opponent()
+	await get_tree().create_timer(1.0).timeout
+	if _test_player_button != null:
+		_test_player_button.disabled = false
+
+func _is_local_web_yd2_test() -> bool:
+	if not OS.has_feature("web"):
+		return false
+	var hostname: Variant = JavaScriptBridge.eval(
+		"(window.parent && window.parent.location && window.parent.location.hostname) || ''",
+		true
+	)
+	return String(hostname).strip_edges().to_lower() in ["127.0.0.1", "localhost"]
 
 func _on_nft_awarded(award: Dictionary) -> void:
 	_nft_award_queue.append(award.duplicate(true))
