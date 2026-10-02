@@ -45,8 +45,15 @@ var _updating_skin_selector: bool = false
 var _turn_result_panel: PanelContainer
 var _turn_result_title: Label
 var _turn_result_detail: Label
+var _turn_result_status: Label
 var _turn_result_generation: int = 0
+var _capture_panel: PanelContainer
+var _capture_title: Label
+var _capture_detail: Label
+var _capture_generation: int = 0
+var _last_active_player_presentation: Dictionary = {}
 var _nft_award_panel: PanelContainer
+var _nft_award_heading: Label
 var _nft_award_type: Label
 var _nft_award_name: Label
 var _nft_award_detail: Label
@@ -74,6 +81,7 @@ var _active_player_turn_id: String = ""
 
 func _ready() -> void:
 	_build_power_panel()
+	_build_capture_panel()
 	_build_turn_result_panel()
 	_build_nft_award_panel()
 	_build_active_player_showcase()
@@ -93,6 +101,7 @@ func _ready() -> void:
 	_shared_world.reward_wheel_available.connect(_on_reward_wheel_requested)
 	_shared_world.reward_wheel_result.connect(_on_remote_reward_wheel_result)
 	_shared_world.nft_awarded.connect(_on_nft_awarded)
+	_shared_world.presentation_event.connect(_on_presentation_event)
 
 	drop_button.pressed.connect(_on_drop_pressed)
 	machine.coin_spawned.connect(_on_coin_spawned)
@@ -229,6 +238,8 @@ func _on_turn_started(drop_total: int) -> void:
 func _on_turn_finished(payout: int) -> void:
 	_current_turn_payout = payout
 	_result_reveal_active = true
+	if _shared_world.mode == "server":
+		_shared_world.authoritative_turn_reveal_started(machine.get_last_turn_summary())
 	var final_summary: Dictionary = await machine.complete_result_reveal()
 	_current_turn_payout = maxi(0, int(final_summary.get("total_yes", 0)))
 	_result_reveal_active = false
@@ -282,7 +293,9 @@ func _on_toy_spawn_skipped(toy_family: String, active_count: int, max_count: int
 	)
 
 func _on_toy_captured(toy_family: String, _toy_instance_id: String, _turn_id: int, _power_result: Dictionary) -> void:
-	status_label.text = "%s caught — power activated and its matching toy NFT will settle with this turn." % _toy_name(toy_family)
+	status_label.text = "%s caught." % _toy_name(toy_family)
+	if _shared_world == null or _shared_world.mode != "server":
+		_show_toy_caught_moment(toy_family)
 
 func _on_toy_lost(toy_family: String, _toy_instance_id: String) -> void:
 	status_label.text = "%s left through a non-qualifying loss area." % _toy_name(toy_family)
@@ -377,6 +390,7 @@ func _on_shared_active_player_changed(wallet: String, turn_id: String) -> void:
 
 
 func _on_active_player_presentation_changed(presentation: Dictionary) -> void:
+	_last_active_player_presentation = presentation.duplicate(true)
 	if presentation.is_empty():
 		_hide_active_player_showcase()
 		return
@@ -469,12 +483,12 @@ func _update_network_drop_button(override_free_state: String = "") -> void:
 
 func _on_settlement_changed(message: String) -> void:
 	status_label.text = message
+	if _turn_result_status != null:
+		_turn_result_status.text = message
 
 func _on_remote_turn_reveal_started(summary: Dictionary, wallet: String) -> void:
-	# Retained for protocol compatibility with older shared servers. No camera
-	# move or catch-pot hold is performed.
 	var is_local_turn: bool = wallet.to_lower() == _shared_world.local_wallet.to_lower()
-	status_label.text = "Your turn is settling…" if is_local_turn else "Settling turn for %s…%s…" % [wallet.left(6), wallet.right(4)]
+	status_label.text = "Counting your result…" if is_local_turn else "Counting the current player's result…"
 	_show_turn_result(summary, false, -1, [], wallet)
 
 func _on_remote_turn_finished(summary: Dictionary, wallet: String, lifetime_yes: int, milestones: Array) -> void:
@@ -485,10 +499,10 @@ func _on_remote_turn_finished(summary: Dictionary, wallet: String, lifetime_yes:
 	_refresh_labels()
 	var is_local_turn: bool = wallet.to_lower() == _shared_world.local_wallet.to_lower()
 	if is_local_turn:
-		status_label.text = "Your turn complete: %d YES credited." % _current_turn_payout
+		status_label.text = "Your result: %d YES." % _current_turn_payout
 	else:
-		status_label.text = "%s…%s finished with %d YES." % [wallet.left(6), wallet.right(4), _current_turn_payout]
-	_show_turn_result(summary, true, lifetime_yes if is_local_turn else -1, milestones if is_local_turn else [], wallet)
+		status_label.text = "%s…%s won %d YES." % [wallet.left(6), wallet.right(4), _current_turn_payout]
+	_show_turn_result(summary, true, lifetime_yes if is_local_turn else -1, milestones, wallet)
 
 func _build_active_player_showcase() -> void:
 	_active_player_showcase_panel = PanelContainer.new()
@@ -651,6 +665,7 @@ func _show_active_player_placeholder(wallet: String) -> void:
 func _render_active_player_presentation(presentation: Dictionary) -> void:
 	if _active_player_showcase_panel == null:
 		return
+	_last_active_player_presentation = presentation.duplicate(true)
 	_active_player_showcase_generation += 1
 	var generation := _active_player_showcase_generation
 	_active_player_showcase_panel.visible = true
@@ -1039,6 +1054,130 @@ func _is_local_web_yd2_test() -> bool:
 	)
 	return String(hostname).strip_edges().to_lower() in ["127.0.0.1", "localhost"]
 
+func _build_capture_panel() -> void:
+	_capture_panel = PanelContainer.new()
+	_capture_panel.name = "CaptureMomentPanel"
+	_capture_panel.visible = false
+	_capture_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	interface_layer.add_child(_capture_panel)
+	_capture_panel.anchor_left = 0.5
+	_capture_panel.anchor_right = 0.5
+	_capture_panel.anchor_top = 0.0
+	_capture_panel.anchor_bottom = 0.0
+	_capture_panel.offset_left = -245.0
+	_capture_panel.offset_right = 245.0
+	_capture_panel.offset_top = 26.0
+	_capture_panel.offset_bottom = 145.0
+
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.012, 0.026, 0.017, 0.965)
+	style.border_width_left = 3
+	style.border_width_top = 3
+	style.border_width_right = 3
+	style.border_width_bottom = 3
+	style.border_color = Color(0.98, 0.76, 0.18, 1.0)
+	style.corner_radius_top_left = 18
+	style.corner_radius_top_right = 18
+	style.corner_radius_bottom_left = 18
+	style.corner_radius_bottom_right = 18
+	style.content_margin_left = 18.0
+	style.content_margin_right = 18.0
+	style.content_margin_top = 12.0
+	style.content_margin_bottom = 12.0
+	_capture_panel.add_theme_stylebox_override("panel", style)
+
+	var layout := VBoxContainer.new()
+	layout.alignment = BoxContainer.ALIGNMENT_CENTER
+	layout.add_theme_constant_override("separation", 5)
+	_capture_panel.add_child(layout)
+
+	_capture_title = Label.new()
+	_capture_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_capture_title.add_theme_font_size_override("font_size", 24)
+	_capture_title.add_theme_color_override("font_color", Color(1.0, 0.78, 0.18, 1.0))
+	layout.add_child(_capture_title)
+
+	_capture_detail = Label.new()
+	_capture_detail.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_capture_detail.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_capture_detail.add_theme_font_size_override("font_size", 14)
+	_capture_detail.add_theme_color_override("font_color", Color(0.86, 0.91, 0.87, 1.0))
+	layout.add_child(_capture_detail)
+
+func _on_presentation_event(event: Dictionary) -> void:
+	var kind := String(event.get("kind", "")).strip_edges().to_lower()
+	match kind:
+		"toy_caught":
+			_show_toy_caught_moment(String(event.get("family", "")).strip_edges().to_lower())
+		"toy_nft":
+			_show_capture_moment(
+				"TOY NFT CONFIRMED",
+				String(event.get("title", "Toy NFT")) + " was added to the player's result.",
+				Color(0.34, 0.94, 0.56, 1.0),
+				4.0
+			)
+		"skin_nft":
+			_show_capture_moment(
+				"COIN SKIN NFT CONFIRMED",
+				String(event.get("title", "Coin Skin NFT")) + " was earned.",
+				Color(0.38, 0.82, 1.0, 1.0),
+				4.0
+			)
+		"settlement_confirmed":
+			if _turn_result_status != null:
+				_turn_result_status.text = "Confirmed · %d YES credited" % maxi(0, int(event.get("yes", 0)))
+
+func _show_toy_caught_moment(family: String) -> void:
+	if not _is_valid_toy_family(family):
+		return
+	var detail := "%s reached the payout." % _toy_name(family)
+	var craft_cue := _craft_cue_after_small_toy(family)
+	if not craft_cue.is_empty():
+		detail += "\n" + craft_cue
+	_show_capture_moment("TOY CAUGHT!", detail, Color(1.0, 0.76, 0.18, 1.0), 4.2)
+
+func _craft_cue_after_small_toy(family: String) -> String:
+	var toys_value: Variant = _last_active_player_presentation.get("toys", [])
+	if not (toys_value is Array):
+		return ""
+	var small_count := 0
+	for toy_value in toys_value:
+		if not (toy_value is Dictionary):
+			continue
+		var toy := toy_value as Dictionary
+		if String(toy.get("family", "")).strip_edges().to_lower() != family:
+			continue
+		var tier := String(toy.get("tier", toy.get("size", "small"))).strip_edges().to_lower()
+		if tier == "small":
+			small_count += maxi(1, int(toy.get("quantity", 1)))
+	if small_count >= 2:
+		return "CRAFT AVAILABLE · 3 Small → 1 Medium"
+	return ""
+
+func _show_capture_moment(title: String, detail: String, accent: Color, seconds: float = 3.2) -> void:
+	if _capture_panel == null:
+		return
+	_capture_generation += 1
+	var generation := _capture_generation
+	_capture_title.text = title
+	_capture_title.add_theme_color_override("font_color", accent)
+	_capture_detail.text = detail
+	_capture_panel.modulate = Color(1.0, 1.0, 1.0, 0.0)
+	_capture_panel.visible = true
+	var reveal := create_tween()
+	reveal.tween_property(_capture_panel, "modulate:a", 1.0, 0.18)
+	_hide_capture_moment_later(generation, seconds)
+
+func _hide_capture_moment_later(generation: int, seconds: float) -> void:
+	await get_tree().create_timer(seconds).timeout
+	if generation != _capture_generation or _capture_panel == null:
+		return
+	var tween := create_tween()
+	tween.tween_property(_capture_panel, "modulate:a", 0.0, 0.24)
+	await tween.finished
+	if generation == _capture_generation:
+		_capture_panel.visible = false
+
 func _on_nft_awarded(award: Dictionary) -> void:
 	_nft_award_queue.append(award.duplicate(true))
 	if not _nft_award_showing:
@@ -1064,6 +1203,9 @@ func _show_next_nft_award() -> void:
 	var token_id := String(_active_nft_award.get("token_id", "")).strip_edges()
 	var image_url := String(_active_nft_award.get("image_url", "")).strip_edges()
 
+	var mint_status := String(_active_nft_award.get("mint_status", "")).strip_edges().to_lower()
+	var confirmed := mint_status in ["completed", "minted", "confirmed"]
+	_nft_award_heading.text = "NFT CONFIRMED" if confirmed else "NFT RESULT"
 	_nft_award_type.text = "COIN SKIN NFT" if kind == "skin" else "TOY NFT" if kind == "toy" else "YOKEFELLOW NFT"
 	_nft_award_name.text = title
 	var detail_lines := PackedStringArray([detail])
@@ -1146,12 +1288,12 @@ func _build_nft_award_panel() -> void:
 	layout.add_theme_constant_override("separation", 10)
 	_nft_award_panel.add_child(layout)
 
-	var earned := Label.new()
-	earned.text = "NFT EARNED"
-	earned.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	earned.add_theme_font_size_override("font_size", 34)
-	earned.add_theme_color_override("font_color", Color(1.0, 0.78, 0.18, 1.0))
-	layout.add_child(earned)
+	_nft_award_heading = Label.new()
+	_nft_award_heading.text = "NFT RESULT"
+	_nft_award_heading.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_nft_award_heading.add_theme_font_size_override("font_size", 34)
+	_nft_award_heading.add_theme_color_override("font_color", Color(1.0, 0.78, 0.18, 1.0))
+	layout.add_child(_nft_award_heading)
 
 	_nft_award_type = Label.new()
 	_nft_award_type.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -1324,14 +1466,14 @@ func _build_turn_result_panel() -> void:
 	_turn_result_panel.visible = false
 	_turn_result_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	interface_layer.add_child(_turn_result_panel)
-	_turn_result_panel.anchor_left = 1.0
-	_turn_result_panel.anchor_right = 1.0
+	_turn_result_panel.anchor_left = 0.5
+	_turn_result_panel.anchor_right = 0.5
 	_turn_result_panel.anchor_top = 0.0
 	_turn_result_panel.anchor_bottom = 0.0
-	_turn_result_panel.offset_left = -410.0
-	_turn_result_panel.offset_right = -28.0
-	_turn_result_panel.offset_top = 92.0
-	_turn_result_panel.offset_bottom = 330.0
+	_turn_result_panel.offset_left = -235.0
+	_turn_result_panel.offset_right = 235.0
+	_turn_result_panel.offset_top = 170.0
+	_turn_result_panel.offset_bottom = 475.0
 
 	var panel_style := StyleBoxFlat.new()
 	panel_style.bg_color = Color(0.018, 0.026, 0.020, 0.96)
@@ -1364,30 +1506,43 @@ func _build_turn_result_panel() -> void:
 	_turn_result_detail = Label.new()
 	_turn_result_detail.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_turn_result_detail.add_theme_font_size_override("font_size", 17)
-	_turn_result_detail.custom_minimum_size = Vector2(340.0, 150.0)
+	_turn_result_detail.custom_minimum_size = Vector2(420.0, 170.0)
 	layout.add_child(_turn_result_detail)
+
+	_turn_result_status = Label.new()
+	_turn_result_status.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_turn_result_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_turn_result_status.add_theme_font_size_override("font_size", 13)
+	_turn_result_status.add_theme_color_override("font_color", Color(0.66, 0.74, 0.68, 1.0))
+	layout.add_child(_turn_result_status)
 
 func _show_turn_result(summary: Dictionary, final: bool, lifetime_yes: int, milestones: Array, owner_wallet: String) -> void:
 	_turn_result_generation += 1
 	var generation: int = _turn_result_generation
-	_turn_result_title.text = "TURN COMPLETE" if final else "TURN SETTLING"
+	var total_yes: int = maxi(0, int(summary.get("total_yes", 0)))
+	_turn_result_title.text = "RESULT · %d YES" % total_yes if final else "COUNTING RESULT…"
+
 	var lines: PackedStringArray = PackedStringArray()
-	var drop_count: int = maxi(0, int(summary.get("drop_count", FIXED_DROP_COUNT)))
+	if not owner_wallet.is_empty():
+		var is_local := owner_wallet.to_lower() == _shared_world.local_wallet.to_lower()
+		lines.append("Your turn" if is_local else "Player %s…%s" % [owner_wallet.left(6), owner_wallet.right(4)])
+
 	var caught_count: int = maxi(0, int(summary.get("caught_coin_count", 0)))
 	var lost_count: int = maxi(0, int(summary.get("lost_count", 0)))
 	var base_yes: int = maxi(0, int(summary.get("caught_base_yes", caught_count)))
 	var multiplier: int = maxi(1, int(summary.get("payout_multiplier", 1)))
 	var bonus_yes: int = maxi(0, int(summary.get("bonus_yes", 0)))
-	var total_yes: int = maxi(0, int(summary.get("total_yes", 0)))
-	lines.append("Coins dropped: %d" % drop_count)
-	lines.append("Coins caught: %d" % caught_count)
-	lines.append("Coins lost this turn: %d" % lost_count)
+
+	lines.append("%d coin%s reached the payout" % [caught_count, "" if caught_count == 1 else "s"])
 	if multiplier > 1:
-		lines.append("Caught value: %d YES × %d" % [base_yes, multiplier])
-	else:
-		lines.append("Caught value: %d YES" % base_yes)
+		lines.append("%d YES × %d multiplier" % [base_yes, multiplier])
+	elif caught_count > 0:
+		lines.append("%d YES from caught coins" % base_yes)
 	if bonus_yes > 0:
-		lines.append("Bonus YES: +%d" % bonus_yes)
+		lines.append("+%d bonus YES" % bonus_yes)
+	if lost_count > 0:
+		lines.append("%d coin%s missed" % [lost_count, "" if lost_count == 1 else "s"])
+
 	var toy_names: PackedStringArray = PackedStringArray()
 	var toy_values: Variant = summary.get("toy_families", [])
 	if toy_values is Array:
@@ -1395,26 +1550,30 @@ func _show_turn_result(summary: Dictionary, final: bool, lifetime_yes: int, mile
 			toy_names.append(_toy_name(String(toy_value)))
 	if not toy_names.is_empty():
 		lines.append("Toy caught: %s" % ", ".join(toy_names))
-	lines.append("")
-	lines.append("TOTAL: %d YES" % total_yes)
-	if final and lifetime_yes >= 0:
-		lines.append("Lifetime earned: %d YES" % lifetime_yes)
-	if final:
-		var lifetime_paid_out := maxi(0, int(summary.get("lifetime_coins_paid_out", 0)))
-		var skin_every := maxi(1, int(summary.get("skin_drop_every_coins", 100)))
-		lines.append("Skin progress: %d / %d coins paid out" % [lifetime_paid_out % skin_every, skin_every])
+		for toy_value in toy_values:
+			var cue := _craft_cue_after_small_toy(String(toy_value).strip_edges().to_lower())
+			if not cue.is_empty():
+				lines.append(cue)
+				break
+
 	if final and not milestones.is_empty():
-		lines.append("Coin Skin Drop earned: %d" % milestones.size())
-	if not owner_wallet.is_empty() and owner_wallet.to_lower() != _shared_world.local_wallet.to_lower():
-		lines.append("Player: %s…%s" % [owner_wallet.left(6), owner_wallet.right(4)])
+		lines.append("Coin Skin NFT earned: %d" % milestones.size())
+	if final and lifetime_yes >= 0:
+		lines.append("Lifetime YES: %d" % lifetime_yes)
+
 	_turn_result_detail.text = "\n".join(lines)
+	if final:
+		_turn_result_status.text = "Result locked · confirming YES and NFT results"
+	else:
+		_turn_result_status.text = "Checking the final payout area…"
+
 	_turn_result_panel.modulate = Color.WHITE
 	_turn_result_panel.visible = true
 	if final:
 		_hide_turn_result_later(generation)
 
 func _hide_turn_result_later(generation: int) -> void:
-	await get_tree().create_timer(6.0).timeout
+	await get_tree().create_timer(8.0).timeout
 	if generation != _turn_result_generation:
 		return
 	var tween := create_tween()
