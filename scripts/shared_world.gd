@@ -4,6 +4,7 @@ class_name YesPusherSharedWorld
 signal status_changed(message: String)
 signal queue_changed(position: int, total: int)
 signal active_player_changed(wallet: String, turn_id: String)
+signal active_player_presentation_changed(presentation: Dictionary)
 signal local_identity_changed(wallet: String, verified: bool)
 signal owned_skins_changed(families: Array, equipped: String)
 signal settlement_changed(message: String)
@@ -53,6 +54,7 @@ var _settlement_worker_active: bool = false
 var _settlement_retry_elapsed: float = 0.0
 var _state_path: String = "user://yes-pusher-shared-state.json"
 var _free_turn_cooldown_seconds: int = DEFAULT_FREE_TURN_COOLDOWN_SECONDS
+var _presentation_test_mode: bool = false
 
 func configure(target_machine: YesPusherMachine) -> void:
 	machine = target_machine
@@ -73,6 +75,7 @@ func _read_environment() -> void:
 		mode = "client"
 	if mode not in ["server", "client", "local"]:
 		mode = "client" if not OS.get_environment("YES_PUSHER_SERVER_HOST").strip_edges().is_empty() else "local"
+	_presentation_test_mode = _env_bool("YES_PUSHER_PRESENTATION_TEST_MODE", args.has("--presentation-test"))
 	_server_host = _env_or("YES_PUSHER_SERVER_HOST", "127.0.0.1")
 	_server_bind = _env_or("YES_PUSHER_SERVER_BIND", "*")
 	_server_port = _env_int("YES_PUSHER_SERVER_PORT", DEFAULT_PORT, 1, 65535)
@@ -366,6 +369,7 @@ func authoritative_turn_completed(summary: Dictionary) -> void:
 	_save_state()
 	_broadcast_queue_state()
 	active_player_changed.emit("", "")
+	active_player_presentation_changed.emit({})
 	call_deferred("_process_settlement_outbox")
 	call_deferred("_process_next_turn")
 
@@ -415,7 +419,7 @@ func _server_identify(wallet: String, session_token: String, requested_skin_fami
 		_client_identity_result.rpc_id(peer_id, false, "", [], String(verification.get("error", "Wallet verification failed.")))
 		return
 	var normalized_wallet := String(verification.get("wallet", wallet)).to_lower()
-	var prior := _player(normalized_wallet)
+	var prior := _ensure_presentation_fixture(_player(normalized_wallet))
 	var cached_owned: Array[String] = _normalized_family_array(prior.get("owned_skin_families", []))
 	var requested := _normalize_family(requested_skin_family)
 	var selected := requested if requested.is_empty() or cached_owned.has(requested) or yf.allow_unverified_wallets else ""
@@ -626,6 +630,9 @@ func _client_queue_state(entries: Array, active: Dictionary) -> void:
 	var active_wallet := String(active.get("wallet", ""))
 	var active_turn_id := String(active.get("turn_id", ""))
 	active_player_changed.emit(active_wallet, active_turn_id)
+	var presentation_value: Variant = active.get("presentation", {})
+	var presentation: Dictionary = presentation_value as Dictionary if presentation_value is Dictionary else {}
+	active_player_presentation_changed.emit(presentation.duplicate(true))
 
 @rpc("authority", "call_remote", "unreliable_ordered", 0)
 func _client_world_snapshot(snapshot: Dictionary) -> void:
@@ -641,7 +648,7 @@ func _client_world_snapshot(snapshot: Dictionary) -> void:
 			status_changed.emit("Your 10-coin turn is running. Current caught value: %d YES." % payout)
 
 func _server_enqueue_local(wallet: String, skin_family: String) -> void:
-	var player := _player(wallet)
+	var player := _ensure_presentation_fixture(_player(wallet))
 	player["peer_id"] = 1
 	player["wallet"] = wallet
 	player["verified"] = true
@@ -727,6 +734,7 @@ func _start_active_turn() -> void:
 	var wallet := String(_active_turn.get("wallet", ""))
 	var turn_id := String(_active_turn.get("turn_id", ""))
 	active_player_changed.emit(wallet, turn_id)
+	active_player_presentation_changed.emit(_active_player_presentation())
 	_broadcast_queue_state()
 	var access_mode := String(_active_turn.get("access_mode", "paid"))
 	var start_message := "Your paid 10-coin turn is starting."
@@ -982,7 +990,99 @@ func _public_active_turn() -> Dictionary:
 		"drop_count": FIXED_DROP_COUNT,
 		"status": String(_active_turn.get("status", "")),
 		"latest_payout_yes": int(_active_turn.get("latest_payout_yes", 0)),
+		"presentation": _active_player_presentation(),
 	}
+
+func _active_player_presentation() -> Dictionary:
+	if _active_turn.is_empty():
+		return {}
+	var wallet := String(_active_turn.get("wallet", "")).strip_edges().to_lower()
+	if not _is_wallet(wallet):
+		return {}
+	var selected_skin := _normalize_family(String(_active_turn.get("skin_family", "")))
+	return _presentation_for_wallet(wallet, selected_skin)
+
+func _presentation_for_wallet(wallet: String, selected_skin: String) -> Dictionary:
+	var player := _player(wallet)
+	var short_wallet := "%s…%s" % [wallet.left(6), wallet.right(4)]
+	if not _presentation_test_mode:
+		return {
+			"version": 1,
+			"source": "wallet_only",
+			"wallet": wallet,
+			"profile": {
+				"display_name": "Player %s" % short_wallet,
+				"handle": "",
+				"avatar_url": "",
+				"profile_picture_url": "",
+			},
+			"equipped_skin": {
+				"family": selected_skin,
+				"label": _skin_display_name(selected_skin) if not selected_skin.is_empty() else "Default YES coin",
+			},
+			"toys": [],
+		}
+
+	var fixture_index := int(player.get("presentation_fixture", 0))
+	var profile: Dictionary
+	var fixture_skin := ""
+	var toys: Array[Dictionary] = []
+	if fixture_index % 2 == 0:
+		profile = {
+			"display_name": "Rainbow Player A",
+			"handle": "rainbow-player-a",
+			"avatar_url": "",
+			"profile_picture_url": "",
+		}
+		fixture_skin = "horseshoe"
+		toys = [
+			{"family": "horseshoe", "size": "small", "quantity": 2},
+			{"family": "horseshoe", "size": "medium", "quantity": 1},
+			{"family": "four_leaf_clover", "size": "small", "quantity": 1},
+		]
+	else:
+		profile = {
+			"display_name": "Rainbow Player B",
+			"handle": "rainbow-player-b",
+			"avatar_url": "",
+			"profile_picture_url": "",
+		}
+		fixture_skin = "pot_of_gold"
+		toys = [
+			{"family": "pot_of_gold", "size": "large", "quantity": 1},
+			{"family": "treasure_chest", "size": "small", "quantity": 3},
+			{"family": "leprechaun", "size": "medium", "quantity": 1},
+		]
+
+	var equipped_family := selected_skin if not selected_skin.is_empty() else fixture_skin
+	return {
+		"version": 1,
+		"source": "test_fixture",
+		"wallet": wallet,
+		"profile": profile,
+		"equipped_skin": {
+			"family": equipped_family,
+			"label": "%s YES Skin" % _skin_display_name(equipped_family),
+		},
+		"toys": toys,
+	}
+
+func _ensure_presentation_fixture(player: Dictionary) -> Dictionary:
+	if not _presentation_test_mode:
+		return player
+	var current := int(player.get("presentation_fixture", -1))
+	if current in [0, 1]:
+		return player
+	var assigned_wallets := 0
+	for key_value in _players.keys():
+		if not (_players.get(key_value) is Dictionary):
+			continue
+		var existing := _players.get(key_value) as Dictionary
+		var existing_wallet := String(existing.get("wallet", "")).strip_edges().to_lower()
+		if _is_wallet(existing_wallet) and int(existing.get("presentation_fixture", -1)) in [0, 1]:
+			assigned_wallets += 1
+	player["presentation_fixture"] = assigned_wallets % 2
+	return player
 
 func _client_status_for(peer_id: int, message: String) -> void:
 	if peer_id <= 1:
