@@ -1070,7 +1070,7 @@ func _on_cleanup_body_entered(body: Node3D) -> void:
 	if not was_paid_out:
 		if _turn_active or _result_waiting:
 			_turn_lost_coin_count += 1
-		coin_lost.emit()
+			coin_lost.emit()
 		_remember_coin_removal(body, "lost")
 	else:
 		_remember_coin_removal(body, "paid_out")
