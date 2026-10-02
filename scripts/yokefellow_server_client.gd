@@ -156,118 +156,33 @@ func load_wallet_entitlements(wallet: String) -> Dictionary:
 	]
 	return await _request_json(HTTPClient.METHOD_GET, url, {}, "")
 
-func load_profile_card(wallet: String) -> Dictionary:
-	var normalized := wallet.strip_edges().to_lower()
-	if not _is_wallet(normalized):
-		return _failure("A valid wallet address is required.")
-	var origin := _public_api_origin()
-	if origin.is_empty():
-		return _failure("Yokefellow Profile Card API is not configured.")
-	var response := await _request_json(
-		HTTPClient.METHOD_GET,
-		"%s/api/profile/card?walletAddress=%s" % [origin, normalized.uri_encode()],
-		{},
-		""
-	)
-	if not bool(response.get("ok", false)):
-		return response
-	var body: Dictionary = response.get("body", {}) as Dictionary
-	var card_value: Variant = body.get("card", {})
-	if not (card_value is Dictionary):
-		return _failure("Yokefellow returned no Profile Card for this wallet.", int(response.get("status", 0)), body)
-	var card := card_value as Dictionary
-	if String(card.get("version", "")) != "profile_card.v1":
-		return _failure("YES DROP only supports Yokefellow profile_card.v1.", int(response.get("status", 0)), body)
-	return {"ok": true, "card": card.duplicate(true), "body": body}
-
-
 func load_player_presentation(wallet: String) -> Dictionary:
 	var normalized := wallet.strip_edges().to_lower()
 	if not _is_wallet(normalized):
-		return {"ok": false, "wallet": normalized, "profile": {}, "toys": [], "errors": ["Invalid wallet."]}
-
-	var errors: Array[String] = []
-	var profile: Dictionary = {}
-	var profile_result: Dictionary = await load_profile_card(normalized)
-	if bool(profile_result.get("ok", false)):
-		var profile_value: Variant = profile_result.get("card", {})
-		if profile_value is Dictionary:
-			profile = (profile_value as Dictionary).duplicate(true)
-	else:
-		errors.append(String(profile_result.get("error", "Profile Card could not be loaded.")))
-
-	var toys: Array = []
-	var entitlement_result: Dictionary = await load_wallet_entitlements(normalized)
-	if bool(entitlement_result.get("ok", false)):
-		toys = _toy_showcase_from_entitlements(entitlement_result)
-	else:
-		errors.append(String(entitlement_result.get("error", "Toy ownership could not be loaded.")))
-
+		return {
+			"ok": false,
+			"wallet": normalized,
+			"profile": {},
+			"toys": [],
+			"errors": ["Invalid wallet."],
+		}
+	var short_wallet := "%s…%s" % [normalized.left(6), normalized.right(4)]
 	return {
-		"ok": not profile.is_empty() or not toys.is_empty(),
+		"ok": true,
 		"wallet": normalized,
-		"profile": profile,
-		"toys": toys,
-		"errors": errors,
+		"profile": {
+			"displayName": "Player %s" % short_wallet,
+			"display_name": "Player %s" % short_wallet,
+			"handle": "",
+			"avatarUrl": "",
+			"avatar_url": "",
+			"profile_picture_url": "",
+			"cardSettings": {},
+			"featuredOutputs": [],
+		},
+		"toys": [],
+		"errors": [],
 	}
-
-
-func _toy_showcase_from_entitlements(entitlement_result: Dictionary) -> Array:
-	var body: Dictionary = entitlement_result.get("body", {}) as Dictionary
-	var wallet_state_value: Variant = body.get("walletState", {})
-	if not (wallet_state_value is Dictionary):
-		return []
-	var wallet_state := wallet_state_value as Dictionary
-	var owned_value: Variant = wallet_state.get("ownedMints", [])
-	if not (owned_value is Array):
-		return []
-
-	var grouped: Dictionary = {}
-	for mint_value in owned_value:
-		if not (mint_value is Dictionary):
-			continue
-		var mint := mint_value as Dictionary
-		var status := String(mint.get("status", "current")).strip_edges().to_lower()
-		if not status.is_empty() and status != "current":
-			continue
-		var class_slug := String(mint.get("classSlug", "")).strip_edges()
-		var class_name := String(mint.get("className", "")).strip_edges()
-		var family := _toy_family_from_class(class_slug, class_name)
-		if family.is_empty():
-			continue
-		var tier := _toy_tier_from_class(class_slug, class_name)
-		if tier in ["", "base"]:
-			tier = "small"
-		if tier not in ["small", "medium", "large"]:
-			continue
-		var quantity := maxi(1, int(mint.get("quantity", 1)))
-		var key := "%s:%s" % [family, tier]
-		var image_url := ""
-		var meta_value: Variant = mint.get("meta", {})
-		if meta_value is Dictionary:
-			image_url = String((meta_value as Dictionary).get("imageUrl", "")).strip_edges()
-		if not grouped.has(key):
-			grouped[key] = {
-				"family": family,
-				"tier": tier,
-				"title": class_name if not class_name.is_empty() else "%s %s Toy" % [tier.capitalize(), _family_display_name(family)],
-				"quantity": 0,
-				"imageUrl": image_url,
-				"classId": String(mint.get("classId", "")),
-				"classSlug": class_slug,
-				"collectionName": String(mint.get("collectionName", "")),
-			}
-		var item := grouped[key] as Dictionary
-		item["quantity"] = int(item.get("quantity", 0)) + quantity
-		if String(item.get("imageUrl", "")).is_empty() and not image_url.is_empty():
-			item["imageUrl"] = image_url
-		grouped[key] = item
-
-	var result: Array = []
-	for value in grouped.values():
-		if value is Dictionary:
-			result.append((value as Dictionary).duplicate(true))
-	return result
 
 func spend_turn_credit(wallet: String, turn_id: String) -> Dictionary:
 	if test_free_turns:
@@ -719,12 +634,6 @@ func _normalize_sdk_base(value: String) -> String:
 	if base.ends_with("/api/sdk/v1"):
 		return base
 	return "%s/api/sdk/v1" % base
-
-func _public_api_origin() -> String:
-	var base := sdk_base_url.strip_edges().trim_suffix("/")
-	if base.ends_with("/api/sdk/v1"):
-		return base.trim_suffix("/api/sdk/v1")
-	return base
 
 func _env_or(name: String, fallback: String) -> String:
 	var value := OS.get_environment(name).strip_edges()
