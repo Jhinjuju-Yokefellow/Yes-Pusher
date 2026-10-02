@@ -489,8 +489,8 @@ func _refresh_free_turn_ui() -> void:
 
 func _format_free_turn_countdown(total_seconds: int) -> String:
 	var seconds := maxi(0, total_seconds)
-	var hours := seconds / 3600
-	var minutes := (seconds % 3600) / 60
+	var hours := floori(float(seconds) / 3600.0)
+	var minutes := floori(float(seconds % 3600) / 60.0)
 	var remainder := seconds % 60
 	if hours > 0:
 		return "%d:%02d:%02d" % [hours, minutes, remainder]
@@ -738,6 +738,7 @@ func _build_network_controls() -> void:
 	_leave_queue_button.pressed.connect(_on_leave_queue_pressed)
 	identity_actions.add_child(_leave_queue_button)
 	_update_network_drop_button()
+	_refresh_free_turn_ui()
 
 func _on_owned_skins_changed(families: Array, equipped: String) -> void:
 	_rebuild_skin_selector(families, equipped)
