@@ -168,7 +168,7 @@
       await switchView("home");
     } catch (error) {
       if (activeWallet && sessionToken && !appShell.hidden) {
-        setAppMessage(error?.message || "Rainbow's End collection state could not be loaded yet.", "error");
+        setAppMessage("Unavailable", "");
       } else {
         setBusy(false, error?.message || "Wallet login failed.");
       }
@@ -214,8 +214,8 @@
       return;
     }
     if (!spectatorMode && ["home", "workshop", "skins"].includes(next)) {
-      await refreshPlayerState({ announce: false }).catch((error) => {
-        setAppMessage(error?.message || "Rainbow's End state could not be refreshed.", "error");
+      await refreshPlayerState({ announce: false }).catch(() => {
+        setAppMessage("Unavailable", "");
       });
     }
   }
