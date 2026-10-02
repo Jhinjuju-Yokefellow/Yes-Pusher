@@ -5,8 +5,8 @@
 [ext_resource type="Script" uid="uid://qcwjkolbbr8o" path="res://scripts/camera_controller.gd" id="3_camera"]
 
 [sub_resource type="ProceduralSkyMaterial" id="SkyMaterial"]
-sky_top_color = Color(0.010, 0.006, 0.004, 1)
-sky_horizon_color = Color(0.075, 0.038, 0.020, 1)
+sky_top_color = Color(0.01, 0.006, 0.004, 1)
+sky_horizon_color = Color(0.075, 0.038, 0.02, 1)
 ground_bottom_color = Color(0.006, 0.004, 0.003, 1)
 ground_horizon_color = Color(0.045, 0.026, 0.015, 1)
 
@@ -17,7 +17,7 @@ sky_material = SubResource("SkyMaterial")
 background_mode = 2
 sky = SubResource("Sky")
 ambient_light_source = 3
-ambient_light_color = Color(0.30, 0.22, 0.15, 1)
+ambient_light_color = Color(0.3, 0.22, 0.15, 1)
 ambient_light_energy = 0.48
 tonemap_mode = 2
 
@@ -50,27 +50,25 @@ light_energy = 1.75
 shadow_enabled = true
 
 [node name="FillLight" type="OmniLight3D" parent="." unique_id=1644484499]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -5.4, 8.5, 2.5)
-light_color = Color(0.52, 0.33, 0.20, 1)
-light_energy = 1.55
-shadow_enabled = false
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0.86131525, 8.2243805, 2.5)
+light_energy = 7.604
+light_specular = 2.718
 omni_range = 14.0
 
-[node name="MarqueeWarmLight" type="OmniLight3D" parent="."]
-position = Vector3(0, 23.2, -1.6)
-light_color = Color(1, 0.60, 0.28, 1)
+[node name="MarqueeWarmLight" type="OmniLight3D" parent="." unique_id=1889265181]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 23.2, -1.6)
+light_color = Color(1, 0.6, 0.28, 1)
 light_energy = 3.1
-shadow_enabled = false
 omni_range = 10.0
 
-[node name="EmeraldRimLight" type="OmniLight3D" parent="."]
-position = Vector3(5.4, 8.5, 2.5)
-light_color = Color(0.52, 0.33, 0.20, 1)
+[node name="EmeraldRimLight" type="OmniLight3D" parent="." unique_id=375709525]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 5.4, 8.5, 2.5)
+light_color = Color(0.52, 0.33, 0.2, 1)
 light_energy = 1.55
-shadow_enabled = false
 omni_range = 14.0
 
 [node name="Camera" type="Camera3D" parent="." unique_id=1874537046]
+transform = Transform3D(1, 0, 0, 0, 0.98641056, 0.16429946, 0, -0.16429946, 0.98641056, 0, 14.106521, 29.990599)
 current = true
 fov = 48.0
 script = ExtResource("3_camera")
@@ -127,7 +125,6 @@ vertical_alignment = 1
 custom_minimum_size = Vector2(150, 42)
 layout_mode = 2
 text = "JOIN / DROP 10"
-
 
 [node name="Instructions" type="Label" parent="Interface/Margin/Panel/Layout" unique_id=550859794]
 layout_mode = 2
