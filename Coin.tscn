@@ -10,7 +10,7 @@ bounce = 0.10
 top_radius = 0.42
 bottom_radius = 0.42
 height = 0.12
-radial_segments = 48
+radial_segments = 24
 rings = 1
 
 [sub_resource type="StandardMaterial3D" id="StandardMaterial_coin"]
@@ -35,7 +35,7 @@ script = ExtResource("1_coin")
 [node name="Mesh" type="MeshInstance3D" parent="."]
 mesh = SubResource("CylinderMesh_coin")
 material_override = SubResource("StandardMaterial_coin")
-cast_shadow = 1
+cast_shadow = 0
 
 [node name="Collision" type="CollisionShape3D" parent="."]
 shape = SubResource("CylinderShape_coin")
