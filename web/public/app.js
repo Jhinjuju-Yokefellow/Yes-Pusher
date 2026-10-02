@@ -1,6 +1,7 @@
 (() => {
   const connectButton = document.querySelector("#connect");
   const disconnectButton = document.querySelector("#disconnect");
+  const watchButton = document.querySelector("#watch");
   const retryConnectionButton = document.querySelector("#retry-connection");
   const status = document.querySelector("#status");
   const login = document.querySelector("#login");
@@ -18,8 +19,10 @@
   let reconnectAttempt = 0;
   let socketOpen = false;
   let activeLaunchId = "";
+  let spectatorMode = false;
 
   connectButton.addEventListener("click", connectAndPlay);
+  watchButton?.addEventListener("click", watchSharedMachine);
   disconnectButton.addEventListener("click", resetPlayer);
   retryConnectionButton?.addEventListener("click", retryConnectionNow);
 
@@ -27,7 +30,7 @@
     if (event.origin !== window.location.origin || event.source !== gameFrame.contentWindow) return;
 
     if (event.data?.type === "yes-pusher-ready") {
-      walletLabel.textContent = `${shortWallet(activeWallet)} · connecting to shared machine`;
+      walletLabel.textContent = `${viewerLabel()} · connecting to shared machine`;
       startConnectionWatchdog();
       return;
     }
@@ -39,7 +42,7 @@
     if (state === "connecting") {
       socketOpen = false;
       setConnectionButton("CONNECTING…", true);
-      walletLabel.textContent = `${shortWallet(activeWallet)} · connecting to shared machine`;
+      walletLabel.textContent = `${viewerLabel()} · connecting to shared machine`;
       startConnectionWatchdog();
       return;
     }
@@ -50,7 +53,7 @@
       clearReconnectTimer();
       clearConnectionWatchdog();
       setConnectionButton("CONNECTED", true);
-      walletLabel.textContent = `${shortWallet(activeWallet)} · shared machine connected`;
+      walletLabel.textContent = `${viewerLabel()} · shared machine connected`;
       return;
     }
 
@@ -65,11 +68,11 @@
   });
 
   window.addEventListener("online", () => {
-    if (activeWallet && !socketOpen) retryConnectionNow();
+    if ((activeWallet || spectatorMode) && !socketOpen) retryConnectionNow();
   });
 
   document.addEventListener("visibilitychange", () => {
-    if (!document.hidden && activeWallet && !socketOpen && !reconnectTimer) {
+    if (!document.hidden && (activeWallet || spectatorMode) && !socketOpen && !reconnectTimer) {
       retryConnectionNow();
     }
   });
@@ -86,6 +89,7 @@
   }
 
   async function connectAndPlay() {
+    spectatorMode = false;
     setBusy(true, "Opening your wallet…");
     try {
       if (!window.ethereum) throw new Error("Install or enable an EVM browser wallet such as MetaMask or Coinbase Wallet.");
@@ -126,6 +130,27 @@
     }
   }
 
+  async function watchSharedMachine() {
+    try {
+      config = await getJson("/config");
+      if (!config.gameReady) throw new Error("The Godot web client has not been exported yet.");
+      activeWallet = "";
+      spectatorMode = true;
+      window.YES_PUSHER_BOOTSTRAP = Object.freeze({
+        wallet: "",
+        sessionToken: "",
+        serverUrl: config.gameServerUrl,
+      });
+      reconnectAttempt = 0;
+      socketOpen = false;
+      login.hidden = true;
+      gameShell.hidden = false;
+      loadGameFrame("loading shared machine");
+    } catch (error) {
+      setBusy(false, error?.message || "Shared machine could not be opened.");
+    }
+  }
+
   async function ensureChain(chainId) {
     const chainHex = `0x${Number(chainId).toString(16)}`;
     const current = await window.ethereum.request({ method: "eth_chainId" });
@@ -148,19 +173,19 @@
   }
 
   function loadGameFrame(stateText) {
-    if (!activeWallet) return;
+    if (!activeWallet && !spectatorMode) return;
     clearReconnectTimer();
     clearConnectionWatchdog();
     socketOpen = false;
     setConnectionButton("CONNECTING…", true);
-    walletLabel.textContent = `${shortWallet(activeWallet)} · ${stateText}`;
+    walletLabel.textContent = `${viewerLabel()} · ${stateText}`;
     activeLaunchId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
     gameFrame.src = `/game/index.html?launch=${encodeURIComponent(activeLaunchId)}&retry=${reconnectAttempt}`;
     startConnectionWatchdog();
   }
 
   function scheduleGameReconnect(reason) {
-    if (!activeWallet || gameShell.hidden || reconnectTimer) return;
+    if ((!activeWallet && !spectatorMode) || gameShell.hidden || reconnectTimer) return;
 
     clearConnectionWatchdog();
     const delay = reconnectDelaysMs[Math.min(reconnectAttempt, reconnectDelaysMs.length - 1)];
@@ -168,7 +193,7 @@
     const seconds = Math.ceil(delay / 1000);
 
     setConnectionButton("RETRY NOW", false);
-    walletLabel.textContent = `${shortWallet(activeWallet)} · reconnecting in ${seconds}s`;
+    walletLabel.textContent = `${viewerLabel()} · reconnecting in ${seconds}s`;
 
     reconnectTimer = window.setTimeout(() => {
       reconnectTimer = null;
@@ -179,7 +204,7 @@
   }
 
   function retryConnectionNow() {
-    if (!activeWallet) return;
+    if (!activeWallet && !spectatorMode) return;
     clearReconnectTimer();
     reconnectAttempt = 0;
     loadGameFrame("retrying shared machine");
@@ -220,6 +245,7 @@
     socketOpen = false;
     activeWallet = "";
     activeLaunchId = "";
+    spectatorMode = false;
     window.YES_PUSHER_BOOTSTRAP = null;
     gameFrame.src = "about:blank";
     gameShell.hidden = true;
@@ -265,5 +291,9 @@
 
   function shortWallet(wallet) {
     return wallet ? `${wallet.slice(0, 6)}…${wallet.slice(-4)}` : "";
+  }
+
+  function viewerLabel() {
+    return spectatorMode ? "Spectator" : shortWallet(activeWallet);
   }
 })();
