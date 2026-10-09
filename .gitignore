@@ -27,3 +27,5 @@ Thumbs.db
 # IMPORTANT:
 # web/public/game is intentionally NOT ignored.
 # index.pck, index.wasm, index.js, and index.html must be committed.
+
+web/public/game/index.pck
