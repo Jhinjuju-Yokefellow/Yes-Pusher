@@ -1,9 +1,14 @@
 [build]
 builder = "DOCKERFILE"
-dockerfilePath = "Dockerfile.web"
+dockerfilePath = "Dockerfile.web.yd2"
 watchPatterns = [
-  "Dockerfile.web",
+  "Dockerfile.web.yd2",
   "railway.web.toml",
+  "project.godot",
+  "export_presets.cfg",
+  "*.tscn",
+  "scripts/**",
+  "assets/**",
   "web/**"
 ]
 
