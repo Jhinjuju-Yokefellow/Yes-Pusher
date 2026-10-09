@@ -1,3 +1,52 @@
+FROM mirror.gcr.io/library/debian:bookworm-slim AS game-builder
+
+ARG GODOT_VERSION=4.7-beta3
+ARG GODOT_ARCH=linux.x86_64
+ARG GODOT_TEMPLATE_VERSION=4.7.beta3
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        curl \
+        unzip \
+        libasound2 \
+        libdbus-1-3 \
+        libfontconfig1 \
+        libgl1 \
+        libpulse0 \
+        libudev1 \
+        libx11-6 \
+        libxcursor1 \
+        libxi6 \
+        libxinerama1 \
+        libxrandr2 \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN curl --fail --location --retry 5 --retry-delay 2 \
+      "https://github.com/godotengine/godot-builds/releases/download/${GODOT_VERSION}/Godot_v${GODOT_VERSION}_${GODOT_ARCH}.zip" \
+      --output /tmp/godot.zip \
+    && unzip -q /tmp/godot.zip -d /tmp/godot \
+    && install -m 0755 "/tmp/godot/Godot_v${GODOT_VERSION}_${GODOT_ARCH}" /usr/local/bin/godot \
+    && rm -rf /tmp/godot /tmp/godot.zip
+
+RUN curl --fail --location --retry 5 --retry-delay 2 \
+      "https://github.com/godotengine/godot-builds/releases/download/${GODOT_VERSION}/Godot_v${GODOT_VERSION}_export_templates.tpz" \
+      --output /tmp/templates.tpz \
+    && mkdir -p "/root/.local/share/godot/export_templates/${GODOT_TEMPLATE_VERSION}" \
+    && unzip -q /tmp/templates.tpz -d /tmp/export-templates \
+    && cp -R /tmp/export-templates/templates/. "/root/.local/share/godot/export_templates/${GODOT_TEMPLATE_VERSION}/" \
+    && rm -rf /tmp/templates.tpz /tmp/export-templates
+
+WORKDIR /app
+COPY project.godot export_presets.cfg icon.svg ./
+COPY *.tscn ./
+COPY scripts ./scripts
+COPY assets ./assets
+
+RUN godot --headless --path /app --import \
+    && mkdir -p /app/web/public/game \
+    && godot --headless --path /app --export-release "Web" /app/web/public/game/index.html
+
 FROM mirror.gcr.io/library/node:22-bookworm-slim
 
 ENV NODE_ENV=production
@@ -11,6 +60,8 @@ COPY web/server.mjs ./server.mjs
 COPY web/yd4-workshop.mjs ./yd4-workshop.mjs
 COPY web/yokefellow-network.mjs ./yokefellow-network.mjs
 COPY web/public ./public
+RUN rm -rf ./public/game
+COPY --from=game-builder /app/web/public/game ./public/game
 
 EXPOSE 8080
 STOPSIGNAL SIGTERM
