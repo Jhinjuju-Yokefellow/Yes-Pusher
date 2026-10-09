@@ -4,20 +4,16 @@
 ;
 ; Format:
 ;   [section] ; section goes between []
-;   param=value
+;   param=value ; assign values to parameters
 
 config_version=5
 
 [application]
 
-config/name="Yes Pusher"
+config/name="YES DROP"
 run/main_scene="res://Main.tscn"
 config/features=PackedStringArray("4.7", "GL Compatibility")
 config/icon="res://icon.svg"
-
-[autoload]
-
-ToyUpgradeController="*res://scripts/toy_upgrade_controller.gd"
 
 [display]
 

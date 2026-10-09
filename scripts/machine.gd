@@ -27,8 +27,8 @@ const REPLICA_RETIRE_SECONDS: float = 2.20
 @export var pusher_rear_z: float = -7.15
 @export var pusher_front_z: float = -2.55
 @export_range(0, 200, 1) var starting_coin_count: int = 72
-@export_range(4.0, 16.0, 0.5) var turn_settle_seconds: float = 8.0
-@export_range(0.5, 3.0, 0.1) var bucket_quiet_seconds: float = 1.2
+@export_range(4.0, 45.0, 0.5) var turn_settle_seconds: float = 28.0
+@export_range(0.5, 5.0, 0.1) var bucket_quiet_seconds: float = 2.5
 @export_range(1, 32, 1) var max_active_toys: int = 8
 @export_range(0.0, 20.0, 0.5) var toy_bonus_seconds: float = 5.0
 @export_range(0.0, 120.0, 1.0) var max_toy_bonus_seconds: float = 30.0
@@ -40,6 +40,9 @@ const REPLICA_RETIRE_SECONDS: float = 2.20
 @export_range(1, 100, 1) var clover_max_yes: int = 10
 @export var clover_wheel_yes_values: PackedInt32Array = PackedInt32Array([1, 2, 3, 5, 10])
 @export_range(1, 50, 1) var treasure_chest_bonus_coins: int = 10
+@export_range(0.25, 2.0, 0.05) var stuck_scan_interval_seconds: float = 0.50
+@export_range(1.0, 10.0, 0.25) var stuck_body_seconds: float = 3.50
+@export_range(0.10, 2.0, 0.05) var stuck_recovery_impulse: float = 0.75
 
 @onready var pusher: AnimatableBody3D = $Pusher
 @onready var coin_container: Node3D = $Coins
@@ -80,6 +83,8 @@ var _replica_pusher_target: Transform3D = Transform3D.IDENTITY
 var _replica_pusher_target_valid: bool = false
 var _recent_removed_coins: Dictionary = {}
 var _replica_retiring_coins: Dictionary = {}
+var _stuck_body_watch: Dictionary = {}
+var _stuck_scan_accumulator: float = 0.0
 
 var _drop_x_positions: PackedFloat32Array = PackedFloat32Array([
 	-3.15, -2.10, -1.05, 0.0, 1.05, 2.10, 3.15
@@ -146,6 +151,7 @@ func _physics_process(delta: float) -> void:
 	if not _authoritative:
 		_update_replica_interpolation(delta)
 		return
+	_update_stuck_body_recovery(delta)
 	_apply_horseshoe_magnet(delta)
 	if not _turn_active:
 		var idle_position := pusher.position
@@ -175,6 +181,154 @@ func _stroke_progress(cycle: float) -> float:
 func _smoothstep(value: float) -> float:
 	var clamped := clampf(value, 0.0, 1.0)
 	return clamped * clamped * (3.0 - 2.0 * clamped)
+
+func _update_stuck_body_recovery(delta: float) -> void:
+	_stuck_scan_accumulator += delta
+	if _stuck_scan_accumulator < stuck_scan_interval_seconds:
+		return
+	_stuck_scan_accumulator = 0.0
+
+	var now_ms := Time.get_ticks_msec()
+	var seen: Dictionary = {}
+	for node in coin_container.get_children():
+		if node is PusherCoin:
+			var coin := node as PusherCoin
+			var body_id := _assign_network_body_id(coin, "coin")
+			seen[body_id] = true
+			_check_stuck_body(coin, body_id, "coin", now_ms)
+	if _toy_container != null:
+		for node in _toy_container.get_children():
+			if node is PusherToy:
+				var toy := node as PusherToy
+				var body_id := _assign_network_body_id(toy, "toy")
+				seen[body_id] = true
+				_check_stuck_body(toy, body_id, "toy", now_ms)
+
+	for body_id_value in _stuck_body_watch.keys():
+		var body_id := String(body_id_value)
+		if not seen.has(body_id):
+			_stuck_body_watch.erase(body_id)
+
+func _check_stuck_body(body: RigidBody3D, body_id: String, body_kind: String, now_ms: int) -> void:
+	if body.get_meta("captured_in_front_bucket", false):
+		_stuck_body_watch.erase(body_id)
+		return
+
+	if _recover_tunneled_body(body, body_kind):
+		_stuck_body_watch.erase(body_id)
+		return
+
+	var zone := _stuck_risk_zone(body.position)
+	if zone.is_empty():
+		_stuck_body_watch.erase(body_id)
+		return
+
+	var speed := body.linear_velocity.length()
+	var previous: Dictionary = _stuck_body_watch.get(body_id, {}) as Dictionary
+	var previous_position: Vector3 = previous.get("position", body.position) as Vector3
+	var moved := previous_position.distance_to(body.position)
+	if previous.is_empty() or speed > 0.18 or moved > 0.08:
+		_stuck_body_watch[body_id] = {
+			"position": body.position,
+			"last_moving_ms": now_ms,
+			"recoveries": int(previous.get("recoveries", 0)),
+		}
+		return
+
+	var last_moving_ms := int(previous.get("last_moving_ms", now_ms))
+	if now_ms - last_moving_ms < int(stuck_body_seconds * 1000.0):
+		return
+
+	var recoveries := int(previous.get("recoveries", 0)) + 1
+	_recover_stuck_body(body, zone, body_kind, recoveries)
+	_stuck_body_watch[body_id] = {
+		"position": body.position,
+		"last_moving_ms": now_ms,
+		"recoveries": recoveries,
+	}
+
+func _recover_tunneled_body(body: RigidBody3D, body_kind: String) -> bool:
+	var position := body.position
+	var corrected := position
+	var escaped := false
+
+	# Side containment. The visible cabinet walls remain the normal collision
+	# surface; this is only a fallback for bodies that tunnel under heavy load.
+	if absf(position.x) > 5.35 and position.y > -1.8 and position.z < 8.2:
+		var side := signf(position.x)
+		if is_zero_approx(side):
+			side = 1.0
+		corrected.x = side * 5.05
+		body.linear_velocity.x = -side * minf(absf(body.linear_velocity.x) * 0.35 + 0.10, 1.1)
+		escaped = true
+
+	# The peg field is a narrow channel between its back panel and front glass.
+	# Keep fast top-drop bodies inside that channel if a physics step misses one
+	# of those thin static shapes.
+	if position.y > 2.2:
+		if position.z < -5.14:
+			corrected.z = -4.92
+			body.linear_velocity.z = absf(body.linear_velocity.z) * 0.25
+			escaped = true
+		elif position.z > -4.43:
+			corrected.z = -4.64
+			body.linear_velocity.z = -absf(body.linear_velocity.z) * 0.25
+			escaped = true
+
+	if not escaped:
+		return false
+
+	body.position = corrected
+	body.sleeping = false
+	body.angular_velocity *= 0.65
+	body.set_meta("yd6_containment_recovery", int(body.get_meta("yd6_containment_recovery", 0)) + 1)
+	return true
+
+func _stuck_risk_zone(position: Vector3) -> String:
+	# Only watch places where an object should never remain parked. Sleeping
+	# coins in the normal lower-bed pile are intentionally ignored.
+	if position.y > 2.35 and position.z > -5.35 and position.z < -4.30:
+		return "peg_wall"
+	if position.y < 2.25 and absf(position.x) > 4.12 and absf(position.x) < 5.25 and position.z > -4.55 and position.z < 6.55:
+		return "side_guard"
+	if position.y < 2.25 and position.z > -6.25 and position.z < -5.35:
+		return "behind_pusher"
+	return ""
+
+func _recover_stuck_body(body: RigidBody3D, zone: String, body_kind: String, recoveries: int) -> void:
+	body.sleeping = false
+	var side := signf(body.position.x)
+	if is_zero_approx(side):
+		side = 1.0
+
+	match zone:
+		"peg_wall":
+			# Continue the intended gravity path down the peg board with a tiny
+			# inward bias. Repeated recoveries increase the downward component.
+			var strength := stuck_recovery_impulse * minf(1.0 + float(recoveries - 1) * 0.25, 1.75)
+			body.apply_central_impulse(Vector3(-side * 0.10, -0.72, 0.10).normalized() * strength)
+		"side_guard":
+			# A guard should redirect an object, not become a parking pocket.
+			var strength := stuck_recovery_impulse * minf(1.0 + float(recoveries - 1) * 0.20, 1.60)
+			body.apply_central_impulse(Vector3(-side * 0.72, 0.05, 0.62).normalized() * strength)
+			if recoveries >= 3:
+				var rescued := body.position
+				rescued.x = side * 3.95
+				rescued.z += 0.18
+				body.position = rescued
+		"behind_pusher":
+			# This area is visually hidden by the retracted shelf. If a rigid
+			# body manages to settle there, put it immediately back in front of
+			# the shelf rather than letting the machine accumulate invisible junk.
+			var rescued := body.position
+			rescued.x = clampf(rescued.x, -3.7, 3.7)
+			rescued.y = maxf(rescued.y, 0.44 if body_kind == "coin" else 0.82)
+			rescued.z = -4.92
+			body.position = rescued
+			body.linear_velocity = Vector3(-side * 0.05, 0.02, 0.28)
+			body.angular_velocity *= 0.55
+
+	body.set_meta("yd5_stuck_recoveries", recoveries)
 
 func drop_coins(_count: int = FIXED_TURN_COIN_COUNT) -> void:
 	if not _authoritative:
@@ -284,13 +438,20 @@ func _finish_turn_when_ready(turn_token: int) -> void:
 	turn_finished.emit(payout)
 
 func complete_result_reveal() -> Dictionary:
-	# The payout trigger owns scoring. Bodies keep falling naturally and are
-	# removed by CleanupZone below the visible machine.
+	# Keep scoring open briefly after the pusher stops. Dense beds can continue
+	# to release coins under gravity after the final stroke; those falls belong
+	# to the turn that moved them, not the following idle/turn state.
 	await get_tree().physics_frame
 	_reconcile_front_bucket_bodies()
 	while _pending_clover_spins > 0:
 		await get_tree().create_timer(0.10).timeout
-	_reconcile_front_bucket_bodies()
+		_reconcile_front_bucket_bodies()
+
+	var quiet_ms := int(bucket_quiet_seconds * 1000.0)
+	while Time.get_ticks_msec() - _last_bucket_entry_ms < quiet_ms:
+		await get_tree().create_timer(0.10).timeout
+		_reconcile_front_bucket_bodies()
+
 	_last_turn_summary = get_turn_result_summary()
 	_result_waiting = false
 	return _last_turn_summary.duplicate(true)
@@ -328,6 +489,8 @@ func reset_machine() -> void:
 	_turn_toy_families.clear()
 	_turn_toy_captures.clear()
 	_last_turn_summary = {}
+	_stuck_body_watch.clear()
+	_stuck_scan_accumulator = 0.0
 	for child in coin_container.get_children():
 		child.queue_free()
 	if _toy_container != null:
@@ -664,19 +827,19 @@ func _duplicate_closest_machine_coins(origin: Vector3, limit: int) -> int:
 		candidates.remove_at(nearest_index)
 		var clone := _create_coin(
 			source.position + Vector3(
-				_random.randf_range(-0.08, 0.08),
-				0.20 + _random.randf_range(0.0, 0.08),
-				_random.randf_range(-0.08, 0.08)
+				_random.randf_range(-0.06, 0.06),
+				0.30 + _random.randf_range(0.0, 0.08),
+				_random.randf_range(-0.06, 0.06)
 			),
 			false
 		)
 		if clone == null:
 			continue
 		clone.rotation = source.rotation + Vector3(0.0, _random.randf_range(-0.20, 0.20), 0.0)
-		clone.linear_velocity = source.linear_velocity + Vector3(
-			_random.randf_range(-0.14, 0.14),
-			_random.randf_range(0.05, 0.18),
-			_random.randf_range(-0.14, 0.14)
+		clone.linear_velocity = source.linear_velocity * 0.65 + Vector3(
+			_random.randf_range(-0.08, 0.08),
+			_random.randf_range(0.02, 0.08),
+			_random.randf_range(-0.06, 0.10)
 		)
 		clone.angular_velocity = source.angular_velocity + Vector3(
 			_random.randf_range(-0.7, 0.7),
@@ -692,20 +855,21 @@ func _apply_horseshoe_magnet(_delta: float) -> void:
 	if Time.get_ticks_msec() >= _horseshoe_active_until_ms:
 		return
 
-	var target := payout_zone.global_position + Vector3(0.0, 0.35, 0.0)
+	# Pull lower-field coins toward a point just behind the front lip instead of
+	# pulling downward through the payout trigger. That keeps the power visible
+	# without forcing coins into side guards or the floor.
+	var target := global_transform * Vector3(0.0, 0.58, 6.65)
 	var candidates: Array[PusherCoin] = []
 	for node in get_tree().get_nodes_in_group("coins"):
-		# Only real gameplay coins may receive the magnet force. Toys are kept in
-		# their own group/container and are explicitly rejected here even if a
-		# future scene is accidentally assigned to the coins group.
 		if not is_instance_valid(node) or not (node is PusherCoin):
 			continue
 		var coin := node as PusherCoin
 		if coin.get_parent() != coin_container:
 			continue
-		if coin.is_in_group("toys"):
-			continue
 		if coin.get_meta("captured_in_front_bucket", false):
+			continue
+		var local := coin.position
+		if local.y > 2.20 or local.z < -4.65 or local.z > 7.15:
 			continue
 		candidates.append(coin)
 
@@ -726,6 +890,9 @@ func _apply_horseshoe_magnet(_delta: float) -> void:
 		var offset := target - coin.global_position
 		if offset.length_squared() < 0.04:
 			continue
+		# Strong forward flow, restrained vertical pull, and a slight centering
+		# component keep the magnet from pinning coins against cabinet geometry.
+		offset.y = clampf(offset.y, -0.20, 0.28)
 		coin.sleeping = false
 		coin.apply_central_force(offset.normalized() * horseshoe_magnet_force)
 		if coin.linear_velocity.length() > horseshoe_max_coin_speed:
@@ -936,6 +1103,10 @@ func _on_cleanup_body_entered(body: Node3D) -> void:
 	var was_paid_out := bool(body.get_meta("captured_in_front_bucket", false))
 
 	if body.is_in_group("toys"):
+		# A Toy that crosses the payout area has already been scored and had its
+		# power resolved. Once it reaches CleanupZone it should leave the physics
+		# world exactly like a paid coin; otherwise caught Toys accumulate below
+		# the cabinet forever.
 		if body is PusherToy and not was_paid_out:
 			var toy := body as PusherToy
 			toy_lost.emit(toy.toy_family, toy.toy_instance_id)
@@ -947,7 +1118,7 @@ func _on_cleanup_body_entered(body: Node3D) -> void:
 	if not was_paid_out:
 		if _turn_active or _result_waiting:
 			_turn_lost_coin_count += 1
-		coin_lost.emit()
+			coin_lost.emit()
 		_remember_coin_removal(body, "lost")
 	else:
 		_remember_coin_removal(body, "paid_out")
@@ -979,6 +1150,12 @@ func set_turn_seed(value: int) -> void:
 
 func get_reported_turn_payout() -> int:
 	return _reported_turn_payout
+
+func get_current_turn_payout() -> int:
+	return _current_turn_payout()
+
+func get_current_turn_caught_count() -> int:
+	return _turn_caught_coin_count
 
 func export_world_snapshot() -> Dictionary:
 	var coins: Array[Dictionary] = []

@@ -3,33 +3,138 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>YES Pusher — Rainbow's End Machine</title>
+  <title>YES DROP — Rainbow's End</title>
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
   <main class="shell">
     <section id="login" class="login-card">
       <p class="eyebrow">RAINBOW'S END</p>
-      <h1>Shared YES Pusher</h1>
-      <p class="copy">Connect the wallet you use on Yokefellow. You will sign a login message; it does not send a transaction or spend YES.</p>
-      <button id="connect" type="button">CONNECT WALLET &amp; PLAY</button>
+      <h1>YES DROP</h1>
+      <p class="copy">Connect the wallet you use on Yokefellow. Your wallet opens Rainbow's End; signing in does not send a transaction or spend YES.</p>
+      <button id="connect" type="button">CONNECT WALLET</button>
+      <button id="watch" type="button" class="secondary wide-action">WATCH SHARED MACHINE</button>
       <p id="status" class="status">Waiting for a wallet.</p>
-      <p class="fine-print">Each paid turn drops exactly 10 coins. The shared server—not this browser—handles bucket credit and verified results.</p>
+      <p class="fine-print">Play, manage Coin Skins, craft Toys, and contribute Large Toys toward additional community machines.</p>
       <p id="mint-setup-link" class="fine-print"><a href="/instant-mint.html">Set up instant NFT minting</a></p>
     </section>
 
-    <section id="game-shell" class="game-shell" hidden>
-      <header class="game-header">
+    <section id="app-shell" class="app-shell" hidden>
+      <header class="app-header">
         <div>
-          <strong>RAINBOW'S END</strong>
+          <p class="eyebrow compact">RAINBOW'S END</p>
+          <strong class="app-title">YES DROP</strong>
           <span id="wallet-label"></span>
         </div>
-        <div class="game-actions">
-          <button id="retry-connection" type="button" class="secondary">RETRY CONNECTION</button>
-          <button id="disconnect" type="button" class="secondary">CHANGE WALLET</button>
-        </div>
+        <button id="disconnect" type="button" class="secondary">CHANGE WALLET</button>
       </header>
-      <iframe id="game" title="YES Pusher — Rainbow's End machine" allow="fullscreen; autoplay" referrerpolicy="no-referrer"></iframe>
+
+      <nav id="app-nav" class="app-nav" aria-label="Rainbow's End">
+        <button type="button" class="nav-button active" data-view="home">HOME</button>
+        <button type="button" class="nav-button" data-view="play">PLAY</button>
+        <button type="button" class="nav-button" data-view="workshop">WORKSHOP</button>
+        <button type="button" class="nav-button" data-view="skins">COIN SKINS</button>
+      </nav>
+
+      <p id="app-message" class="app-message" hidden></p>
+
+      <section id="view-home" class="app-view">
+        <div class="hero-grid">
+          <article class="panel-card hero-card">
+            <p class="card-kicker">YOUR LOADOUT</p>
+            <div id="home-equipped" class="equipped-summary">Loading equipped Coin Skin…</div>
+            <button id="home-play" type="button" class="primary-action">ENTER SHARED MACHINE</button>
+          </article>
+
+          <article class="panel-card">
+            <p class="card-kicker">COMMUNITY MACHINE BUILD</p>
+            <div class="build-heading">
+              <strong id="home-build-title">Machine #2</strong>
+              <span id="home-build-count">0 / 50</span>
+            </div>
+            <div class="progress-track"><div id="home-build-progress" class="progress-fill"></div></div>
+            <p id="home-build-detail" class="muted-copy">Large Toys build additional Rainbow's End capacity.</p>
+            <button id="home-workshop" type="button" class="secondary wide-action">OPEN WORKSHOP</button>
+          </article>
+
+          <article class="panel-card funding-card">
+            <div class="funding-card-heading">
+              <div>
+                <p class="card-kicker">BUCKET BALANCE</p>
+                <strong id="funding-balance">Loading…</strong>
+              </div>
+              <button id="funding-refresh" type="button" class="secondary">REFRESH</button>
+            </div>
+            <p id="funding-status" class="muted-copy">Loading…</p>
+            <div class="funding-actions">
+              <label class="funding-field">
+                <span>Deposit YES</span>
+                <input id="deposit-amount" type="text" inputmode="decimal" value="10" placeholder="0.00">
+                <button id="deposit-button" type="button" class="primary-action">DEPOSIT</button>
+              </label>
+              <label class="funding-field">
+                <span>Withdraw YES</span>
+                <input id="withdraw-amount" type="text" inputmode="decimal" value="10" placeholder="0.00">
+                <button id="withdraw-button" type="button" class="secondary">WITHDRAW</button>
+              </label>
+            </div>
+          </article>
+
+          <article class="panel-card">
+            <p class="card-kicker">YOUR TOYS</p>
+            <div id="home-toys" class="toy-summary-list">Loading collection…</div>
+          </article>
+        </div>
+      </section>
+
+      <section id="view-play" class="app-view" hidden>
+        <div class="game-header">
+          <div>
+            <strong>SHARED RAINBOW'S END MACHINE</strong>
+            <span id="game-wallet-label"></span>
+          </div>
+          <div class="game-actions">
+            <button id="retry-connection" type="button" class="secondary">RETRY CONNECTION</button>
+          </div>
+        </div>
+        <iframe id="game" title="YES DROP — Rainbow's End machine" allow="fullscreen; autoplay" referrerpolicy="no-referrer"></iframe>
+      </section>
+
+      <section id="view-workshop" class="app-view" hidden>
+        <div class="section-heading">
+          <div>
+            <p class="card-kicker">TOY WORKSHOP</p>
+            <h2>Build your collection upward</h2>
+          </div>
+          <p>Three Small Toys craft one Medium. Three Medium Toys craft one Large. Large Toys stay transferable and Auction-eligible until you choose to contribute one.</p>
+        </div>
+
+        <article class="panel-card community-card">
+          <div class="build-heading">
+            <div>
+              <p class="card-kicker">COMMUNITY BUILD</p>
+              <strong id="workshop-build-title">Machine #2</strong>
+            </div>
+            <span id="workshop-build-count">0 / 50 points</span>
+          </div>
+          <div class="progress-track large"><div id="workshop-build-progress" class="progress-fill"></div></div>
+          <p id="workshop-build-detail" class="muted-copy"></p>
+          <div id="rarity-legend" class="rarity-legend"></div>
+        </article>
+
+        <div id="workshop-list" class="workshop-list"></div>
+      </section>
+
+      <section id="view-skins" class="app-view" hidden>
+        <div class="section-heading">
+          <div>
+            <p class="card-kicker">COIN SKINS</p>
+            <h2>Choose the coin you drop</h2>
+          </div>
+          <p>Your selected Coin Skin is cosmetic. Rarity matches its Toy family and the build-point value of that family's Large Toy.</p>
+        </div>
+        <div id="skin-list" class="skin-grid"></div>
+      </section>
     </section>
   </main>
   <script src="/app.js"></script>

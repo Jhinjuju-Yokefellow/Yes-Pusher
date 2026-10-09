@@ -32,14 +32,28 @@ var _session_input: LineEdit
 var _verify_button: Button
 var _leave_queue_button: Button
 var _queue_label: Label
+var _free_turn_label: Label
+var _free_turn_state: Dictionary = {}
+var _free_turn_server_offset_seconds: int = 0
+var _free_turn_last_rendered_second: int = -1
+var _local_queue_position: int = -1
+var _local_turn_active: bool = false
+var _test_player_button: Button
 var _skin_selector: OptionButton
 var _refresh_skins_button: Button
 var _updating_skin_selector: bool = false
 var _turn_result_panel: PanelContainer
 var _turn_result_title: Label
 var _turn_result_detail: Label
+var _turn_result_status: Label
 var _turn_result_generation: int = 0
+var _capture_panel: PanelContainer
+var _capture_title: Label
+var _capture_detail: Label
+var _capture_generation: int = 0
+var _last_active_player_presentation: Dictionary = {}
 var _nft_award_panel: PanelContainer
+var _nft_award_heading: Label
 var _nft_award_type: Label
 var _nft_award_name: Label
 var _nft_award_detail: Label
@@ -53,25 +67,41 @@ var _nft_award_queue: Array[Dictionary] = []
 var _nft_award_showing: bool = false
 var _nft_award_generation: int = 0
 var _active_nft_award: Dictionary = {}
+var _active_player_showcase_panel: PanelContainer
+var _active_player_avatar: TextureRect
+var _active_player_avatar_fallback: Label
+var _active_player_name: Label
+var _active_player_handle: Label
+var _active_player_tagline: Label
+var _active_player_featured_outputs: HBoxContainer
+var _active_player_toys: VBoxContainer
+var _active_player_showcase_generation: int = 0
+var _active_player_wallet: String = ""
+var _active_player_turn_id: String = ""
 
 func _ready() -> void:
 	_build_power_panel()
+	_build_capture_panel()
 	_build_turn_result_panel()
 	_build_nft_award_panel()
+	_build_active_player_showcase()
 	_shared_world = YesPusherSharedWorld.new()
 	_shared_world.name = "SharedWorld"
 	add_child(_shared_world)
 	_shared_world.status_changed.connect(_on_shared_status_changed)
 	_shared_world.queue_changed.connect(_on_shared_queue_changed)
 	_shared_world.active_player_changed.connect(_on_shared_active_player_changed)
+	_shared_world.active_player_presentation_changed.connect(_on_active_player_presentation_changed)
 	_shared_world.local_identity_changed.connect(_on_local_identity_changed)
 	_shared_world.owned_skins_changed.connect(_on_owned_skins_changed)
+	_shared_world.free_turn_state_changed.connect(_on_free_turn_state_changed)
 	_shared_world.settlement_changed.connect(_on_settlement_changed)
 	_shared_world.remote_turn_reveal_started.connect(_on_remote_turn_reveal_started)
 	_shared_world.remote_turn_finished.connect(_on_remote_turn_finished)
 	_shared_world.reward_wheel_available.connect(_on_reward_wheel_requested)
 	_shared_world.reward_wheel_result.connect(_on_remote_reward_wheel_result)
 	_shared_world.nft_awarded.connect(_on_nft_awarded)
+	_shared_world.presentation_event.connect(_on_presentation_event)
 
 	drop_button.pressed.connect(_on_drop_pressed)
 	machine.coin_spawned.connect(_on_coin_spawned)
@@ -112,6 +142,7 @@ func _process(_delta: float) -> void:
 		machine.active_coin_count(),
 		machine.active_toy_count(),
 	]
+	_refresh_free_turn_ui()
 
 func _unhandled_key_input(event: InputEvent) -> void:
 	if event is InputEventKey and event.pressed and not event.echo:
@@ -207,6 +238,8 @@ func _on_turn_started(drop_total: int) -> void:
 func _on_turn_finished(payout: int) -> void:
 	_current_turn_payout = payout
 	_result_reveal_active = true
+	if _shared_world.mode == "server":
+		_shared_world.authoritative_turn_reveal_started(machine.get_last_turn_summary())
 	var final_summary: Dictionary = await machine.complete_result_reveal()
 	_current_turn_payout = maxi(0, int(final_summary.get("total_yes", 0)))
 	_result_reveal_active = false
@@ -260,7 +293,9 @@ func _on_toy_spawn_skipped(toy_family: String, active_count: int, max_count: int
 	)
 
 func _on_toy_captured(toy_family: String, _toy_instance_id: String, _turn_id: int, _power_result: Dictionary) -> void:
-	status_label.text = "%s caught — power activated and its matching toy NFT will settle with this turn." % _toy_name(toy_family)
+	status_label.text = "%s caught." % _toy_name(toy_family)
+	if _shared_world == null or _shared_world.mode != "server":
+		_show_toy_caught_moment(toy_family)
 
 func _on_toy_lost(toy_family: String, _toy_instance_id: String) -> void:
 	status_label.text = "%s left through a non-qualifying loss area." % _toy_name(toy_family)
@@ -325,45 +360,135 @@ func _on_shared_status_changed(message: String) -> void:
 	status_label.text = message
 
 func _on_shared_queue_changed(position: int, total: int) -> void:
+	_local_queue_position = position
 	if _queue_label != null:
 		_queue_label.text = "Queue: %d waiting%s" % [total, " · you are #%d" % position if position > 0 else ""]
 	if position > 0:
 		status_label.text = "Queue position %d of %d. Your turn will drop 10 coins." % [position, total]
 	elif total > 0 and not machine.is_turn_active():
 		status_label.text = "%d player%s waiting for the shared machine." % [total, "" if total == 1 else "s"]
+	_update_network_drop_button()
 
 func _on_shared_active_player_changed(wallet: String, turn_id: String) -> void:
 	if wallet.is_empty():
-		if _shared_world != null and _shared_world.mode == "client":
-			drop_button.disabled = not _shared_world.local_verified
+		_local_turn_active = false
+		_active_player_wallet = ""
+		_active_player_turn_id = ""
+		_hide_active_player_showcase()
+		_update_network_drop_button()
 		return
+	var changed_player := wallet.to_lower() != _active_player_wallet or turn_id != _active_player_turn_id
+	_active_player_wallet = wallet.to_lower()
+	_active_player_turn_id = turn_id
+	if changed_player:
+		_show_active_player_placeholder(wallet)
 	var is_local_turn: bool = wallet.to_lower() == _shared_world.local_wallet.to_lower()
-	if is_local_turn and _shared_world.mode == "client":
-		drop_button.disabled = true
+	_local_turn_active = is_local_turn
+	_update_network_drop_button()
 	var owner := "your wallet" if is_local_turn else "%s…%s" % [wallet.left(6), wallet.right(4)]
 	status_label.text = "Active turn %s belongs to %s and drops 10 coins." % [turn_id, owner]
+
+
+func _on_active_player_presentation_changed(presentation: Dictionary) -> void:
+	_last_active_player_presentation = presentation.duplicate(true)
+	if presentation.is_empty():
+		_hide_active_player_showcase()
+		return
+	_render_active_player_presentation(presentation)
 
 func _on_local_identity_changed(wallet: String, verified: bool) -> void:
 	if _verify_button != null:
 		_verify_button.disabled = false
 		_verify_button.text = "VERIFIED" if verified else "VERIFY WALLET SESSION"
-	if _shared_world != null and _shared_world.mode == "client":
-		drop_button.disabled = not verified
 	if _refresh_skins_button != null:
 		_refresh_skins_button.disabled = not verified
+	_update_network_drop_button()
 	if verified:
 		status_label.text = "Wallet %s…%s verified for the shared machine." % [wallet.left(6), wallet.right(4)]
 	else:
 		status_label.text = "Wallet verification failed. Spectator mode only."
 
+func _on_free_turn_state_changed(state: Dictionary) -> void:
+	_free_turn_state = state.duplicate(true)
+	var server_now := int(_free_turn_state.get("server_time_unix", 0))
+	if server_now > 0:
+		_free_turn_server_offset_seconds = server_now - int(Time.get_unix_time_from_system())
+	_free_turn_last_rendered_second = -1
+	_refresh_free_turn_ui()
+
+func _refresh_free_turn_ui() -> void:
+	if _free_turn_label == null or _shared_world == null or _shared_world.mode == "local":
+		return
+	if _free_turn_state.is_empty():
+		_free_turn_label.text = "FREE DROP · CHECKING…"
+		return
+	if not bool(_free_turn_state.get("enabled", false)):
+		_free_turn_label.text = "HOURLY FREE DROP · UNAVAILABLE"
+		_update_network_drop_button()
+		return
+
+	var state := String(_free_turn_state.get("state", "disabled"))
+	var estimated_server_now := int(Time.get_unix_time_from_system()) + _free_turn_server_offset_seconds
+	var next_free_at := maxi(0, int(_free_turn_state.get("next_free_turn_at_unix", 0)))
+	var remaining := maxi(0, next_free_at - estimated_server_now)
+
+	if state == "cooldown" and remaining <= 0:
+		state = "available"
+	if state == "cooldown" and remaining == _free_turn_last_rendered_second:
+		return
+	_free_turn_last_rendered_second = remaining
+
+	match state:
+		"available":
+			_free_turn_label.text = "FREE DROP AVAILABLE NOW"
+		"queued":
+			_free_turn_label.text = "FREE DROP RESERVED · QUEUED"
+		"active":
+			_free_turn_label.text = "FREE DROP IN PROGRESS · COOLDOWN STARTS WHEN TURN ENDS"
+		"reserved":
+			_free_turn_label.text = "FREE DROP RESERVED"
+		"cooldown":
+			_free_turn_label.text = "NEXT FREE DROP · %s" % _format_free_turn_countdown(remaining)
+		_:
+			_free_turn_label.text = "HOURLY FREE DROP · UNAVAILABLE"
+	_update_network_drop_button(state)
+
+func _format_free_turn_countdown(total_seconds: int) -> String:
+	var seconds := maxi(0, total_seconds)
+	var hours := floori(float(seconds) / 3600.0)
+	var minutes := floori(float(seconds % 3600) / 60.0)
+	var remainder := seconds % 60
+	if hours > 0:
+		return "%d:%02d:%02d" % [hours, minutes, remainder]
+	return "%02d:%02d" % [minutes, remainder]
+
+func _update_network_drop_button(override_free_state: String = "") -> void:
+	if _shared_world == null or _shared_world.mode == "local":
+		return
+	var free_state := override_free_state
+	if free_state.is_empty():
+		free_state = String(_free_turn_state.get("state", ""))
+		if free_state == "cooldown":
+			var estimated_server_now := int(Time.get_unix_time_from_system()) + _free_turn_server_offset_seconds
+			if estimated_server_now >= int(_free_turn_state.get("next_free_turn_at_unix", 0)):
+				free_state = "available"
+	var can_queue := _shared_world.local_verified and _local_queue_position <= 0 and not _local_turn_active
+	drop_button.disabled = not can_queue
+	if free_state == "available":
+		drop_button.text = "FREE DROP · 10 COINS"
+	elif bool(_free_turn_state.get("paid_charge_bypassed_for_test", false)):
+		drop_button.text = "DROP 10 COINS · TEST NO CHARGE"
+	else:
+		drop_button.text = "DROP 10 COINS · 10 YES"
+
 func _on_settlement_changed(message: String) -> void:
 	status_label.text = message
+	if _turn_result_status != null:
+		_turn_result_status.text = message
 
 func _on_remote_turn_reveal_started(summary: Dictionary, wallet: String) -> void:
-	# Retained for protocol compatibility with older shared servers. No camera
-	# move or catch-pot hold is performed.
 	var is_local_turn: bool = wallet.to_lower() == _shared_world.local_wallet.to_lower()
-	status_label.text = "Your turn is settling…" if is_local_turn else "Settling turn for %s…%s…" % [wallet.left(6), wallet.right(4)]
+	status_label.text = "Counting your result…" if is_local_turn else "Counting the current player's result…"
 	_show_turn_result(summary, false, -1, [], wallet)
 
 func _on_remote_turn_finished(summary: Dictionary, wallet: String, lifetime_yes: int, milestones: Array) -> void:
@@ -374,10 +499,396 @@ func _on_remote_turn_finished(summary: Dictionary, wallet: String, lifetime_yes:
 	_refresh_labels()
 	var is_local_turn: bool = wallet.to_lower() == _shared_world.local_wallet.to_lower()
 	if is_local_turn:
-		status_label.text = "Your turn complete: %d YES credited." % _current_turn_payout
+		status_label.text = "Your result: %d YES." % _current_turn_payout
 	else:
-		status_label.text = "%s…%s finished with %d YES." % [wallet.left(6), wallet.right(4), _current_turn_payout]
-	_show_turn_result(summary, true, lifetime_yes if is_local_turn else -1, milestones if is_local_turn else [], wallet)
+		status_label.text = "%s…%s won %d YES." % [wallet.left(6), wallet.right(4), _current_turn_payout]
+	_show_turn_result(summary, true, lifetime_yes if is_local_turn else -1, milestones, wallet)
+
+func _build_active_player_showcase() -> void:
+	_active_player_showcase_panel = PanelContainer.new()
+	_active_player_showcase_panel.name = "ActivePlayerShowcase"
+	_active_player_showcase_panel.visible = false
+	_active_player_showcase_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	interface_layer.add_child(_active_player_showcase_panel)
+	# Mirror the main control menu as a vertical rail on the opposite side.
+	# Keep the center of the viewport clear so the machine remains unobstructed.
+	_active_player_showcase_panel.anchor_left = 1.0
+	_active_player_showcase_panel.anchor_right = 1.0
+	_active_player_showcase_panel.anchor_top = 0.0
+	_active_player_showcase_panel.anchor_bottom = 1.0
+	_active_player_showcase_panel.offset_left = -390.0
+	_active_player_showcase_panel.offset_right = -18.0
+	_active_player_showcase_panel.offset_top = 18.0
+	_active_player_showcase_panel.offset_bottom = -18.0
+
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.010, 0.018, 0.014, 0.95)
+	style.border_width_left = 2
+	style.border_width_top = 2
+	style.border_width_right = 2
+	style.border_width_bottom = 2
+	style.border_color = Color(0.96, 0.76, 0.20, 0.92)
+	style.corner_radius_top_left = 18
+	style.corner_radius_top_right = 18
+	style.corner_radius_bottom_left = 18
+	style.corner_radius_bottom_right = 18
+	style.content_margin_left = 18.0
+	style.content_margin_right = 18.0
+	style.content_margin_top = 14.0
+	style.content_margin_bottom = 14.0
+	_active_player_showcase_panel.add_theme_stylebox_override("panel", style)
+
+	var root := VBoxContainer.new()
+	root.add_theme_constant_override("separation", 12)
+	_active_player_showcase_panel.add_child(root)
+
+	var profile_box := VBoxContainer.new()
+	profile_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	profile_box.add_theme_constant_override("separation", 5)
+	root.add_child(profile_box)
+
+	var eyebrow := Label.new()
+	eyebrow.text = "CURRENT DROPPER"
+	eyebrow.add_theme_font_size_override("font_size", 12)
+	eyebrow.add_theme_color_override("font_color", Color(0.96, 0.76, 0.20, 1.0))
+	profile_box.add_child(eyebrow)
+
+	var identity := HBoxContainer.new()
+	identity.add_theme_constant_override("separation", 10)
+	profile_box.add_child(identity)
+
+	var avatar_stack := Control.new()
+	avatar_stack.custom_minimum_size = Vector2(62.0, 62.0)
+	identity.add_child(avatar_stack)
+
+	var avatar_back := ColorRect.new()
+	avatar_back.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	avatar_back.color = Color(0.035, 0.075, 0.055, 1.0)
+	avatar_stack.add_child(avatar_back)
+
+	_active_player_avatar_fallback = Label.new()
+	_active_player_avatar_fallback.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_active_player_avatar_fallback.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_active_player_avatar_fallback.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_active_player_avatar_fallback.add_theme_font_size_override("font_size", 18)
+	_active_player_avatar_fallback.add_theme_color_override("font_color", Color(0.30, 0.92, 0.60, 1.0))
+	avatar_stack.add_child(_active_player_avatar_fallback)
+
+	_active_player_avatar = TextureRect.new()
+	_active_player_avatar.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_active_player_avatar.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	_active_player_avatar.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	_active_player_avatar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	avatar_stack.add_child(_active_player_avatar)
+
+	var identity_text := VBoxContainer.new()
+	identity_text.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	identity.add_child(identity_text)
+
+	_active_player_name = Label.new()
+	_active_player_name.text = "Player"
+	_active_player_name.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	_active_player_name.add_theme_font_size_override("font_size", 21)
+	_active_player_name.add_theme_color_override("font_color", Color.WHITE)
+	identity_text.add_child(_active_player_name)
+
+	_active_player_handle = Label.new()
+	_active_player_handle.text = ""
+	_active_player_handle.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	_active_player_handle.add_theme_font_size_override("font_size", 13)
+	_active_player_handle.add_theme_color_override("font_color", Color(0.67, 0.74, 0.69, 1.0))
+	identity_text.add_child(_active_player_handle)
+
+	_active_player_tagline = Label.new()
+	_active_player_tagline.text = ""
+	_active_player_tagline.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_active_player_tagline.custom_minimum_size = Vector2(220.0, 36.0)
+	_active_player_tagline.add_theme_font_size_override("font_size", 12)
+	_active_player_tagline.add_theme_color_override("font_color", Color(0.95, 0.72, 0.22, 1.0))
+	profile_box.add_child(_active_player_tagline)
+
+	_active_player_featured_outputs = HBoxContainer.new()
+	_active_player_featured_outputs.add_theme_constant_override("separation", 5)
+	profile_box.add_child(_active_player_featured_outputs)
+
+	var separator := HSeparator.new()
+	root.add_child(separator)
+
+	var showcase_box := VBoxContainer.new()
+	showcase_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	showcase_box.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	showcase_box.add_theme_constant_override("separation", 7)
+	root.add_child(showcase_box)
+
+	var showcase_title := Label.new()
+	showcase_title.text = "RAINBOW'S END TOYS"
+	showcase_title.add_theme_font_size_override("font_size", 12)
+	showcase_title.add_theme_color_override("font_color", Color(0.96, 0.76, 0.20, 1.0))
+	showcase_box.add_child(showcase_title)
+
+	var toy_scroll := ScrollContainer.new()
+	toy_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	toy_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	toy_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	showcase_box.add_child(toy_scroll)
+
+	_active_player_toys = VBoxContainer.new()
+	_active_player_toys.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_active_player_toys.add_theme_constant_override("separation", 8)
+	toy_scroll.add_child(_active_player_toys)
+
+
+func _hide_active_player_showcase() -> void:
+	_active_player_showcase_generation += 1
+	if _active_player_showcase_panel != null:
+		_active_player_showcase_panel.visible = false
+
+
+func _show_active_player_placeholder(wallet: String) -> void:
+	if _active_player_showcase_panel == null:
+		return
+	_active_player_showcase_generation += 1
+	_active_player_showcase_panel.visible = true
+	_active_player_showcase_panel.modulate.a = 0.0
+	var reveal := create_tween()
+	reveal.tween_property(_active_player_showcase_panel, "modulate:a", 1.0, 0.22)
+	_active_player_avatar.texture = null
+	_active_player_avatar_fallback.text = "YF"
+	_active_player_name.text = "%s…%s" % [wallet.left(6), wallet.right(4)] if wallet.length() >= 10 else "Player"
+	_active_player_handle.text = "Loading Yokefellow profile…"
+	_active_player_tagline.text = ""
+	_clear_active_player_featured_outputs()
+	_clear_active_player_toy_cards()
+	_add_showcase_message("Loading Toy NFT collection…")
+
+
+func _render_active_player_presentation(presentation: Dictionary) -> void:
+	if _active_player_showcase_panel == null:
+		return
+	_last_active_player_presentation = presentation.duplicate(true)
+	_active_player_showcase_generation += 1
+	var generation := _active_player_showcase_generation
+	_active_player_showcase_panel.visible = true
+
+	var wallet := String(presentation.get("wallet", "")).strip_edges().to_lower()
+	var profile: Dictionary = {}
+	var profile_value: Variant = presentation.get("profile", {})
+	if profile_value is Dictionary:
+		profile = profile_value as Dictionary
+
+	_active_player_avatar.texture = null
+	_active_player_avatar_fallback.text = "YF"
+	if profile.is_empty():
+		_active_player_name.text = "%s…%s" % [wallet.left(6), wallet.right(4)] if wallet.length() >= 10 else "Player"
+		_active_player_handle.text = "Yokefellow profile unavailable"
+		_active_player_tagline.text = ""
+	else:
+		_active_player_name.text = String(profile.get("displayName", "Player"))
+		var handle := String(profile.get("handle", profile.get("slug", ""))).strip_edges()
+		_active_player_handle.text = "@%s" % handle if not handle.is_empty() else ""
+		var settings: Dictionary = {}
+		var settings_value: Variant = profile.get("cardSettings", {})
+		if settings_value is Dictionary:
+			settings = settings_value as Dictionary
+		_active_player_tagline.text = String(settings.get("tagline", "")).strip_edges()
+		var avatar_url := String(profile.get("avatarUrl", "")).strip_edges()
+		if not avatar_url.is_empty():
+			_load_showcase_texture(avatar_url, _active_player_avatar, generation)
+		_render_featured_profile_outputs(profile, generation)
+
+	_clear_active_player_toy_cards()
+	var toys_value: Variant = presentation.get("toys", [])
+	if not (toys_value is Array) or (toys_value as Array).is_empty():
+		_add_showcase_message("No Rainbow's End Toy NFTs yet.")
+		return
+	_render_toy_family_cards(toys_value as Array, generation)
+
+
+func _clear_active_player_featured_outputs() -> void:
+	if _active_player_featured_outputs == null:
+		return
+	for child in _active_player_featured_outputs.get_children():
+		child.queue_free()
+
+
+func _render_featured_profile_outputs(profile: Dictionary, generation: int) -> void:
+	_clear_active_player_featured_outputs()
+	var outputs_value: Variant = profile.get("featuredOutputs", [])
+	if not (outputs_value is Array):
+		return
+	var shown := 0
+	for output_value in outputs_value:
+		if shown >= 3:
+			break
+		if not (output_value is Dictionary):
+			continue
+		var output := output_value as Dictionary
+		var icon := TextureRect.new()
+		icon.custom_minimum_size = Vector2(28.0, 28.0)
+		icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+		icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_active_player_featured_outputs.add_child(icon)
+		var url := String(output.get("imageUrl", "")).strip_edges()
+		if not url.is_empty():
+			_load_showcase_texture(url, icon, generation)
+		shown += 1
+
+
+func _clear_active_player_toy_cards() -> void:
+	if _active_player_toys == null:
+		return
+	for child in _active_player_toys.get_children():
+		child.queue_free()
+
+
+func _add_showcase_message(message: String) -> void:
+	var label := Label.new()
+	label.text = message
+	label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	label.add_theme_font_size_override("font_size", 14)
+	label.add_theme_color_override("font_color", Color(0.67, 0.74, 0.69, 1.0))
+	_active_player_toys.add_child(label)
+
+
+func _render_toy_family_cards(toys: Array, generation: int) -> void:
+	var by_family: Dictionary = {}
+	for toy_value in toys:
+		if not (toy_value is Dictionary):
+			continue
+		var toy := toy_value as Dictionary
+		var family := String(toy.get("family", "")).strip_edges().to_lower()
+		if not _is_valid_toy_family(family):
+			continue
+		if not by_family.has(family):
+			by_family[family] = []
+		var entries := by_family[family] as Array
+		entries.append(toy.duplicate(true))
+		by_family[family] = entries
+
+	for family in ["horseshoe", "four_leaf_clover", "leprechaun", "pot_of_gold", "treasure_chest"]:
+		if not by_family.has(family):
+			continue
+		var entries := by_family[family] as Array
+		var counts := {"small": 0, "medium": 0, "large": 0}
+		var best: Dictionary = {}
+		var best_rank := -1
+		for entry_value in entries:
+			if not (entry_value is Dictionary):
+				continue
+			var entry := entry_value as Dictionary
+			var tier := String(entry.get("tier", "small")).strip_edges().to_lower()
+			var rank := _toy_tier_rank(tier)
+			counts[tier] = int(counts.get(tier, 0)) + maxi(1, int(entry.get("quantity", 1)))
+			if rank > best_rank:
+				best_rank = rank
+				best = entry
+		_add_toy_family_card(family, counts, best, generation)
+
+
+func _add_toy_family_card(family: String, counts: Dictionary, best: Dictionary, generation: int) -> void:
+	var tier := String(best.get("tier", "small")).strip_edges().to_lower()
+	var card := PanelContainer.new()
+	card.custom_minimum_size = Vector2(0.0, 88.0)
+	card.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	card.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.025, 0.044, 0.033, 0.96)
+	style.border_width_left = 1
+	style.border_width_top = 1
+	style.border_width_right = 1
+	style.border_width_bottom = 1
+	style.border_color = Color(0.22, 0.48, 0.32, 0.9)
+	style.corner_radius_top_left = 10
+	style.corner_radius_top_right = 10
+	style.corner_radius_bottom_left = 10
+	style.corner_radius_bottom_right = 10
+	style.content_margin_left = 8.0
+	style.content_margin_right = 8.0
+	style.content_margin_top = 7.0
+	style.content_margin_bottom = 7.0
+	card.add_theme_stylebox_override("panel", style)
+	_active_player_toys.add_child(card)
+
+	var layout := HBoxContainer.new()
+	layout.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	layout.add_theme_constant_override("separation", 10)
+	card.add_child(layout)
+
+	var image := TextureRect.new()
+	image.custom_minimum_size = Vector2(72.0, 72.0)
+	image.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	image.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	image.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	layout.add_child(image)
+
+	var text_box := VBoxContainer.new()
+	text_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	text_box.alignment = BoxContainer.ALIGNMENT_CENTER
+	text_box.add_theme_constant_override("separation", 2)
+	layout.add_child(text_box)
+
+	var title := Label.new()
+	title.text = _toy_name(family)
+	title.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	title.add_theme_font_size_override("font_size", 13)
+	title.add_theme_color_override("font_color", Color.WHITE)
+	text_box.add_child(title)
+
+	var tier_label := Label.new()
+	tier_label.text = tier.to_upper()
+	tier_label.add_theme_font_size_override("font_size", 10)
+	tier_label.add_theme_color_override(
+		"font_color",
+		Color(1.0, 0.78, 0.20, 1.0) if tier == "large" else Color(0.40, 0.90, 0.62, 1.0)
+	)
+	text_box.add_child(tier_label)
+
+	var counts_label := Label.new()
+	counts_label.text = "Small %d  ·  Medium %d  ·  Large %d" % [
+		int(counts.get("small", 0)),
+		int(counts.get("medium", 0)),
+		int(counts.get("large", 0)),
+	]
+	counts_label.add_theme_font_size_override("font_size", 10)
+	counts_label.add_theme_color_override("font_color", Color(0.65, 0.72, 0.67, 1.0))
+	text_box.add_child(counts_label)
+
+	var image_url := String(best.get("imageUrl", "")).strip_edges()
+	if not image_url.is_empty():
+		_load_showcase_texture(image_url, image, generation)
+
+func _toy_tier_rank(tier: String) -> int:
+	match tier:
+		"large": return 2
+		"medium": return 1
+	return 0
+
+
+func _load_showcase_texture(raw_url: String, target: TextureRect, generation: int) -> void:
+	var url := _nft_image_request_url(raw_url)
+	if url.is_empty():
+		return
+	var request := HTTPRequest.new()
+	request.timeout = 12.0
+	add_child(request)
+	var start_error := request.request(url, PackedStringArray(["Accept: image/*"]))
+	if start_error != OK:
+		request.queue_free()
+		return
+	var completed: Array = await request.request_completed
+	request.queue_free()
+	if generation != _active_player_showcase_generation or not is_instance_valid(target):
+		return
+	if int(completed[0]) != HTTPRequest.RESULT_SUCCESS or int(completed[1]) < 200 or int(completed[1]) >= 300:
+		return
+	var image_data := Image.new()
+	var load_error := _load_image_bytes(image_data, completed[3], completed[2], url)
+	if load_error != OK:
+		return
+	target.texture = ImageTexture.create_from_image(image_data)
+
 
 func _build_network_controls() -> void:
 	var layout := $Interface/Margin/Panel/Layout as VBoxContainer
@@ -395,6 +906,21 @@ func _build_network_controls() -> void:
 	_queue_label = Label.new()
 	_queue_label.text = "Queue: 0 waiting"
 	layout.add_child(_queue_label)
+
+	_free_turn_label = Label.new()
+	_free_turn_label.text = "FREE DROP · CHECKING…"
+	_free_turn_label.add_theme_font_size_override("font_size", 15)
+	_free_turn_label.add_theme_color_override("font_color", Color(0.96, 0.76, 0.24, 1.0))
+	layout.add_child(_free_turn_label)
+	var drop_controls := $Interface/Margin/Panel/Layout/DropControls as HBoxContainer
+	layout.move_child(_free_turn_label, drop_controls.get_index())
+
+	if _is_local_web_yd2_test():
+		_test_player_button = Button.new()
+		_test_player_button.text = "QUEUE TEST PLAYER B"
+		_test_player_button.tooltip_text = "Adds a presentation-only second player. No wallet switch or Yokefellow settlement."
+		_test_player_button.pressed.connect(_on_queue_test_player_pressed)
+		layout.add_child(_test_player_button)
 
 	var skin_title := Label.new()
 	skin_title.text = "EQUIPPED COIN"
@@ -452,7 +978,8 @@ func _build_network_controls() -> void:
 	_leave_queue_button.text = "LEAVE QUEUE"
 	_leave_queue_button.pressed.connect(_on_leave_queue_pressed)
 	identity_actions.add_child(_leave_queue_button)
-	drop_button.disabled = not _shared_world.local_verified
+	_update_network_drop_button()
+	_refresh_free_turn_ui()
 
 func _on_owned_skins_changed(families: Array, equipped: String) -> void:
 	_rebuild_skin_selector(families, equipped)
@@ -510,6 +1037,153 @@ func _on_verify_wallet_pressed() -> void:
 func _on_leave_queue_pressed() -> void:
 	_shared_world.leave_queue()
 
+func _on_queue_test_player_pressed() -> void:
+	if _test_player_button != null:
+		_test_player_button.disabled = true
+	_shared_world.request_presentation_test_opponent()
+	await get_tree().create_timer(1.0).timeout
+	if _test_player_button != null:
+		_test_player_button.disabled = false
+
+func _is_local_web_yd2_test() -> bool:
+	if not OS.has_feature("web"):
+		return false
+	var hostname: Variant = JavaScriptBridge.eval(
+		"(window.parent && window.parent.location && window.parent.location.hostname) || ''",
+		true
+	)
+	return String(hostname).strip_edges().to_lower() in ["127.0.0.1", "localhost"]
+
+func _build_capture_panel() -> void:
+	_capture_panel = PanelContainer.new()
+	_capture_panel.name = "CaptureMomentPanel"
+	_capture_panel.visible = false
+	_capture_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	interface_layer.add_child(_capture_panel)
+	_capture_panel.anchor_left = 0.5
+	_capture_panel.anchor_right = 0.5
+	_capture_panel.anchor_top = 1.0
+	_capture_panel.anchor_bottom = 1.0
+	_capture_panel.offset_left = -245.0
+	_capture_panel.offset_right = 245.0
+	_capture_panel.offset_top = -155.0
+	_capture_panel.offset_bottom = -28.0
+
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.012, 0.026, 0.017, 0.965)
+	style.border_width_left = 3
+	style.border_width_top = 3
+	style.border_width_right = 3
+	style.border_width_bottom = 3
+	style.border_color = Color(0.98, 0.76, 0.18, 1.0)
+	style.corner_radius_top_left = 18
+	style.corner_radius_top_right = 18
+	style.corner_radius_bottom_left = 18
+	style.corner_radius_bottom_right = 18
+	style.content_margin_left = 18.0
+	style.content_margin_right = 18.0
+	style.content_margin_top = 12.0
+	style.content_margin_bottom = 12.0
+	_capture_panel.add_theme_stylebox_override("panel", style)
+
+	var layout := VBoxContainer.new()
+	layout.alignment = BoxContainer.ALIGNMENT_CENTER
+	layout.add_theme_constant_override("separation", 5)
+	_capture_panel.add_child(layout)
+
+	_capture_title = Label.new()
+	_capture_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_capture_title.add_theme_font_size_override("font_size", 24)
+	_capture_title.add_theme_color_override("font_color", Color(1.0, 0.78, 0.18, 1.0))
+	layout.add_child(_capture_title)
+
+	_capture_detail = Label.new()
+	_capture_detail.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_capture_detail.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_capture_detail.add_theme_font_size_override("font_size", 14)
+	_capture_detail.add_theme_color_override("font_color", Color(0.86, 0.91, 0.87, 1.0))
+	layout.add_child(_capture_detail)
+
+func _on_presentation_event(event: Dictionary) -> void:
+	var kind := String(event.get("kind", "")).strip_edges().to_lower()
+	match kind:
+		"toy_caught":
+			_show_toy_caught_moment(String(event.get("family", "")).strip_edges().to_lower())
+		"toy_nft":
+			_show_capture_moment(
+				"TOY NFT CONFIRMED",
+				String(event.get("title", "Toy NFT")) + " was added to the player's result.",
+				Color(0.34, 0.94, 0.56, 1.0),
+				4.0
+			)
+		"skin_nft":
+			_show_capture_moment(
+				"COIN SKIN NFT CONFIRMED",
+				String(event.get("title", "Coin Skin NFT")) + " was earned.",
+				Color(0.38, 0.82, 1.0, 1.0),
+				4.0
+			)
+		"settlement_state":
+			var settlement_message := String(event.get("message", "")).strip_edges()
+			if not settlement_message.is_empty():
+				status_label.text = settlement_message
+				if _turn_result_status != null:
+					_turn_result_status.text = settlement_message
+		"settlement_confirmed":
+			if _turn_result_status != null:
+				_turn_result_status.text = "Confirmed · %d YES credited" % maxi(0, int(event.get("yes", 0)))
+
+func _show_toy_caught_moment(family: String) -> void:
+	if not _is_valid_toy_family(family):
+		return
+	var detail := "%s reached the payout." % _toy_name(family)
+	var craft_cue := _craft_cue_after_small_toy(family)
+	if not craft_cue.is_empty():
+		detail += "\n" + craft_cue
+	_show_capture_moment("TOY CAUGHT!", detail, Color(1.0, 0.76, 0.18, 1.0), 4.2)
+
+func _craft_cue_after_small_toy(family: String) -> String:
+	var toys_value: Variant = _last_active_player_presentation.get("toys", [])
+	if not (toys_value is Array):
+		return ""
+	var small_count := 0
+	for toy_value in toys_value:
+		if not (toy_value is Dictionary):
+			continue
+		var toy := toy_value as Dictionary
+		if String(toy.get("family", "")).strip_edges().to_lower() != family:
+			continue
+		var tier := String(toy.get("tier", toy.get("size", "small"))).strip_edges().to_lower()
+		if tier == "small":
+			small_count += maxi(1, int(toy.get("quantity", 1)))
+	if small_count >= 2:
+		return "CRAFT AVAILABLE · 3 Small → 1 Medium"
+	return ""
+
+func _show_capture_moment(title: String, detail: String, accent: Color, seconds: float = 3.2) -> void:
+	if _capture_panel == null:
+		return
+	_capture_generation += 1
+	var generation := _capture_generation
+	_capture_title.text = title
+	_capture_title.add_theme_color_override("font_color", accent)
+	_capture_detail.text = detail
+	_capture_panel.modulate = Color(1.0, 1.0, 1.0, 0.0)
+	_capture_panel.visible = true
+	var reveal := create_tween()
+	reveal.tween_property(_capture_panel, "modulate:a", 1.0, 0.18)
+	_hide_capture_moment_later(generation, seconds)
+
+func _hide_capture_moment_later(generation: int, seconds: float) -> void:
+	await get_tree().create_timer(seconds).timeout
+	if generation != _capture_generation or _capture_panel == null:
+		return
+	var tween := create_tween()
+	tween.tween_property(_capture_panel, "modulate:a", 0.0, 0.24)
+	await tween.finished
+	if generation == _capture_generation:
+		_capture_panel.visible = false
+
 func _on_nft_awarded(award: Dictionary) -> void:
 	_nft_award_queue.append(award.duplicate(true))
 	if not _nft_award_showing:
@@ -535,6 +1209,9 @@ func _show_next_nft_award() -> void:
 	var token_id := String(_active_nft_award.get("token_id", "")).strip_edges()
 	var image_url := String(_active_nft_award.get("image_url", "")).strip_edges()
 
+	var mint_status := String(_active_nft_award.get("mint_status", "")).strip_edges().to_lower()
+	var confirmed := mint_status in ["completed", "minted", "confirmed"]
+	_nft_award_heading.text = "NFT CONFIRMED" if confirmed else "NFT RESULT"
 	_nft_award_type.text = "COIN SKIN NFT" if kind == "skin" else "TOY NFT" if kind == "toy" else "YOKEFELLOW NFT"
 	_nft_award_name.text = title
 	var detail_lines := PackedStringArray([detail])
@@ -617,12 +1294,12 @@ func _build_nft_award_panel() -> void:
 	layout.add_theme_constant_override("separation", 10)
 	_nft_award_panel.add_child(layout)
 
-	var earned := Label.new()
-	earned.text = "NFT EARNED"
-	earned.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	earned.add_theme_font_size_override("font_size", 34)
-	earned.add_theme_color_override("font_color", Color(1.0, 0.78, 0.18, 1.0))
-	layout.add_child(earned)
+	_nft_award_heading = Label.new()
+	_nft_award_heading.text = "NFT RESULT"
+	_nft_award_heading.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_nft_award_heading.add_theme_font_size_override("font_size", 34)
+	_nft_award_heading.add_theme_color_override("font_color", Color(1.0, 0.78, 0.18, 1.0))
+	layout.add_child(_nft_award_heading)
 
 	_nft_award_type = Label.new()
 	_nft_award_type.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -795,14 +1472,14 @@ func _build_turn_result_panel() -> void:
 	_turn_result_panel.visible = false
 	_turn_result_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	interface_layer.add_child(_turn_result_panel)
-	_turn_result_panel.anchor_left = 1.0
-	_turn_result_panel.anchor_right = 1.0
+	_turn_result_panel.anchor_left = 0.5
+	_turn_result_panel.anchor_right = 0.5
 	_turn_result_panel.anchor_top = 0.0
 	_turn_result_panel.anchor_bottom = 0.0
-	_turn_result_panel.offset_left = -410.0
-	_turn_result_panel.offset_right = -28.0
-	_turn_result_panel.offset_top = 92.0
-	_turn_result_panel.offset_bottom = 330.0
+	_turn_result_panel.offset_left = -235.0
+	_turn_result_panel.offset_right = 235.0
+	_turn_result_panel.offset_top = 170.0
+	_turn_result_panel.offset_bottom = 475.0
 
 	var panel_style := StyleBoxFlat.new()
 	panel_style.bg_color = Color(0.018, 0.026, 0.020, 0.96)
@@ -835,30 +1512,43 @@ func _build_turn_result_panel() -> void:
 	_turn_result_detail = Label.new()
 	_turn_result_detail.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_turn_result_detail.add_theme_font_size_override("font_size", 17)
-	_turn_result_detail.custom_minimum_size = Vector2(340.0, 150.0)
+	_turn_result_detail.custom_minimum_size = Vector2(420.0, 170.0)
 	layout.add_child(_turn_result_detail)
+
+	_turn_result_status = Label.new()
+	_turn_result_status.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_turn_result_status.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_turn_result_status.add_theme_font_size_override("font_size", 13)
+	_turn_result_status.add_theme_color_override("font_color", Color(0.66, 0.74, 0.68, 1.0))
+	layout.add_child(_turn_result_status)
 
 func _show_turn_result(summary: Dictionary, final: bool, lifetime_yes: int, milestones: Array, owner_wallet: String) -> void:
 	_turn_result_generation += 1
 	var generation: int = _turn_result_generation
-	_turn_result_title.text = "TURN COMPLETE" if final else "TURN SETTLING"
+	var total_yes: int = maxi(0, int(summary.get("total_yes", 0)))
+	_turn_result_title.text = "RESULT · %d YES" % total_yes if final else "COUNTING RESULT…"
+
 	var lines: PackedStringArray = PackedStringArray()
-	var drop_count: int = maxi(0, int(summary.get("drop_count", FIXED_DROP_COUNT)))
+	if not owner_wallet.is_empty():
+		var is_local := owner_wallet.to_lower() == _shared_world.local_wallet.to_lower()
+		lines.append("Your turn" if is_local else "Player %s…%s" % [owner_wallet.left(6), owner_wallet.right(4)])
+
 	var caught_count: int = maxi(0, int(summary.get("caught_coin_count", 0)))
 	var lost_count: int = maxi(0, int(summary.get("lost_count", 0)))
 	var base_yes: int = maxi(0, int(summary.get("caught_base_yes", caught_count)))
 	var multiplier: int = maxi(1, int(summary.get("payout_multiplier", 1)))
 	var bonus_yes: int = maxi(0, int(summary.get("bonus_yes", 0)))
-	var total_yes: int = maxi(0, int(summary.get("total_yes", 0)))
-	lines.append("Coins dropped: %d" % drop_count)
-	lines.append("Coins caught: %d" % caught_count)
-	lines.append("Coins lost this turn: %d" % lost_count)
+
+	lines.append("%d coin%s reached the payout" % [caught_count, "" if caught_count == 1 else "s"])
 	if multiplier > 1:
-		lines.append("Caught value: %d YES × %d" % [base_yes, multiplier])
-	else:
-		lines.append("Caught value: %d YES" % base_yes)
+		lines.append("%d YES × %d multiplier" % [base_yes, multiplier])
+	elif caught_count > 0:
+		lines.append("%d YES from caught coins" % base_yes)
 	if bonus_yes > 0:
-		lines.append("Bonus YES: +%d" % bonus_yes)
+		lines.append("+%d bonus YES" % bonus_yes)
+	if lost_count > 0:
+		lines.append("%d coin%s missed" % [lost_count, "" if lost_count == 1 else "s"])
+
 	var toy_names: PackedStringArray = PackedStringArray()
 	var toy_values: Variant = summary.get("toy_families", [])
 	if toy_values is Array:
@@ -866,26 +1556,30 @@ func _show_turn_result(summary: Dictionary, final: bool, lifetime_yes: int, mile
 			toy_names.append(_toy_name(String(toy_value)))
 	if not toy_names.is_empty():
 		lines.append("Toy caught: %s" % ", ".join(toy_names))
-	lines.append("")
-	lines.append("TOTAL: %d YES" % total_yes)
-	if final and lifetime_yes >= 0:
-		lines.append("Lifetime earned: %d YES" % lifetime_yes)
-	if final:
-		var lifetime_paid_out := maxi(0, int(summary.get("lifetime_coins_paid_out", 0)))
-		var skin_every := maxi(1, int(summary.get("skin_drop_every_coins", 100)))
-		lines.append("Skin progress: %d / %d coins paid out" % [lifetime_paid_out % skin_every, skin_every])
+		for toy_value in toy_values:
+			var cue := _craft_cue_after_small_toy(String(toy_value).strip_edges().to_lower())
+			if not cue.is_empty():
+				lines.append(cue)
+				break
+
 	if final and not milestones.is_empty():
-		lines.append("Coin Skin Drop earned: %d" % milestones.size())
-	if not owner_wallet.is_empty() and owner_wallet.to_lower() != _shared_world.local_wallet.to_lower():
-		lines.append("Player: %s…%s" % [owner_wallet.left(6), owner_wallet.right(4)])
+		lines.append("Coin Skin NFT earned: %d" % milestones.size())
+	if final and lifetime_yes >= 0:
+		lines.append("Lifetime YES: %d" % lifetime_yes)
+
 	_turn_result_detail.text = "\n".join(lines)
+	if final:
+		_turn_result_status.text = "Result locked · confirming YES and NFT results"
+	else:
+		_turn_result_status.text = "Checking the final payout area…"
+
 	_turn_result_panel.modulate = Color.WHITE
 	_turn_result_panel.visible = true
 	if final:
 		_hide_turn_result_later(generation)
 
 func _hide_turn_result_later(generation: int) -> void:
-	await get_tree().create_timer(6.0).timeout
+	await get_tree().create_timer(8.0).timeout
 	if generation != _turn_result_generation:
 		return
 	var tween := create_tween()
