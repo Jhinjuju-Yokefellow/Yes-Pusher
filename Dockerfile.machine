@@ -1,4 +1,4 @@
-FROM mirror.gcr.io/library/debian:bookworm-slim
+FROM debian:bookworm-slim
 
 ARG GODOT_VERSION=4.7-beta3
 ARG GODOT_ARCH=linux.x86_64

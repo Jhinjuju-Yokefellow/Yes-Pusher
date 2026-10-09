@@ -51,9 +51,6 @@ var _websocket_peer: WebSocketMultiplayerPeer
 var _turn_sequence: int = 0
 var _queue: Array[Dictionary] = []
 var _players: Dictionary = {}
-# Yokefellow Network participant sessions are intentionally memory-only.
-# They are never written into player/turn/settlement persistence.
-var _participant_sessions: Dictionary = {}
 var _active_turn: Dictionary = {}
 var _live_player_presentation: Dictionary = {}
 var _settlements: Array[Dictionary] = []
@@ -424,20 +421,6 @@ func authoritative_turn_completed(summary: Dictionary) -> void:
 	})
 	if not multiplayer.get_peers().is_empty():
 		_client_turn_completed.rpc(safe_summary, wallet, new_lifetime, milestones)
-	call_deferred(
-		"_publish_network_event",
-		"coin_drop_completed",
-		"turn:%s:result" % String(completed.get("turn_id", "")),
-		wallet,
-		{
-			"turnId": String(completed.get("turn_id", "")),
-			"payoutYes": payout,
-			"caughtCoinCount": paid_out_this_turn,
-			"lifetimeCoinsPaidOut": new_lifetime_paid_out,
-			"skinMilestones": milestones.duplicate(),
-			"toyCaptures": completed_toy_captures.duplicate(true),
-		}
-	)
 	_live_player_presentation = {}
 	_active_turn = {}
 	_save_state()
@@ -513,7 +496,6 @@ func _server_identify(wallet: String, session_token: String, requested_skin_fami
 		_client_identity_result.rpc_id(peer_id, false, "", [], String(verification.get("error", "Wallet verification failed.")))
 		return
 	var normalized_wallet := String(verification.get("wallet", wallet)).to_lower()
-	_participant_sessions[normalized_wallet] = session_token.strip_edges()
 	var prior := _ensure_presentation_fixture(_player(normalized_wallet))
 	var cached_owned: Array[String] = _normalized_family_array(prior.get("owned_skin_families", []))
 	if _presentation_test_mode:
@@ -547,12 +529,6 @@ func _server_identify(wallet: String, session_token: String, requested_skin_fami
 	_send_free_turn_state_to_peer(peer_id, normalized_wallet)
 	_broadcast_queue_state()
 	call_deferred("_server_load_identity_entitlements", peer_id, normalized_wallet, requested_skin_family)
-	if (
-		not _active_turn.is_empty()
-		and String(_active_turn.get("wallet", "")).to_lower() == normalized_wallet
-		and String(_active_turn.get("status", "")) == "charging"
-	):
-		call_deferred("_recover_active_turn")
 
 func _server_load_identity_entitlements(peer_id: int, wallet: String, requested_skin_family: String) -> void:
 	if not multiplayer.is_server() or not multiplayer.get_peers().has(peer_id):
@@ -838,9 +814,6 @@ func _enqueue_player(peer_id: int, wallet: String, skin_family: String, presenta
 	_broadcast_queue_state()
 	call_deferred("_process_next_turn")
 
-func _participant_session_for_wallet(wallet: String) -> String:
-	return String(_participant_sessions.get(wallet.strip_edges().to_lower(), "")).strip_edges()
-
 func _process_next_turn() -> void:
 	if mode != "server" or _processing_queue or machine.is_turn_active() or not _active_turn.is_empty() or _queue.is_empty():
 		return
@@ -878,11 +851,7 @@ func _process_next_turn() -> void:
 	}
 	_save_state()
 	if access_mode == "paid":
-		var spend_result := await yf.spend_turn_credit(
-			wallet,
-			turn_id,
-			_participant_session_for_wallet(wallet)
-		)
+		var spend_result := await yf.spend_turn_credit(wallet, turn_id)
 		if not bool(spend_result.get("ok", false)):
 			var message := "Turn could not start: %s" % spend_result.get("error", "bucket credit charge failed")
 			_client_status_for(int(entry.get("peer_id", 0)), message)
@@ -925,18 +894,6 @@ func _start_active_turn() -> void:
 		"presentation_test":
 			start_message = "Rainbow Player B presentation test turn is starting."
 	_client_status_for(int(_active_turn.get("peer_id", 0)), start_message)
-	call_deferred(
-		"_publish_network_event",
-		"coin_drop_started",
-		"turn:%s:started" % turn_id,
-		wallet,
-		{
-			"turnId": turn_id,
-			"accessMode": access_mode,
-			"dropCount": FIXED_DROP_COUNT,
-			"skinFamily": String(_active_turn.get("skin_family", "")),
-		}
-	)
 	machine.set_turn_seed(int(_active_turn.get("seed", 0)))
 	machine.queue_turn_toy(String(_active_turn.get("skin_family", "")))
 	machine.drop_coins(FIXED_DROP_COUNT)
@@ -953,16 +910,7 @@ func _recover_active_turn() -> void:
 	if status == "charging":
 		var access_mode := String(_active_turn.get("access_mode", "paid"))
 		if access_mode == "paid":
-			var recovered_wallet := String(_active_turn.get("wallet", "")).to_lower()
-			var participant_session := _participant_session_for_wallet(recovered_wallet)
-			if participant_session.is_empty():
-				status_changed.emit("Recovered paid turn is waiting for the player to reconnect and re-authorize.")
-				return
-			var spend_result := await yf.spend_turn_credit(
-				recovered_wallet,
-				String(_active_turn.get("turn_id", "")),
-				participant_session
-			)
+			var spend_result := await yf.spend_turn_credit(String(_active_turn.get("wallet", "")), String(_active_turn.get("turn_id", "")))
 			if not bool(spend_result.get("ok", false)):
 				status_changed.emit("Recovered turn is waiting for credit charge: %s" % spend_result.get("error", "unknown error"))
 				return
@@ -1056,18 +1004,6 @@ func _process_settlement_outbox() -> void:
 				elif awarded_peer_id == 1:
 					nft_awarded.emit(award.duplicate(true))
 			confirmed_milestones.append(milestone_number)
-			call_deferred(
-				"_publish_network_event",
-				"skin_drop_earned",
-				"skin:%s:%d:confirmed" % [wallet.to_lower(), milestone_number],
-				wallet,
-				{
-					"turnId": turn_id,
-					"milestoneNumber": milestone_number,
-					"classId": awarded_class_id,
-					"family": awarded_family,
-				}
-			)
 			settlement["skin_milestones_confirmed"] = confirmed_milestones
 			_settlements[index] = settlement
 			_save_state()
@@ -1178,26 +1114,6 @@ func _broadcast_presentation_event(event: Dictionary) -> void:
 	else:
 		presentation_event.emit(safe_event)
 
-func _publish_network_event(
-	event_type: String,
-	reference_id: String,
-	wallet: String,
-	data: Dictionary
-) -> void:
-	if yf == null or not yf.integration_ready():
-		return
-	var result: Dictionary = await yf.publish_app_event(
-		event_type,
-		reference_id,
-		wallet,
-		data
-	)
-	if not bool(result.get("ok", false)):
-		push_warning(
-			"Yokefellow Network App event %s was not recorded: %s"
-			% [event_type, String(result.get("error", "unknown error"))]
-	)
-
 func _publish_settlement_message(message: String, wallet: String, turn_id: String) -> void:
 	settlement_changed.emit(message)
 	_broadcast_presentation_event({
@@ -1210,28 +1126,14 @@ func _publish_settlement_message(message: String, wallet: String, turn_id: Strin
 func _on_authoritative_toy_captured(toy_family: String, toy_instance_id: String, _turn_generation: int, power_result: Dictionary) -> void:
 	if mode != "server" or _active_turn.is_empty():
 		return
-	var wallet := String(_active_turn.get("wallet", ""))
-	var turn_id := String(_active_turn.get("turn_id", ""))
 	_broadcast_presentation_event({
 		"kind": "toy_caught",
-		"wallet": wallet,
-		"turn_id": turn_id,
+		"wallet": String(_active_turn.get("wallet", "")),
+		"turn_id": String(_active_turn.get("turn_id", "")),
 		"family": toy_family,
 		"toy_instance_id": toy_instance_id,
 		"power_result": power_result.duplicate(true),
 	})
-	call_deferred(
-		"_publish_network_event",
-		"toy_caught",
-		"turn:%s:toy:%s:caught" % [turn_id, toy_instance_id],
-		wallet,
-		{
-			"turnId": turn_id,
-			"toyInstanceId": toy_instance_id,
-			"toyFamily": toy_family,
-			"powerResult": power_result.duplicate(true),
-		}
-	)
 
 func _on_authoritative_reward_wheel_requested(values: PackedInt32Array) -> void:
 	if mode == "server" and not _active_turn.is_empty():

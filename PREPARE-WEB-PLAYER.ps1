@@ -18,6 +18,17 @@ function Resolve-Godot([string]$Requested) {
     throw "Godot 4.7 was not found. Pass -GodotPath with the full executable path."
 }
 
+function New-HexSecret([int]$ByteCount = 48) {
+    $secretBytes = New-Object byte[] $ByteCount
+    $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+    try {
+        $rng.GetBytes($secretBytes)
+    } finally {
+        $rng.Dispose()
+    }
+    return -join ($secretBytes | ForEach-Object { $_.ToString("x2") })
+}
+
 function Set-EnvValue([string]$Content, [string]$Name, [string]$Value, [switch]$OnlyWhenMissingOrBlank) {
     $pattern = "(?m)^$([regex]::Escape($Name))=(.*)$"
     $match = [regex]::Match($Content, $pattern)
@@ -32,16 +43,19 @@ function Set-EnvValue([string]$Content, [string]$Name, [string]$Value, [switch]$
 }
 
 if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
-    throw "Node.js 22 or newer is required for the YES drop web shell."
+    throw "Node.js 22 or newer is required for the wallet login and instant mint service."
 }
 if (-not (Get-Command npm -ErrorAction SilentlyContinue)) {
-    throw "npm is required for the YES drop web shell."
+    throw "npm is required for the wallet login and instant mint service."
 }
 
 $WebEnv = Join-Path $WebRoot ".env"
 if (-not (Test-Path $WebEnv)) {
-    Copy-Item (Join-Path $WebRoot ".env.example") $WebEnv
-    Write-Host "Created web/.env from web/.env.example."
+    $secret = New-HexSecret 48
+    $template = Get-Content (Join-Path $WebRoot ".env.example") -Raw
+    $template = $template.Replace("REPLACE_WITH_A_LONG_RANDOM_SECRET", $secret)
+    Set-Content -Path $WebEnv -Value $template -NoNewline
+    Write-Host "Created web/.env with a private local session secret."
 }
 
 Push-Location $WebRoot
@@ -58,9 +72,15 @@ if (-not (Test-Path $ServerEnv)) {
     }
 }
 if (Test-Path $ServerEnv) {
-    Write-Host ".env.server is present."
+    $content = Get-Content $ServerEnv -Raw
+    $content = Set-EnvValue $content "YF_SESSION_VERIFY_URL" "http://127.0.0.1:8080/auth/session/verify"
+    $content = Set-EnvValue $content "YF_INSTANT_MINT_URL" "http://127.0.0.1:8080/mint/instant"
+    $content = Set-EnvValue $content "YF_RPC_URL" "https://sepolia.base.org" -OnlyWhenMissingOrBlank
+    Set-Content -Path $ServerEnv -Value $content -NoNewline
+    Write-Host "Connected .env.server to the local wallet verifier."
+    Write-Host "Legacy instant mint credentials were not generated. Leave them blank unless intentionally restoring that test path."
 } else {
-    Write-Warning "No .env.server exists yet. Copy .env.server.example to .env.server, fill in the YokefellowNetwork values for YD-8, and run this command again."
+    Write-Warning "No .env.server exists yet. Copy .env.server.example to .env.server, fill in the Yokefellow bucket/app values, and run this command again."
 }
 
 $Godot = Resolve-Godot $GodotPath
@@ -78,4 +98,4 @@ if (-not (Test-Path $exportPath)) { throw "Godot reported success but the web ex
 Write-Host ""
 Write-Host "Web wallet player prepared."
 Write-Host "Next: .\START-LOCAL-WEB-STACK.ps1 -GodotPath `"$Godot`""
-Write-Host "Local physics mode works with placeholder Network values; YD-8 integration requires the live YES drop Network values."
+Write-Host "For first-time Instant NFT setup, open http://127.0.0.1:8080/instant-mint.html after starting the stack."

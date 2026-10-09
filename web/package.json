@@ -1,13 +1,10 @@
 {
-  "name": "yes-drop-web",
+  "name": "rainbows-end-wallet-session",
   "private": true,
   "type": "module",
   "scripts": {
     "start": "node --env-file=../.env.server --env-file=.env server.mjs",
-    "check": "node --check server.mjs && node --check yd4-workshop.mjs && node --check yokefellow-network.mjs && node --check scripts/configure-yd8-capabilities.mjs && node --check scripts/audit-yd8-network.mjs && node --check public/app.js",
-    "yd8:capabilities": "node scripts/configure-yd8-capabilities.mjs",
-    "yd8:capabilities:apply": "node scripts/configure-yd8-capabilities.mjs --apply",
-    "yd8:audit": "node scripts/audit-yd8-network.mjs"
+    "check": "node --check server.mjs && node --check yd4-workshop.mjs && node --check public/app.js"
   },
   "dependencies": {
     "ethers": "^6.15.0"

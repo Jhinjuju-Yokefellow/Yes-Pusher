@@ -10,13 +10,16 @@ const FAMILIES = [
   { key: "treasure_chest", label: "Treasure Chest", rarity: 5, points: 5 },
 ];
 
-const TERMINAL_ACTION_STATUSES = new Set([
-  "confirmed",
-  "recovered",
-  "readable",
-  "projected",
-  "indexed",
-]);
+const TOY_UPGRADE_PATH_KEY = "yes_drop.toy_upgrade";
+const COMMUNITY_MACHINE_PATH_KEY = "yes_drop.community_machine";
+
+const UPGRADE_CHOICE_PREFIX = {
+  four_leaf_clover: "clover",
+  horseshoe: "horseshoe",
+  leprechaun: "leprechaun",
+  pot_of_gold: "gold",
+  treasure_chest: "chest",
+};
 
 function normalizeFamily(value) {
   const text = String(value || "").trim().toLowerCase().replace(/[-.\s/]+/g, "_");
@@ -28,16 +31,33 @@ function normalizeFamily(value) {
   return "";
 }
 
-function toyTier(value) {
-  const text = String(value || "").trim().toLowerCase().replace(/[-.\s/]+/g, "_");
-  if (/(^|_)l3($|_)/.test(text) || text.includes("level_3") || text.includes("large")) return "large";
-  if (/(^|_)l2($|_)/.test(text) || text.includes("level_2") || text.includes("medium")) return "medium";
-  if (/(^|_)l1($|_)/.test(text) || text.includes("level_1") || text.includes("small")) return "small";
+function toyTier(classSlug, className) {
+  const text = `${String(classSlug || "")} ${String(className || "")}`
+    .trim()
+    .toLowerCase()
+    .replace(/[-.\s/]+/g, "_");
+  if (/(^|_)l3($|_)/.test(text) || text.includes("level_3") || text.includes("level3")) return "large";
+  if (/(^|_)l2($|_)/.test(text) || text.includes("level_2") || text.includes("level2")) return "medium";
+  if (/(^|_)l1($|_)/.test(text) || text.includes("level_1") || text.includes("level1")) return "small";
+  for (const tier of ["large", "medium", "small", "base"]) {
+    if (text.includes(tier)) return tier === "base" ? "small" : tier;
+  }
   return "";
+}
+
+function isToyClass(classSlug, className) {
+  const normalized = `${classSlug || ""} ${className || ""}`
+    .toLowerCase()
+    .replace(/[_-]+/g, " ");
+  return normalized.includes("toy") || Boolean(toyTier(classSlug, className));
 }
 
 function familyDescriptor(family) {
   return FAMILIES.find((item) => item.key === family) || null;
+}
+
+function holdingImage(holding) {
+  return String(holding?.meta?.imageUrl || holding?.imageUrl || "").trim();
 }
 
 function safeInteger(value, fallback = 0) {
@@ -47,12 +67,17 @@ function safeInteger(value, fallback = 0) {
 
 function validReference(value) {
   const ref = String(value || "").trim();
-  return ref.length >= 8 && ref.length <= 256 ? ref : "";
+  return ref.length >= 8 && ref.length <= 160 ? ref : "";
 }
 
-function normalizedClassId(value) {
-  const text = String(value || "").trim().toLowerCase();
-  return /^0x[0-9a-f]{64}$/.test(text) ? text : "";
+function upgradeChoice(family, fromTier) {
+  const prefix = UPGRADE_CHOICE_PREFIX[family];
+  const targetTier = fromTier === "small" ? "medium" : "large";
+  return prefix ? `${prefix}_${fromTier}_to_${targetTier}` : "";
+}
+
+function contributionChoice(family) {
+  return family ? `${family}_large` : "";
 }
 
 async function readJsonFile(filePath) {
@@ -71,209 +96,52 @@ async function writeJsonFile(filePath, value) {
   await fs.rename(temp, filePath);
 }
 
-function emptyFamilyRows() {
-  return new Map(FAMILIES.map((item) => [item.key, {
-    family: item.key,
-    label: item.label,
-    rarity: item.rarity,
-    buildPoints: item.points,
-    tiers: {
-      small: { quantity: 0, classId: "", classSlug: "", imageUrl: "", holdings: [] },
-      medium: { quantity: 0, classId: "", classSlug: "", imageUrl: "", holdings: [] },
-      large: { quantity: 0, classId: "", classSlug: "", imageUrl: "", holdings: [] },
-    },
-  }]));
-}
-
-function buildCapabilityCatalog(capabilities) {
-  const classById = new Map();
-  const recipes = Object.fromEntries(
-    FAMILIES.map((family) => [family.key, { medium: null, large: null }]),
-  );
-  const contributionActionKeys = {};
-
-  function registerClass(classIdValue, classKeyValue, source = "") {
-    const classId = normalizedClassId(classIdValue);
-    const classKey = String(classKeyValue || "").trim();
-    if (!classId || !classKey) return;
-    const family = normalizeFamily(classKey);
-    if (!family) return;
-    const tier = toyTier(classKey);
-    classById.set(classId, {
-      classId,
-      classKey,
-      family,
-      tier,
-      kind: tier ? "toy" : "skin",
-      source,
-    });
+async function jsonRequest(url, { method = "GET", appApiKey = "", idempotencyKey = "", body = null } = {}) {
+  const headers = { Accept: "application/json" };
+  if (appApiKey) headers["X-YF-App-Key"] = appApiKey;
+  if (idempotencyKey) headers["X-Idempotency-Key"] = idempotencyKey;
+  if (body !== null) headers["Content-Type"] = "application/json";
+  const response = await fetch(url, {
+    method,
+    headers,
+    body: body === null ? undefined : JSON.stringify(body),
+    cache: "no-store",
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok || payload?.ok === false) {
+    const message = typeof payload?.error === "string"
+      ? payload.error
+      : typeof payload?.error?.message === "string"
+        ? payload.error.message
+        : `Yokefellow returned HTTP ${response.status}.`;
+    const error = new Error(message);
+    error.status = response.status;
+    error.payload = payload;
+    throw error;
   }
-
-  for (const capability of Array.isArray(capabilities) ? capabilities : []) {
-    const descriptor = capability?.descriptor && typeof capability.descriptor === "object"
-      ? capability.descriptor
-      : {};
-
-    registerClass(
-      descriptor?.asset?.classId,
-      descriptor?.classKey,
-      capability.key,
-    );
-
-    for (const result of Array.isArray(descriptor?.results) ? descriptor.results : []) {
-      registerClass(
-        result?.asset?.classId,
-        result?.classKey || result?.externalOutputKey,
-        capability.key,
-      );
-    }
-
-    for (const input of Array.isArray(descriptor?.craftInputs) ? descriptor.craftInputs : []) {
-      registerClass(
-        input?.asset?.classId,
-        input?.classKey,
-        capability.key,
-      );
-    }
-
-    if (String(descriptor?.mode || "").toLowerCase() === "craft") {
-      const targetFamily = normalizeFamily(descriptor?.classKey);
-      const targetTier = toyTier(descriptor?.classKey);
-      const inputs = Array.isArray(descriptor?.craftInputs) ? descriptor.craftInputs : [];
-      if (
-        targetFamily
-        && ["medium", "large"].includes(targetTier)
-        && inputs.length > 0
-      ) {
-        const sourceFamily = normalizeFamily(inputs[0]?.classKey);
-        const sourceTier = toyTier(inputs[0]?.classKey);
-        const expectedSource = targetTier === "medium" ? "small" : "medium";
-        if (
-          sourceFamily === targetFamily
-          && sourceTier === expectedSource
-          && inputs.every((item) => safeInteger(item?.quantity, 0) > 0)
-        ) {
-          recipes[targetFamily][targetTier] = {
-            actionKey: String(capability.key || ""),
-            fromTier: sourceTier,
-            targetTier,
-            inputCount: inputs.length,
-            inputs: inputs.map((item) => ({
-              classKey: String(item?.classKey || ""),
-              quantity: safeInteger(item?.quantity, 1),
-              classId: normalizedClassId(item?.asset?.classId),
-            })),
-            outputClassKey: String(descriptor?.classKey || ""),
-            outputClassId: normalizedClassId(descriptor?.asset?.classId),
-          };
-        }
-      }
-    }
-
-    if (String(descriptor?.source || "") === "yes_drop.community_build") {
-      const family = normalizeFamily(descriptor?.family || descriptor?.classKey);
-      if (family) contributionActionKeys[family] = String(capability.key || "");
-    }
-  }
-
-  return { classById, recipes, contributionActionKeys };
-}
-
-function buildInventory(catalog, holdings) {
-  const familyRows = emptyFamilyRows();
-  const skinCounts = new Map();
-  const skinImages = new Map();
-
-  for (const meta of catalog.classById.values()) {
-    if (meta.kind !== "toy" || !meta.tier) continue;
-    const row = familyRows.get(meta.family);
-    if (!row) continue;
-    row.tiers[meta.tier].classId ||= meta.classId;
-    row.tiers[meta.tier].classSlug ||= meta.classKey;
-  }
-
-  for (const holding of Array.isArray(holdings) ? holdings : []) {
-    const classId = normalizedClassId(holding?.classId);
-    const meta = catalog.classById.get(classId);
-    if (!meta) continue;
-    const quantity = Math.max(0, safeInteger(holding?.quantity, 0));
-    if (quantity <= 0) continue;
-
-    if (meta.kind === "toy" && meta.tier) {
-      const row = familyRows.get(meta.family);
-      if (!row) continue;
-      const tierRow = row.tiers[meta.tier];
-      tierRow.quantity += quantity;
-      tierRow.classId ||= classId;
-      tierRow.classSlug ||= meta.classKey;
-      tierRow.holdings.push({
-        classId,
-        classSlug: meta.classKey,
-        standard: String(holding?.standard || "").toLowerCase(),
-        tokenId: holding?.tokenId === null ? "" : String(holding?.tokenId || ""),
-        quantity,
-        metadataURI: String(holding?.metadataURI || ""),
-      });
-      continue;
-    }
-
-    skinCounts.set(meta.family, (skinCounts.get(meta.family) || 0) + quantity);
-  }
-
-  const skins = FAMILIES
-    .filter((item) => (skinCounts.get(item.key) || 0) > 0)
-    .map((item) => ({
-      family: item.key,
-      label: item.label,
-      quantity: skinCounts.get(item.key) || 0,
-      imageUrl: skinImages.get(item.key) || "",
-      rarity: item.rarity,
-    }));
-
-  return {
-    toys: FAMILIES.map((item) => familyRows.get(item.key)),
-    skins,
-  };
-}
-
-function actionError(action, fallback) {
-  return String(
-    action?.error?.message
-    || action?.error?.code
-    || fallback
-    || "The Network action did not complete.",
-  );
+  return payload;
 }
 
 export function createWorkshopService({
-  network,
+  yokefellowOrigin,
+  bucketId,
+  appApiKey,
   statePath,
   buildTarget = 50,
 }) {
-  const normalizedStatePath = statePath
-    || path.join(process.cwd(), ".local", "yd8-workshop-state.json");
+  const normalizedOrigin = String(yokefellowOrigin || "").replace(/\/+$/, "");
+  const normalizedBucketId = String(bucketId || "").trim();
+  const normalizedAppKey = String(appApiKey || "").trim();
+  const normalizedStatePath = statePath || path.join(process.cwd(), ".local", "yd4-workshop-state.json");
   const target = Math.max(1, safeInteger(buildTarget, 50));
-
-  function requireNetwork() {
-    if (!network?.configured?.()) {
-      const error = new Error("Unavailable");
-      error.statusCode = 503;
-      throw error;
-    }
-  }
+  let cachedBucketSlug = "";
 
   async function readStateFile() {
     const state = await readJsonFile(normalizedStatePath);
     return {
       version: 2,
-      preferences:
-        state.preferences && typeof state.preferences === "object"
-          ? state.preferences
-          : {},
-      contributions:
-        state.contributions && typeof state.contributions === "object"
-          ? state.contributions
-          : {},
+      preferences: state.preferences && typeof state.preferences === "object" ? state.preferences : {},
+      contributions: state.contributions && typeof state.contributions === "object" ? state.contributions : {},
     };
   }
 
@@ -281,89 +149,202 @@ export function createWorkshopService({
     await writeJsonFile(normalizedStatePath, state);
   }
 
-  function communityFromState(state) {
-    const contributions = Object.values(state.contributions || {})
-      .filter((entry) => entry?.status === "confirmed");
-    const progressPoints = contributions.reduce(
-      (sum, entry) => sum + safeInteger(entry?.points, 0),
-      0,
-    );
-    return {
-      progressPoints,
-      target,
-      remainingPoints: Math.max(0, target - progressPoints),
-      complete: progressPoints >= target,
-      nextMachineNumber: 2,
-      contributionCount: contributions.length,
-    };
+  function requireYokefellow() {
+    if (!normalizedOrigin || !normalizedBucketId || !normalizedAppKey) {
+      throw new Error("Rainbow's End is not connected to its Yokefellow Bucket/App key.");
+    }
+  }
+
+  function sdkUrl(pathname) {
+    return `${normalizedOrigin}/api/sdk/v1${pathname}`;
+  }
+
+  function actionPathUrl(pathKey) {
+    return sdkUrl(`/buckets/${encodeURIComponent(normalizedBucketId)}/action-paths/${encodeURIComponent(pathKey)}/execute`);
   }
 
   async function loadRemote(wallet) {
-    requireNetwork();
-    const [capabilityResult, holdingsResult] = await Promise.all([
-      network.listCapabilities(),
-      network.holdings(wallet, { limit: 200 }),
+    requireYokefellow();
+    const encodedBucket = encodeURIComponent(normalizedBucketId);
+    const encodedWallet = encodeURIComponent(wallet);
+    const [catalog, entitlements] = await Promise.all([
+      jsonRequest(sdkUrl(`/buckets/${encodedBucket}/catalog?wallet=${encodedWallet}`), { appApiKey: normalizedAppKey }),
+      jsonRequest(sdkUrl(`/wallets/${encodedWallet}/entitlements?bucketId=${encodedBucket}`), { appApiKey: normalizedAppKey }),
     ]);
-    const catalog = buildCapabilityCatalog(capabilityResult?.capabilities || []);
-    const inventory = buildInventory(catalog, holdingsResult?.holdings || []);
-    return { catalog, inventory };
+    const bucketSlug = String(catalog?.bucketSlug || catalog?.bucket?.slug || "").trim();
+    if (bucketSlug) cachedBucketSlug = bucketSlug;
+    return { catalog, entitlements };
   }
 
-  async function getState(wallet, _participantSessionToken = "") {
-    requireNetwork();
+  function buildInventory(catalog, entitlements) {
+    const classes = Array.isArray(catalog?.classes) ? catalog.classes : [];
+    const holdings = Array.isArray(entitlements?.walletState?.ownedMints)
+      ? entitlements.walletState.ownedMints.filter((holding) => String(holding?.status || "current").toLowerCase() === "current")
+      : [];
+    const familyRows = new Map(FAMILIES.map((item) => [item.key, {
+      family: item.key,
+      label: item.label,
+      rarity: item.rarity,
+      buildPoints: item.points,
+      tiers: {
+        small: { quantity: 0, classId: "", classSlug: "", imageUrl: "", holdings: [] },
+        medium: { quantity: 0, classId: "", classSlug: "", imageUrl: "", holdings: [] },
+        large: { quantity: 0, classId: "", classSlug: "", imageUrl: "", holdings: [] },
+      },
+    }]));
+    const skinCounts = new Map();
+    const skinImages = new Map();
+
+    for (const holding of holdings) {
+      const classSlug = String(holding?.classSlug || "");
+      const className = String(holding?.className || "");
+      const family = normalizeFamily(`${classSlug} ${className}`);
+      if (!family || !familyRows.has(family)) continue;
+      const quantity = Math.max(1, safeInteger(holding?.quantity, 1));
+      if (isToyClass(classSlug, className)) {
+        const tier = toyTier(classSlug, className);
+        if (!["small", "medium", "large"].includes(tier)) continue;
+        const row = familyRows.get(family);
+        const tierRow = row.tiers[tier];
+        tierRow.quantity += quantity;
+        tierRow.classId ||= String(holding?.classId || "");
+        tierRow.classSlug ||= classSlug;
+        tierRow.imageUrl ||= holdingImage(holding);
+        tierRow.holdings.push({
+          id: String(holding?.id || ""),
+          classId: String(holding?.classId || ""),
+          standard: String(holding?.standard || "").toLowerCase(),
+          contractAddress: String(holding?.contractAddress || ""),
+          tokenId: String(holding?.tokenId || ""),
+          quantity,
+          imageUrl: holdingImage(holding),
+        });
+      } else {
+        skinCounts.set(family, (skinCounts.get(family) || 0) + quantity);
+        if (!skinImages.get(family)) skinImages.set(family, holdingImage(holding));
+      }
+    }
+
+    for (const nftClass of classes) {
+      const classSlug = String(nftClass?.slug || "");
+      const className = String(nftClass?.name || "");
+      const family = normalizeFamily(`${classSlug} ${className}`);
+      if (!family || !familyRows.has(family)) continue;
+      const imageUrl = String(nftClass?.imageUrl || "");
+      if (isToyClass(classSlug, className)) {
+        const tier = toyTier(classSlug, className);
+        if (!["small", "medium", "large"].includes(tier)) continue;
+        const tierRow = familyRows.get(family).tiers[tier];
+        tierRow.classId ||= String(nftClass?.id || "");
+        tierRow.classSlug ||= classSlug;
+        tierRow.imageUrl ||= imageUrl;
+      } else if (!skinImages.get(family)) {
+        skinImages.set(family, imageUrl);
+      }
+    }
+
+    const skins = FAMILIES
+      .filter((item) => (skinCounts.get(item.key) || 0) > 0)
+      .map((item) => ({
+        family: item.key,
+        label: item.label,
+        quantity: skinCounts.get(item.key) || 0,
+        imageUrl: skinImages.get(item.key) || "",
+        rarity: item.rarity,
+      }));
+
+    return {
+      toys: FAMILIES.map((item) => familyRows.get(item.key)),
+      skins,
+    };
+  }
+
+  function attachUpgradePaths(toys) {
+    return toys.map((row) => ({
+      ...row,
+      craft: {
+        medium: { pathKey: TOY_UPGRADE_PATH_KEY, choice: upgradeChoice(row.family, "small") },
+        large: { pathKey: TOY_UPGRADE_PATH_KEY, choice: upgradeChoice(row.family, "medium") },
+      },
+    }));
+  }
+
+  function communityFromState(state) {
+    const confirmed = Object.values(state.contributions).filter((entry) => entry?.status === "confirmed");
+    const totalPoints = confirmed.reduce((sum, entry) => sum + Math.max(0, safeInteger(entry?.points, 0)), 0);
+    const unlockedMachines = 1 + Math.floor(totalPoints / target);
+    const progressPoints = totalPoints % target;
+    return {
+      target,
+      totalPoints,
+      progressPoints,
+      remainingPoints: progressPoints === 0 && totalPoints > 0 ? target : target - progressPoints,
+      unlockedMachines,
+      nextMachineNumber: unlockedMachines + 1,
+      justUnlockedAtExactTarget: totalPoints > 0 && progressPoints === 0,
+      pointsByFamily: Object.fromEntries(FAMILIES.map((item) => [item.key, item.points])),
+      contributionCount: confirmed.length,
+    };
+  }
+
+  async function getState(wallet) {
     const normalizedWallet = getAddress(wallet).toLowerCase();
-    const [{ catalog, inventory }, localState, creditResult] = await Promise.all([
+    const [{ catalog, entitlements }, localState] = await Promise.all([
       loadRemote(normalizedWallet),
       readStateFile(),
-      network.getCredit(normalizedWallet).catch(() => null),
     ]);
+    const inventory = buildInventory(catalog, entitlements);
+    const preferred = normalizeFamily(localState.preferences?.[normalizedWallet]?.equippedSkin || "");
+    const equippedSkin = preferred && inventory.skins.some((skin) => skin.family === preferred) ? preferred : "";
 
-    const preferred = normalizeFamily(
-      localState.preferences?.[normalizedWallet]?.equippedSkin || "",
-    );
-    const equippedSkin = preferred
-      && inventory.skins.some((skin) => skin.family === preferred)
-      ? preferred
-      : "";
-
-    const fundingCredit = creditResult?.credit || null;
-    const contributionReady = FAMILIES.every(
-      (family) => Boolean(catalog.contributionActionKeys[family.key]),
-    );
+    let funding = {
+      ready: false,
+      credit: null,
+      source: null,
+      error: "Unavailable",
+    };
+    try {
+      const bucketSlug = String(catalog?.bucketSlug || cachedBucketSlug || "").trim();
+      if (bucketSlug) {
+        const creditResult = await jsonRequest(
+          `${normalizedOrigin}/api/buckets/${encodeURIComponent(bucketSlug)}/credits?wallet=${encodeURIComponent(normalizedWallet)}`,
+        );
+        funding = {
+          ready: true,
+          credit: creditResult.credit || null,
+          source: creditResult.source || "network_base",
+          error: "",
+        };
+      }
+    } catch {
+      funding = {
+        ready: false,
+        credit: null,
+        source: null,
+        error: "Unavailable",
+      };
+    }
 
     return {
       ok: true,
       wallet: normalizedWallet,
-      bucketSlug: "YES drop",
-      bucket: { networkBucketId: network.bucketId },
-      accountCredit: fundingCredit,
-      funding: {
-        ready: Boolean(fundingCredit),
-        credit: fundingCredit,
-        source: fundingCredit ? "yokefellow_network" : null,
-        error: fundingCredit ? "" : "Unavailable",
-      },
+      bucketSlug: String(catalog?.bucketSlug || cachedBucketSlug || ""),
+      bucket: catalog?.bucket || null,
+      accountCredit: entitlements?.accountCredit || catalog?.commerce?.bucketCredit || null,
+      funding,
       equippedSkin,
       skins: inventory.skins,
-      toys: inventory.toys.map((row) => ({
-        ...row,
-        craft: {
-          medium: catalog.recipes[row.family]?.medium || null,
-          large: catalog.recipes[row.family]?.large || null,
-        },
-      })),
+      toys: attachUpgradePaths(inventory.toys),
       community: communityFromState(localState),
-      craftCatalogReady: Object.values(catalog.recipes).some(
-        (row) => row.medium || row.large,
-      ),
-      contributionReady,
+      craftCatalogReady: true,
+      contributionReady: true,
     };
   }
 
-  async function equipSkin(wallet, familyValue, participantSessionToken = "") {
+  async function equipSkin(wallet, familyValue) {
     const normalizedWallet = getAddress(wallet).toLowerCase();
     const family = normalizeFamily(familyValue);
-    const state = await getState(normalizedWallet, participantSessionToken);
+    const state = await getState(normalizedWallet);
     if (family && !state.skins.some((skin) => skin.family === family)) {
       throw new Error("That wallet does not own the selected Coin Skin.");
     }
@@ -377,80 +358,50 @@ export function createWorkshopService({
     return { ok: true, equippedSkin: family };
   }
 
-  async function settleAction(action) {
-    if (!action) throw new Error("The Network did not return an action.");
-    if (TERMINAL_ACTION_STATUSES.has(action.status)) return action;
-    if (action.status === "failed") {
-      throw new Error(actionError(action));
-    }
-
-    if (action.actionId) {
-      const reconciled = await network.reconcileAction(action.actionId)
-        .then((result) => result?.action || null)
-        .catch(() => null);
-      if (reconciled) {
-        if (TERMINAL_ACTION_STATUSES.has(reconciled.status)) return reconciled;
-        if (reconciled.status === "failed") {
-          throw new Error(actionError(reconciled));
-        }
-        action = reconciled;
-      }
-    }
-
-    const error = new Error(
-      actionError(
-        action,
-        "The Network action is still reconciling. Retry with the same reference.",
-      ),
-    );
-    error.statusCode = 409;
-    error.action = action;
-    throw error;
-  }
-
-  async function craft(
-    wallet,
-    { family: familyValue, fromTier, referenceId },
-    participantSessionToken = "",
-  ) {
-    requireNetwork();
+  async function craft(wallet, { family: familyValue, fromTier, referenceId }) {
+    requireYokefellow();
     const normalizedWallet = getAddress(wallet).toLowerCase();
     const family = normalizeFamily(familyValue);
-    const sourceTier = String(fromTier || "").trim().toLowerCase();
     const descriptor = familyDescriptor(family);
+    const sourceTier = String(fromTier || "").toLowerCase();
     if (!descriptor) throw new Error("Unknown Rainbow's End Toy family.");
-    if (!["small", "medium"].includes(sourceTier)) {
-      throw new Error("Craft source tier must be Small or Medium.");
-    }
+    if (!["small", "medium"].includes(sourceTier)) throw new Error("Craft source tier must be Small or Medium.");
     const targetTier = sourceTier === "small" ? "medium" : "large";
     const reference = validReference(referenceId);
     if (!reference) throw new Error("A stable craft reference is required.");
 
-    const state = await getState(normalizedWallet, participantSessionToken);
+    const state = await getState(normalizedWallet);
     const familyRow = state.toys.find((row) => row.family === family);
     const tierRow = familyRow?.tiers?.[sourceTier];
     if (!tierRow || tierRow.quantity < 3) {
-      throw new Error(
-        `You need 3 ${sourceTier} ${descriptor.label} Toys to craft this upgrade.`,
-      );
-    }
-    const recipe = familyRow?.craft?.[targetTier];
-    if (!recipe?.actionKey) {
-      throw new Error(
-        `The ${descriptor.label} ${sourceTier} → ${targetTier} craft Path is not live in Yokefellow Network yet.`,
-      );
+      throw new Error(`You need 3 ${sourceTier} ${descriptor.label} Toys to craft this upgrade.`);
     }
 
-    const invoked = await network.invokeAction({
-      key: recipe.actionKey,
-      referenceId: reference,
-      wallet: normalizedWallet,
-      participantSessionToken,
-      data: {
-        tokenIds: Array.from({ length: Math.max(1, recipe.inputCount) }, () => null),
+    const choice = upgradeChoice(family, sourceTier);
+    if (!choice) throw new Error("This Toy upgrade is not mapped to a Yokefellow Action Path choice.");
+    const tokenIds = (Array.isArray(tierRow.holdings) ? tierRow.holdings : [])
+      .filter((holding) => String(holding.standard || "").toLowerCase() === "erc721")
+      .slice(0, 3)
+      .map((holding) => String(holding.tokenId || ""))
+      .filter((tokenId) => /^\d+$/.test(tokenId));
+
+    const result = await jsonRequest(actionPathUrl(TOY_UPGRADE_PATH_KEY), {
+      method: "POST",
+      appApiKey: normalizedAppKey,
+      idempotencyKey: reference,
+      body: {
+        wallet: normalizedWallet,
+        requestId: reference,
+        choice,
+        ...(tokenIds.length ? { tokenIds } : {}),
+        meta: {
+          source: "rainbows-end-workshop",
+          toyFamily: family,
+          fromTier: sourceTier,
+          targetTier,
+        },
       },
     });
-    const action = await settleAction(invoked?.action);
 
     return {
       ok: true,
@@ -458,16 +409,12 @@ export function createWorkshopService({
       fromTier: sourceTier,
       targetTier,
       referenceId: reference,
-      execution: { action },
+      execution: result,
     };
   }
 
-  async function contribute(
-    wallet,
-    { family: familyValue, referenceId },
-    participantSessionToken = "",
-  ) {
-    requireNetwork();
+  async function contribute(wallet, { family: familyValue, referenceId }) {
+    requireYokefellow();
     const normalizedWallet = getAddress(wallet).toLowerCase();
     const family = normalizeFamily(familyValue);
     const descriptor = familyDescriptor(family);
@@ -475,108 +422,95 @@ export function createWorkshopService({
     const reference = validReference(referenceId);
     if (!reference) throw new Error("A stable contribution reference is required.");
 
-    const state = await getState(normalizedWallet, participantSessionToken);
-    const familyRow = state.toys.find((row) => row.family === family);
-    if (safeInteger(familyRow?.tiers?.large?.quantity, 0) < 1) {
-      throw new Error(
-        `You do not currently hold a Large ${descriptor.label} Toy.`,
-      );
-    }
-
-    const capabilities = await network.listCapabilities();
-    const catalog = buildCapabilityCatalog(capabilities?.capabilities || []);
-    const actionKey = catalog.contributionActionKeys[family];
-    if (!actionKey) {
-      throw new Error(
-        `The Large ${descriptor.label} community contribution action is not live in Yokefellow Network yet.`,
-      );
-    }
-
-    const invoked = await network.invokeAction({
-      key: actionKey,
-      referenceId: reference,
-      wallet: normalizedWallet,
-      participantSessionToken,
-      data: { amount: "1" },
-    });
-    const action = await settleAction(invoked?.action);
-
     const localState = await readStateFile();
     const existing = localState.contributions[reference];
-    if (
-      existing
-      && (existing.wallet !== normalizedWallet || existing.family !== family)
-    ) {
-      throw new Error("That contribution reference was already used for different details.");
+    if (existing) {
+      if (existing.wallet !== normalizedWallet || existing.family !== family) {
+        throw new Error("That contribution reference was already used for different details.");
+      }
+      if (existing.status === "confirmed") {
+        return { ok: true, duplicate: true, contribution: existing, community: communityFromState(localState) };
+      }
     }
-    if (!existing) {
-      localState.contributions[reference] = {
-        referenceId: reference,
-        wallet: normalizedWallet,
-        family,
-        points: descriptor.points,
-        rarity: descriptor.rarity,
-        actionId: action.actionId,
-        transactionHash: action.transactionHash || null,
-        status: "confirmed",
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      };
-      await saveStateFile(localState);
 
-      await network.publishEvent({
-        type: "yes_drop.community_contribution",
-        referenceId: `community:${reference}`,
+    const state = await getState(normalizedWallet);
+    const familyRow = state.toys.find((row) => row.family === family);
+    if (!familyRow?.tiers?.large || familyRow.tiers.large.quantity < 1) {
+      throw new Error(`You do not currently hold a Large ${descriptor.label} Toy.`);
+    }
+
+    const result = await jsonRequest(actionPathUrl(COMMUNITY_MACHINE_PATH_KEY), {
+      method: "POST",
+      appApiKey: normalizedAppKey,
+      idempotencyKey: reference,
+      body: {
         wallet: normalizedWallet,
-        data: {
-          family,
+        requestId: reference,
+        choice: contributionChoice(family),
+        meta: {
+          source: "rainbows-end-community-build",
+          toyFamily: family,
           points: descriptor.points,
-          actionId: action.actionId,
+          rarity: descriptor.rarity,
         },
-      }).catch(() => null);
-    }
+      },
+    });
 
-    return {
-      ok: true,
-      duplicate: Boolean(existing),
-      contribution: localState.contributions[reference],
-      community: communityFromState(localState),
+    const now = new Date().toISOString();
+    const entry = {
+      referenceId: reference,
+      wallet: normalizedWallet,
+      family,
+      points: descriptor.points,
+      rarity: descriptor.rarity,
+      actionPathKey: COMMUNITY_MACHINE_PATH_KEY,
+      executionId: String(result?.execution?.id || result?.execution?.executionId || ""),
+      reused: Boolean(result?.reused),
+      status: "confirmed",
+      createdAt: existing?.createdAt || now,
+      updatedAt: now,
     };
+    localState.contributions[reference] = entry;
+    await saveStateFile(localState);
+    return { ok: true, duplicate: Boolean(result?.reused), contribution: entry, community: communityFromState(localState) };
   }
 
-  async function prepareFunding(
-    wallet,
-    { operation, amountYesRaw, referenceId },
-    participantSessionToken = "",
-  ) {
-    requireNetwork();
+  async function resolveBucketSlug(wallet) {
+    if (cachedBucketSlug) return cachedBucketSlug;
+    const normalizedWallet = getAddress(wallet).toLowerCase();
+    const remote = await loadRemote(normalizedWallet);
+    const slug = String(remote?.catalog?.bucketSlug || "").trim();
+    if (!slug) throw new Error("Rainbow's End could not resolve its Yokefellow Bucket slug.");
+    cachedBucketSlug = slug;
+    return slug;
+  }
+
+  async function prepareFunding(wallet, { operation, amountYesRaw, referenceId }) {
     const normalizedWallet = getAddress(wallet).toLowerCase();
     const op = String(operation || "").toLowerCase();
     if (!["deposit", "withdrawal"].includes(op)) {
       throw new Error("Funding operation must be deposit or withdrawal.");
     }
     const amount = String(amountYesRaw || "").trim();
-    if (!/^[1-9]\d*$/.test(amount)) {
-      throw new Error("Funding amount must be greater than zero.");
-    }
+    if (!/^[1-9]\d*$/.test(amount)) throw new Error("Funding amount must be greater than zero.");
     const reference = validReference(referenceId);
     if (!reference) throw new Error("A stable funding reference is required.");
-
-    return network.prepareFunding({
-      operation: op,
-      wallet: normalizedWallet,
-      amount,
-      referenceId: reference,
-      participantSessionToken,
+    const slug = await resolveBucketSlug(normalizedWallet);
+    const pathname = op === "deposit"
+      ? `/api/buckets/${encodeURIComponent(slug)}/deposits`
+      : `/api/buckets/${encodeURIComponent(slug)}/credits/withdraw`;
+    return jsonRequest(`${normalizedOrigin}${pathname}`, {
+      method: "POST",
+      body: {
+        phase: "prepare",
+        walletAddress: normalizedWallet,
+        amountYesRaw: amount,
+        referenceId: reference,
+      },
     });
   }
 
-  async function fundingStatus(
-    wallet,
-    { operation, referenceId },
-    _participantSessionToken = "",
-  ) {
-    requireNetwork();
+  async function fundingStatus(wallet, { operation, referenceId }) {
     const normalizedWallet = getAddress(wallet).toLowerCase();
     const op = String(operation || "").toLowerCase();
     if (!["deposit", "withdrawal"].includes(op)) {
@@ -584,11 +518,17 @@ export function createWorkshopService({
     }
     const reference = validReference(referenceId);
     if (!reference) throw new Error("A stable funding reference is required.");
-
-    return network.fundingStatus({
-      operation: op,
-      wallet: normalizedWallet,
-      referenceId: reference,
+    const slug = await resolveBucketSlug(normalizedWallet);
+    const pathname = op === "deposit"
+      ? `/api/buckets/${encodeURIComponent(slug)}/deposits`
+      : `/api/buckets/${encodeURIComponent(slug)}/credits/withdraw`;
+    return jsonRequest(`${normalizedOrigin}${pathname}`, {
+      method: "POST",
+      body: {
+        phase: "status",
+        walletAddress: normalizedWallet,
+        referenceId: reference,
+      },
     });
   }
 
