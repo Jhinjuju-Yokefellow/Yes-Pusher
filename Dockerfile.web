@@ -8,6 +8,8 @@ RUN npm ci --omit=dev --no-audit --no-fund \
     && npm cache clean --force
 
 COPY web/server.mjs ./server.mjs
+COPY web/yd4-workshop.mjs ./yd4-workshop.mjs
+COPY web/yokefellow-network.mjs ./yokefellow-network.mjs
 COPY web/public ./public
 
 EXPOSE 8080
