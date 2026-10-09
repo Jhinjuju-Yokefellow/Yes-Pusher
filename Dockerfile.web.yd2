@@ -1,4 +1,4 @@
-FROM debian:bookworm-slim AS game-builder
+FROM mirror.gcr.io/library/debian:bookworm-slim AS game-builder
 
 ARG GODOT_VERSION=4.7-beta3
 ARG GODOT_ARCH=linux.x86_64
@@ -47,7 +47,7 @@ RUN godot --headless --path /app --import \
     && mkdir -p /app/web/public/game \
     && godot --headless --path /app --export-release "Web" /app/web/public/game/index.html
 
-FROM node:22-bookworm-slim
+FROM mirror.gcr.io/library/node:22-bookworm-slim
 
 ENV NODE_ENV=production
 WORKDIR /app
