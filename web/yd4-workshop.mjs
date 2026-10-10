@@ -56,10 +56,6 @@ function familyDescriptor(family) {
   return FAMILIES.find((item) => item.key === family) || null;
 }
 
-function holdingImage(holding) {
-  return String(holding?.meta?.imageUrl || holding?.imageUrl || "").trim();
-}
-
 function safeInteger(value, fallback = 0) {
   const number = Number.parseInt(String(value ?? ""), 10);
   return Number.isFinite(number) ? number : fallback;
@@ -78,6 +74,16 @@ function upgradeChoice(family, fromTier) {
 
 function contributionChoice(family) {
   return family ? `${family}_large` : "";
+}
+
+function holdingQuantity(holding) {
+  const standard = String(holding?.standard || "").toUpperCase();
+  if (standard === "ERC721") return String(holding?.owner || "").trim() ? 1 : 0;
+  return Math.max(0, safeInteger(holding?.quantity ?? holding?.balance, 0));
+}
+
+function presentationForHolding(holding) {
+  return holding?.presentation && typeof holding.presentation === "object" ? holding.presentation : {};
 }
 
 async function readJsonFile(filePath) {
@@ -167,20 +173,18 @@ export function createWorkshopService({
     requireYokefellow();
     const encodedBucket = encodeURIComponent(normalizedBucketId);
     const encodedWallet = encodeURIComponent(wallet);
-    const [catalog, entitlements] = await Promise.all([
-      jsonRequest(sdkUrl(`/buckets/${encodedBucket}/catalog?wallet=${encodedWallet}`), { appApiKey: normalizedAppKey }),
-      jsonRequest(sdkUrl(`/wallets/${encodedWallet}/entitlements?bucketId=${encodedBucket}`), { appApiKey: normalizedAppKey }),
-    ]);
-    const bucketSlug = String(catalog?.bucketSlug || catalog?.bucket?.slug || "").trim();
+    const holdings = await jsonRequest(
+      sdkUrl(`/buckets/${encodedBucket}/holdings/${encodedWallet}`),
+      { appApiKey: normalizedAppKey },
+    );
+    const bucketSlug = String(holdings?.bucketSlug || "").trim();
     if (bucketSlug) cachedBucketSlug = bucketSlug;
-    return { catalog, entitlements };
+    return holdings;
   }
 
-  function buildInventory(catalog, entitlements) {
-    const classes = Array.isArray(catalog?.classes) ? catalog.classes : [];
-    const holdings = Array.isArray(entitlements?.walletState?.ownedMints)
-      ? entitlements.walletState.ownedMints.filter((holding) => String(holding?.status || "current").toLowerCase() === "current")
-      : [];
+  function buildInventory(remote) {
+    const classes = Array.isArray(remote?.classes) ? remote.classes : [];
+    const holdings = Array.isArray(remote?.holdings) ? remote.holdings : [];
     const familyRows = new Map(FAMILIES.map((item) => [item.key, {
       family: item.key,
       label: item.label,
@@ -196,32 +200,34 @@ export function createWorkshopService({
     const skinImages = new Map();
 
     for (const holding of holdings) {
-      const classSlug = String(holding?.classSlug || "");
-      const className = String(holding?.className || "");
+      const presentation = presentationForHolding(holding);
+      const classSlug = String(presentation?.slug || "");
+      const className = String(presentation?.name || "");
       const family = normalizeFamily(`${classSlug} ${className}`);
       if (!family || !familyRows.has(family)) continue;
-      const quantity = Math.max(1, safeInteger(holding?.quantity, 1));
+      const quantity = holdingQuantity(holding);
+      if (quantity <= 0) continue;
+      const imageUrl = String(presentation?.imageUrl || "").trim();
       if (isToyClass(classSlug, className)) {
         const tier = toyTier(classSlug, className);
         if (!["small", "medium", "large"].includes(tier)) continue;
-        const row = familyRows.get(family);
-        const tierRow = row.tiers[tier];
+        const tierRow = familyRows.get(family).tiers[tier];
         tierRow.quantity += quantity;
-        tierRow.classId ||= String(holding?.classId || "");
+        tierRow.classId ||= String(holding?.classId || presentation?.onchainClassId || "");
         tierRow.classSlug ||= classSlug;
-        tierRow.imageUrl ||= holdingImage(holding);
+        tierRow.imageUrl ||= imageUrl;
         tierRow.holdings.push({
           id: String(holding?.id || ""),
-          classId: String(holding?.classId || ""),
+          classId: String(holding?.classId || presentation?.onchainClassId || ""),
           standard: String(holding?.standard || "").toLowerCase(),
           contractAddress: String(holding?.contractAddress || ""),
           tokenId: String(holding?.tokenId || ""),
           quantity,
-          imageUrl: holdingImage(holding),
+          imageUrl,
         });
       } else {
         skinCounts.set(family, (skinCounts.get(family) || 0) + quantity);
-        if (!skinImages.get(family)) skinImages.set(family, holdingImage(holding));
+        if (!skinImages.get(family)) skinImages.set(family, imageUrl);
       }
     }
 
@@ -231,11 +237,12 @@ export function createWorkshopService({
       const family = normalizeFamily(`${classSlug} ${className}`);
       if (!family || !familyRows.has(family)) continue;
       const imageUrl = String(nftClass?.imageUrl || "");
+      const onchainClassId = String(nftClass?.onchainClassId || nftClass?.id || "");
       if (isToyClass(classSlug, className)) {
         const tier = toyTier(classSlug, className);
         if (!["small", "medium", "large"].includes(tier)) continue;
         const tierRow = familyRows.get(family).tiers[tier];
-        tierRow.classId ||= String(nftClass?.id || "");
+        tierRow.classId ||= onchainClassId;
         tierRow.classSlug ||= classSlug;
         tierRow.imageUrl ||= imageUrl;
       } else if (!skinImages.get(family)) {
@@ -289,11 +296,11 @@ export function createWorkshopService({
 
   async function getState(wallet) {
     const normalizedWallet = getAddress(wallet).toLowerCase();
-    const [{ catalog, entitlements }, localState] = await Promise.all([
+    const [remote, localState] = await Promise.all([
       loadRemote(normalizedWallet),
       readStateFile(),
     ]);
-    const inventory = buildInventory(catalog, entitlements);
+    const inventory = buildInventory(remote);
     const preferred = normalizeFamily(localState.preferences?.[normalizedWallet]?.equippedSkin || "");
     const equippedSkin = preferred && inventory.skins.some((skin) => skin.family === preferred) ? preferred : "";
 
@@ -304,7 +311,7 @@ export function createWorkshopService({
       error: "Unavailable",
     };
     try {
-      const bucketSlug = String(catalog?.bucketSlug || cachedBucketSlug || "").trim();
+      const bucketSlug = String(remote?.bucketSlug || cachedBucketSlug || "").trim();
       if (bucketSlug) {
         const creditResult = await jsonRequest(
           `${normalizedOrigin}/api/buckets/${encodeURIComponent(bucketSlug)}/credits?wallet=${encodeURIComponent(normalizedWallet)}`,
@@ -328,9 +335,9 @@ export function createWorkshopService({
     return {
       ok: true,
       wallet: normalizedWallet,
-      bucketSlug: String(catalog?.bucketSlug || cachedBucketSlug || ""),
-      bucket: catalog?.bucket || null,
-      accountCredit: entitlements?.accountCredit || catalog?.commerce?.bucketCredit || null,
+      bucketSlug: String(remote?.bucketSlug || cachedBucketSlug || ""),
+      bucket: null,
+      accountCredit: funding.credit,
       funding,
       equippedSkin,
       skins: inventory.skins,
@@ -338,6 +345,7 @@ export function createWorkshopService({
       community: communityFromState(localState),
       craftCatalogReady: true,
       contributionReady: true,
+      source: remote?.source || { ownership: "yokefellow_network_v1_projection" },
     };
   }
 
@@ -479,7 +487,7 @@ export function createWorkshopService({
     if (cachedBucketSlug) return cachedBucketSlug;
     const normalizedWallet = getAddress(wallet).toLowerCase();
     const remote = await loadRemote(normalizedWallet);
-    const slug = String(remote?.catalog?.bucketSlug || "").trim();
+    const slug = String(remote?.bucketSlug || "").trim();
     if (!slug) throw new Error("Rainbow's End could not resolve its Yokefellow Bucket slug.");
     cachedBucketSlug = slug;
     return slug;
