@@ -136,7 +136,7 @@ func _client_turn_completed(summary: Dictionary, wallet: String, lifetime_yes: i
 			milestones.size(),
 			"" if milestones.size() == 1 else "s",
 			"" if milestones.size() == 1 else "s",
-			threshold_labels.join(", "),
+			", ".join(threshold_labels),
 			next_threshold,
 		])
 
