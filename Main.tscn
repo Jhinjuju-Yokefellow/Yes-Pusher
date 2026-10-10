@@ -1,6 +1,6 @@
 [gd_scene format=3 uid="uid://d1hjkq6bintpy"]
 
-[ext_resource type="Script" uid="uid://dyfshba5pd1mm" path="res://scripts/main.gd" id="1_main"]
+[ext_resource type="Script" path="res://scripts/clean_room_main.gd" id="1_main"]
 [ext_resource type="PackedScene" uid="uid://duoc8mq88ul3g" path="res://Machine.tscn" id="2_machine"]
 [ext_resource type="Script" uid="uid://qcwjkolbbr8o" path="res://scripts/camera_controller.gd" id="3_camera"]
 
