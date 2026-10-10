@@ -418,7 +418,7 @@ func _resolve_catalog(value: Dictionary) -> void:
 		if toy_family.is_empty():
 			continue
 		var tier := _toy_tier_from_class(class_key, class_title)
-		if tier not in ["", "base", "small"]:
+		if tier not in ["base", "small"]:
 			continue
 		toy_class_id_by_family[toy_family] = class_id
 		toy_class_key_by_family[toy_family] = class_key
@@ -544,6 +544,13 @@ func _family_from_loose_text(value: String) -> String:
 
 func _toy_tier_from_class(class_key: String, class_title: String) -> String:
 	var normalized := ("%s %s" % [class_key, class_title]).strip_edges().to_lower().replace("-", "_").replace(" ", "_").replace(".", "_").replace("/", "_")
+	var padded := "_%s_" % normalized
+	if padded.contains("_l3_") or padded.contains("_level_3_") or padded.contains("_level3_"):
+		return "large"
+	if padded.contains("_l2_") or padded.contains("_level_2_") or padded.contains("_level2_"):
+		return "medium"
+	if padded.contains("_l1_") or padded.contains("_level_1_") or padded.contains("_level1_"):
+		return "small"
 	for tier in ["giant", "large", "medium", "small", "base"]:
 		if normalized.contains(tier):
 			return tier
