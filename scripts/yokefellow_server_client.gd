@@ -24,6 +24,9 @@ var session_verify_url: String = ""
 var allow_unverified_wallets: bool = false
 var test_free_turns: bool = false
 
+# Compatibility cache for callers that still ask the client to "load_catalog".
+# Ownership is never sourced from the old catalog/entitlements rails; this cache
+# is populated only from the Network-backed holdings SDK read.
 var catalog: Dictionary = {}
 var bucket_slug: String = ""
 var class_id_by_family: Dictionary = {}
@@ -58,20 +61,23 @@ func integration_ready() -> bool:
 func paid_turns_ready() -> bool:
 	return test_free_turns or integration_ready()
 
+# Kept for SharedWorld call compatibility. This no longer touches the legacy
+# bucket catalog route. With a wallet it resolves presentation metadata from
+# the Network-backed holdings response; without one it only confirms config.
 func load_catalog(wallet: String = "") -> Dictionary:
-	if sdk_base_url.is_empty() or bucket_id.is_empty():
-		return _failure("Yokefellow catalog is not configured.")
-	var url := "%s/buckets/%s/catalog" % [sdk_base_url, bucket_id.uri_encode()]
+	if not integration_ready():
+		return _failure("Yokefellow clean-room reads are not configured.")
 	var normalized_wallet := wallet.strip_edges().to_lower()
-	if _is_wallet(normalized_wallet):
-		url += "?wallet=%s" % normalized_wallet.uri_encode()
-	var response := await _request_json(HTTPClient.METHOD_GET, url, {}, "")
-	if not bool(response.get("ok", false)):
-		return response
-	catalog = response.get("body", {}) as Dictionary
-	_resolve_catalog(catalog)
-	catalog_loaded.emit(catalog)
-	return response
+	if not _is_wallet(normalized_wallet):
+		return {
+			"ok": true,
+			"status": 204,
+			"body": {
+				"ok": true,
+				"source": {"ownership": "yokefellow_network_v1_projection"},
+			},
+		}
+	return await load_wallet_holdings(normalized_wallet)
 
 func verify_wallet_session(wallet: String, session_token: String) -> Dictionary:
 	var normalized := wallet.strip_edges().to_lower()
@@ -98,46 +104,45 @@ func verify_wallet_session(wallet: String, session_token: String) -> Dictionary:
 	return {"ok": true, "wallet": normalized, "mode": "verified"}
 
 func wallet_skin_families(wallet: String) -> Dictionary:
-	var response := await load_wallet_entitlements(wallet)
+	var response := await load_wallet_holdings(wallet)
 	if not bool(response.get("ok", false)):
 		return response
 	var body := response.get("body", {}) as Dictionary
 	var families: Array[String] = []
-	var wallet_state: Dictionary = {}
-	var wallet_state_value: Variant = body.get("walletState", {})
-	if wallet_state_value is Dictionary:
-		wallet_state = wallet_state_value as Dictionary
-	var candidates: Array = []
-	for key in ["ownedMints", "holdings", "nfts", "items"]:
-		var value: Variant = wallet_state.get(key, body.get(key, []))
-		if value is Array:
-			candidates.append_array(value)
-	for mint_value in candidates:
-		if not (mint_value is Dictionary):
-			continue
-		var mint := mint_value as Dictionary
-		var amount := int(mint.get("amount", mint.get("balance", mint.get("quantity", 1))))
-		if amount <= 0:
-			continue
-		var family := _family_from_class_key(String(mint.get("classSlug", mint.get("classKey", mint.get("slug", "")))))
-		if family.is_empty():
-			family = family_for_class_id(String(mint.get("classId", "")))
-		if not family.is_empty() and not families.has(family):
-			families.append(family)
+	var holdings_value: Variant = body.get("holdings", [])
+	if holdings_value is Array:
+		for holding_value in holdings_value as Array:
+			if not (holding_value is Dictionary):
+				continue
+			var holding := holding_value as Dictionary
+			if _holding_quantity(holding) <= 0:
+				continue
+			var presentation := _holding_presentation(holding)
+			var family := _skin_family_from_class_key(String(presentation.get("slug", presentation.get("key", ""))))
+			if family.is_empty():
+				family = family_for_class_id(String(holding.get("classId", "")))
+			if not family.is_empty() and not families.has(family):
+				families.append(family)
 	return {"ok": true, "families": families, "body": body}
 
-func load_wallet_entitlements(wallet: String) -> Dictionary:
-	if sdk_base_url.is_empty() or bucket_id.is_empty():
-		return _failure("Yokefellow wallet entitlements are not configured.")
+func load_wallet_holdings(wallet: String) -> Dictionary:
+	if not integration_ready():
+		return _failure("Yokefellow Network holdings are not configured.")
 	var normalized := wallet.strip_edges().to_lower()
 	if not _is_wallet(normalized):
 		return _failure("A valid wallet address is required.")
-	var url := "%s/wallets/%s/entitlements?bucketId=%s" % [
+	var url := "%s/buckets/%s/holdings/%s" % [
 		sdk_base_url,
-		normalized.uri_encode(),
 		bucket_id.uri_encode(),
+		normalized.uri_encode(),
 	]
-	return await _request_json(HTTPClient.METHOD_GET, url, {}, "")
+	var response := await _request_json(HTTPClient.METHOD_GET, url, {}, "")
+	if not bool(response.get("ok", false)):
+		return response
+	catalog = response.get("body", {}) as Dictionary
+	_resolve_catalog(catalog)
+	catalog_loaded.emit(catalog)
+	return response
 
 func load_player_presentation(wallet: String) -> Dictionary:
 	var normalized := wallet.strip_edges().to_lower()
@@ -149,22 +154,39 @@ func load_player_presentation(wallet: String) -> Dictionary:
 			"toys": [],
 			"errors": ["Invalid wallet."],
 		}
-	var short_wallet := "%s…%s" % [normalized.left(6), normalized.right(4)]
+
+	var errors: Array[String] = []
+	var profile: Dictionary = {}
+	var profile_result := await _load_profile_card(normalized)
+	if bool(profile_result.get("ok", false)):
+		var card_value: Variant = profile_result.get("card", {})
+		if card_value is Dictionary:
+			profile = (card_value as Dictionary).duplicate(true)
+			if not profile.is_empty():
+				profile["display_name"] = String(profile.get("displayName", ""))
+				profile["avatar_url"] = String(profile.get("avatarUrl", ""))
+				profile["profile_picture_url"] = String(profile.get("avatarUrl", ""))
+	else:
+		errors.append(String(profile_result.get("error", "Profile Card could not be loaded.")))
+
+	var toys: Array[Dictionary] = []
+	var holdings_result := await load_wallet_holdings(normalized)
+	if bool(holdings_result.get("ok", false)):
+		toys = _toy_showcase_from_holdings(holdings_result.get("body", {}) as Dictionary)
+	else:
+		errors.append(String(holdings_result.get("error", "NFT holdings could not be loaded.")))
+
+	# A valid wallet always returns a usable presentation envelope. Missing
+	# Profile Card or projection data stays empty and explicit; it is never
+	# replaced with a fabricated Player identity or demo inventory.
 	return {
 		"ok": true,
+		"version": 1,
+		"source": "yokefellow_clean_room",
 		"wallet": normalized,
-		"profile": {
-			"displayName": "Player %s" % short_wallet,
-			"display_name": "Player %s" % short_wallet,
-			"handle": "",
-			"avatarUrl": "",
-			"avatar_url": "",
-			"profile_picture_url": "",
-			"cardSettings": {},
-			"featuredOutputs": [],
-		},
-		"toys": [],
-		"errors": [],
+		"profile": profile,
+		"toys": toys,
+		"errors": errors,
 	}
 
 func spend_turn_credit(wallet: String, turn_id: String) -> Dictionary:
@@ -227,11 +249,12 @@ func submit_skin_milestone(wallet: String, turn_id: String, milestone_number: in
 	var body := response.get("body", {}) as Dictionary
 	var family := _selected_family_from_action_path_body(body)
 	if family.is_empty():
-		# The mint itself is authoritative even if an older SDK deployment does not
-		# expose the selected weighted branch yet. Do not retry a successful mint.
+		# The mint itself is authoritative even when the Action Path response does
+		# not expose a locally recognized presentation family. Never retry it.
 		response["skinResult"] = {
 			"resultType": "minted",
 			"mintStatus": "completed",
+			"txHash": _first_action_tx_hash(body),
 		}
 		return response
 	var selected_class_id := String(class_id_by_family.get(family, ""))
@@ -381,7 +404,7 @@ func _resolve_catalog(value: Dictionary) -> void:
 		if not (class_value is Dictionary):
 			continue
 		var nft_class := class_value as Dictionary
-		var class_id := String(nft_class.get("id", "")).strip_edges()
+		var class_id := String(nft_class.get("onchainClassId", nft_class.get("id", ""))).strip_edges()
 		var class_key := String(nft_class.get("slug", nft_class.get("key", ""))).strip_edges().to_lower()
 		var class_title := String(nft_class.get("name", nft_class.get("title", ""))).strip_edges()
 		var class_image_url := String(nft_class.get("imageUrl", nft_class.get("image_url", ""))).strip_edges()
@@ -401,6 +424,62 @@ func _resolve_catalog(value: Dictionary) -> void:
 		toy_class_key_by_family[toy_family] = class_key
 		toy_title_by_family[toy_family] = class_title if not class_title.is_empty() else "%s Toy" % _family_display_name(toy_family)
 		toy_image_url_by_family[toy_family] = class_image_url
+
+func _holding_presentation(holding: Dictionary) -> Dictionary:
+	var presentation_value: Variant = holding.get("presentation", {})
+	return (presentation_value as Dictionary) if presentation_value is Dictionary else {}
+
+func _holding_quantity(holding: Dictionary) -> int:
+	var standard := String(holding.get("standard", "")).strip_edges().to_upper()
+	if standard == "ERC721":
+		return 1 if not String(holding.get("owner", "")).strip_edges().is_empty() else 0
+	var quantity_value: Variant = holding.get("quantity", holding.get("balance", 0))
+	var quantity_text := String(quantity_value).strip_edges()
+	return int(quantity_text) if quantity_text.is_valid_int() else 0
+
+func _toy_showcase_from_holdings(value: Dictionary) -> Array[Dictionary]:
+	var grouped: Dictionary = {}
+	var holdings_value: Variant = value.get("holdings", [])
+	if not (holdings_value is Array):
+		return []
+	for holding_value in holdings_value as Array:
+		if not (holding_value is Dictionary):
+			continue
+		var holding := holding_value as Dictionary
+		var quantity := _holding_quantity(holding)
+		if quantity <= 0:
+			continue
+		var presentation := _holding_presentation(holding)
+		var class_key := String(presentation.get("slug", presentation.get("key", ""))).strip_edges()
+		var class_title := String(presentation.get("name", presentation.get("title", ""))).strip_edges()
+		var family := _toy_family_from_class(class_key, class_title)
+		if family.is_empty():
+			continue
+		var tier := _toy_tier_from_class(class_key, class_title)
+		if tier.is_empty() or tier == "base":
+			tier = "small"
+		var class_id := String(holding.get("classId", presentation.get("onchainClassId", ""))).strip_edges()
+		var grouping_key := "%s:%s:%s" % [family, tier, class_id]
+		var entry: Dictionary = grouped.get(grouping_key, {}) as Dictionary
+		if entry.is_empty():
+			entry = {
+				"family": family,
+				"tier": tier,
+				"size": tier,
+				"title": class_title if not class_title.is_empty() else "%s Toy" % _family_display_name(family),
+				"quantity": 0,
+				"imageUrl": String(presentation.get("imageUrl", presentation.get("image_url", ""))).strip_edges(),
+				"classId": class_id,
+				"classKey": class_key,
+				"standard": String(holding.get("standard", "")),
+			}
+		entry["quantity"] = int(entry.get("quantity", 0)) + quantity
+		grouped[grouping_key] = entry
+	var result: Array[Dictionary] = []
+	for entry_value in grouped.values():
+		if entry_value is Dictionary:
+			result.append((entry_value as Dictionary).duplicate(true))
+	return result
 
 func family_for_class_id(class_id: String) -> String:
 	for family_value in class_id_by_family.keys():
@@ -478,6 +557,40 @@ func _family_display_name(family: String) -> String:
 		"pot_of_gold": return "Pot of Gold"
 		"treasure_chest": return "Treasure Chest"
 	return "Toy"
+
+func _load_profile_card(wallet: String) -> Dictionary:
+	var origin := _platform_origin()
+	if origin.is_empty():
+		return {"ok": false, "error": "Yokefellow Profile Card origin is not configured."}
+	var request := HTTPRequest.new()
+	add_child(request)
+	request.timeout = 20.0
+	var url := "%s/api/profile/card?walletAddress=%s" % [origin, wallet.uri_encode()]
+	var start_error := request.request(url, PackedStringArray(["Accept: application/json"]), HTTPClient.METHOD_GET, "")
+	if start_error != OK:
+		request.queue_free()
+		return {"ok": false, "error": "Profile Card request could not start: %s" % error_string(start_error)}
+	var completed: Array = await request.request_completed
+	request.queue_free()
+	var transport_result := int(completed[0])
+	var response_code := int(completed[1])
+	var response_bytes: PackedByteArray = completed[3]
+	var parsed: Variant = JSON.parse_string(response_bytes.get_string_from_utf8())
+	var parsed_body: Dictionary = parsed if parsed is Dictionary else {}
+	if transport_result != HTTPRequest.RESULT_SUCCESS:
+		return {"ok": false, "error": "Profile Card request failed before receiving a response."}
+	if response_code == 404:
+		return {"ok": true, "card": {}, "missing": true}
+	if response_code < 200 or response_code >= 300 or parsed_body.get("ok", true) == false:
+		return {"ok": false, "error": _error_message(parsed_body, "Profile Card returned HTTP %d." % response_code)}
+	var card_value: Variant = parsed_body.get("card", {})
+	return {"ok": true, "card": (card_value as Dictionary).duplicate(true) if card_value is Dictionary else {}}
+
+func _platform_origin() -> String:
+	var suffix := "/api/sdk/v1"
+	if sdk_base_url.ends_with(suffix):
+		return sdk_base_url.left(sdk_base_url.length() - suffix.length())
+	return sdk_base_url.trim_suffix("/")
 
 func _request_json(method: int, url: String, body: Dictionary, idempotency_key: String, extra_headers: Dictionary = {}, timeout_seconds: float = 20.0) -> Dictionary:
 	var request := HTTPRequest.new()
