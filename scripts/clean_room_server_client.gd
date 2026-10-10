@@ -69,5 +69,5 @@ func _skin_milestone_ordinal(threshold_yes: int) -> int:
 		50:
 			return 3
 	if threshold_yes >= 100 and threshold_yes % 100 == 0:
-		return 3 + threshold_yes / 100
+		return 3 + floori(float(threshold_yes) / 100.0)
 	return 0
