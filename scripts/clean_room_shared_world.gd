@@ -1,9 +1,22 @@
 extends YesPusherSharedWorld
 class_name YesDropCleanRoomSharedWorld
 
+const SKIN_DROP_REPEAT_EVERY_YES := 100
+
 # Clean-room rule: Yokefellow Network holdings are the only authority for NFT
 # ownership/equip state. Persistent machine state may retain turn/cooldown/
 # settlement data, but it must never resurrect a previously owned NFT.
+
+func configure(target_machine: YesPusherMachine) -> void:
+	machine = target_machine
+	yf = YesDropCleanRoomServerClient.new()
+	yf.name = "YokefellowServerClient"
+	add_child(yf)
+	machine.reward_wheel_requested.connect(_on_authoritative_reward_wheel_requested)
+	machine.reward_wheel_awarded.connect(_on_authoritative_reward_wheel_awarded)
+	machine.toy_captured.connect(_on_authoritative_toy_captured)
+	_read_environment()
+	_start_mode()
 
 func _presentation_for_wallet(wallet: String, selected_skin: String) -> Dictionary:
 	if _presentation_test_mode:
@@ -33,6 +46,127 @@ func _server_bootstrap() -> void:
 	else:
 		call_deferred("_process_next_turn")
 	call_deferred("_process_settlement_outbox")
+
+func authoritative_turn_completed(summary: Dictionary) -> void:
+	if mode != "server" or _active_turn.is_empty():
+		return
+	var safe_summary: Dictionary = summary.duplicate(true)
+	var payout: int = maxi(0, int(safe_summary.get("total_yes", 0)))
+	var completed: Dictionary = _active_turn.duplicate(true)
+	completed["payout_yes"] = payout
+	completed["result_summary"] = safe_summary
+	completed["status"] = "settlement_pending"
+	completed["completed_at_unix"] = int(Time.get_unix_time_from_system())
+	var wallet := String(completed.get("wallet", ""))
+	var player: Dictionary = _player(wallet)
+	if String(completed.get("access_mode", "")) == "hourly_free":
+		var free_completed_at := int(completed.get("completed_at_unix", 0))
+		var next_free_at := free_completed_at + _free_turn_cooldown_seconds
+		player["next_free_turn_at_unix"] = next_free_at
+		player["free_turn_reserved_turn_id"] = ""
+		player["free_turn_reserved_at_unix"] = 0
+		player["last_free_turn_completed_at_unix"] = free_completed_at
+		player["last_free_turn_turn_id"] = String(completed.get("turn_id", ""))
+		completed["next_free_turn_at_unix"] = next_free_at
+
+	var old_lifetime: int = int(player.get("lifetime_yes", 0))
+	var new_lifetime: int = old_lifetime + payout
+	var paid_out_this_turn: int = maxi(0, int(safe_summary.get("caught_coin_count", safe_summary.get("caught_base_yes", 0))))
+	var old_lifetime_paid_out: int = int(player.get("lifetime_coins_paid_out", 0))
+	var new_lifetime_paid_out: int = old_lifetime_paid_out + paid_out_this_turn
+	player["lifetime_yes"] = new_lifetime
+	player["lifetime_coins_paid_out"] = new_lifetime_paid_out
+	_players[wallet] = player
+
+	# Coin Skin Drops are based on lifetime YES: 10, 25, 50, then every 100.
+	# The settlement stores the actual threshold values so each mint is stable
+	# and idempotent even when one high-payout turn crosses several milestones.
+	var milestones: Array[int] = _skin_drop_thresholds_crossed(old_lifetime, new_lifetime)
+	safe_summary["lifetime_yes"] = new_lifetime
+	safe_summary["lifetime_coins_paid_out"] = new_lifetime_paid_out
+	safe_summary["skin_drop_schedule_version"] = 2
+	safe_summary["skin_drop_next_lifetime_yes"] = _next_skin_drop_threshold(new_lifetime)
+	completed["skin_milestones"] = milestones
+	completed["skin_milestones_confirmed"] = []
+	var completed_toy_captures: Array = []
+	var completed_toy_captures_value: Variant = safe_summary.get("toy_captures", [])
+	if completed_toy_captures_value is Array:
+		completed_toy_captures = (completed_toy_captures_value as Array).duplicate(true)
+	completed["toy_captures"] = completed_toy_captures
+	completed["toy_captures_confirmed"] = []
+	var presentation_only := bool(completed.get("presentation_only", false))
+	if not presentation_only:
+		_settlements.append(completed)
+	else:
+		milestones.clear()
+	_broadcast_presentation_event({
+		"kind": "turn_result",
+		"wallet": wallet,
+		"turn_id": String(completed.get("turn_id", "")),
+		"summary": safe_summary.duplicate(true),
+		"skin_drop_count": milestones.size(),
+	})
+	if not multiplayer.get_peers().is_empty():
+		_client_turn_completed.rpc(safe_summary, wallet, new_lifetime, milestones)
+	_live_player_presentation = {}
+	_active_turn = {}
+	_save_state()
+	_broadcast_queue_state()
+	active_player_changed.emit("", "")
+	active_player_presentation_changed.emit({})
+	call_deferred("_process_settlement_outbox")
+	call_deferred("_process_next_turn")
+
+@rpc("authority", "call_remote", "reliable")
+func _client_turn_completed(summary: Dictionary, wallet: String, lifetime_yes: int, milestones: Array) -> void:
+	var safe_summary: Dictionary = summary.duplicate(true)
+	var payout: int = maxi(0, int(safe_summary.get("total_yes", 0)))
+	remote_turn_finished.emit(safe_summary, wallet, lifetime_yes, milestones)
+	if wallet.to_lower() != local_wallet.to_lower():
+		return
+	var next_threshold := maxi(0, int(safe_summary.get("skin_drop_next_lifetime_yes", _next_skin_drop_threshold(lifetime_yes))))
+	if milestones.is_empty():
+		status_changed.emit("Your 10-coin turn finished with %d YES. Lifetime YES: %d · next Coin Skin Drop at %d." % [payout, lifetime_yes, next_threshold])
+	else:
+		var threshold_labels := PackedStringArray()
+		for milestone_value in milestones:
+			threshold_labels.append(str(int(milestone_value)))
+		status_changed.emit("Your turn finished with %d YES and earned %d Coin Skin Drop%s at lifetime YES milestone%s %s. Next at %d." % [
+			payout,
+			milestones.size(),
+			"" if milestones.size() == 1 else "s",
+			"" if milestones.size() == 1 else "s",
+			threshold_labels.join(", "),
+			next_threshold,
+		])
+
+func _skin_drop_thresholds_crossed(old_lifetime_yes: int, new_lifetime_yes: int) -> Array[int]:
+	var thresholds: Array[int] = []
+	if new_lifetime_yes <= old_lifetime_yes:
+		return thresholds
+	for threshold in [10, 25, 50]:
+		if old_lifetime_yes < threshold and new_lifetime_yes >= threshold:
+			thresholds.append(threshold)
+	var repeat_threshold := maxi(
+		SKIN_DROP_REPEAT_EVERY_YES,
+		(floori(float(old_lifetime_yes) / float(SKIN_DROP_REPEAT_EVERY_YES)) + 1) * SKIN_DROP_REPEAT_EVERY_YES
+	)
+	while repeat_threshold <= new_lifetime_yes:
+		thresholds.append(repeat_threshold)
+		repeat_threshold += SKIN_DROP_REPEAT_EVERY_YES
+	return thresholds
+
+func _next_skin_drop_threshold(lifetime_yes: int) -> int:
+	if lifetime_yes < 10:
+		return 10
+	if lifetime_yes < 25:
+		return 25
+	if lifetime_yes < 50:
+		return 50
+	return maxi(
+		SKIN_DROP_REPEAT_EVERY_YES,
+		(floori(float(lifetime_yes) / float(SKIN_DROP_REPEAT_EVERY_YES)) + 1) * SKIN_DROP_REPEAT_EVERY_YES
+	)
 
 @rpc("any_peer", "call_remote", "reliable")
 func _server_identify(wallet: String, session_token: String, requested_skin_family: String) -> void:
