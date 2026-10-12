@@ -57,6 +57,7 @@ RUN npm ci --omit=dev --no-audit --no-fund \
     && npm cache clean --force
 
 COPY web/server.mjs ./server.mjs
+COPY web/start-recovery-web.mjs ./start-recovery-web.mjs
 COPY web/yd4-workshop.mjs ./yd4-workshop.mjs
 COPY web/public ./public
 RUN rm -rf ./public/game
@@ -64,4 +65,4 @@ COPY --from=game-builder /app/web/public/game ./public/game
 
 EXPOSE 8080
 STOPSIGNAL SIGTERM
-CMD ["node", "server.mjs"]
+CMD ["node", "start-recovery-web.mjs"]
