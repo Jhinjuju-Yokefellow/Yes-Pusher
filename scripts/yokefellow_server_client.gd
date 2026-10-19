@@ -14,7 +14,7 @@ const TOY_DROP_PATH := "yes_drop.toy_drop"
 
 var sdk_base_url: String = ""
 var bucket_id: String = ""
-var app_api_key: String = ""
+var network_app_api_key: String = ""
 var app_slug: String = DEFAULT_APP_SLUG
 var skin_offering_name: String = DEFAULT_SKIN_OFFERING
 var toy_offering_name: String = DEFAULT_TOY_OFFERING
@@ -43,9 +43,7 @@ func _ready() -> void:
 func load_from_environment() -> void:
 	sdk_base_url = _normalize_sdk_base(OS.get_environment("YF_API_BASE_URL"))
 	bucket_id = OS.get_environment("YF_BUCKET_ID").strip_edges()
-	app_api_key = OS.get_environment("YF_APP_API_KEY").strip_edges()
-	if app_api_key.is_empty():
-		app_api_key = OS.get_environment("YF_APP_KEY").strip_edges()
+	network_app_api_key = OS.get_environment("YF_NETWORK_APP_API_KEY").strip_edges()
 	app_slug = _env_or("YES_PUSHER_APP_SLUG", DEFAULT_APP_SLUG)
 	skin_offering_name = _env_or("YES_PUSHER_SKIN_DROP_OFFERING_NAME", DEFAULT_SKIN_OFFERING)
 	toy_offering_name = _env_or("YES_PUSHER_TOY_OFFERING_NAME", DEFAULT_TOY_OFFERING)
@@ -56,7 +54,7 @@ func load_from_environment() -> void:
 	test_free_turns = _env_bool("YES_PUSHER_TEST_FREE_TURNS", false)
 
 func integration_ready() -> bool:
-	return not sdk_base_url.is_empty() and not bucket_id.is_empty() and not app_api_key.is_empty()
+	return not sdk_base_url.is_empty() and not bucket_id.is_empty() and network_app_api_key.begins_with("yfk_")
 
 func paid_turns_ready() -> bool:
 	return test_free_turns or integration_ready()
@@ -606,8 +604,11 @@ func _request_json(method: int, url: String, body: Dictionary, idempotency_key: 
 	var headers := PackedStringArray(["Accept: application/json"])
 	if method != HTTPClient.METHOD_GET:
 		headers.append("Content-Type: application/json")
-	if not app_api_key.is_empty():
-		headers.append("X-YF-App-Key: %s" % app_api_key)
+	# The website still evaluates the published Action Path flow, but Network
+	# validates this credential and the Bucket/App authority.
+	# Never forward the App credential to a separate wallet verifier.
+	if not network_app_api_key.is_empty() and url.begins_with("%s/" % sdk_base_url):
+		headers.append("Authorization: Bearer %s" % network_app_api_key)
 	if not idempotency_key.is_empty():
 		headers.append("X-Idempotency-Key: %s" % idempotency_key)
 	for header_name_value in extra_headers.keys():
