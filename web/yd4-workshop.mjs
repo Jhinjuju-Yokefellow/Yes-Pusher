@@ -156,7 +156,7 @@ export function createWorkshopService({
   }
 
   function requireYokefellow() {
-    if (!normalizedOrigin || !normalizedBucketId || !normalizedAppKey) {
+    if (!normalizedOrigin || !normalizedBucketId || !normalizedAppKey.startsWith("yfk_")) {
       throw new Error("Rainbow's End is not connected to its Network App credential.");
     }
   }
