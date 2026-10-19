@@ -62,7 +62,7 @@ const server = http.createServer(async (request, response) => {
       return sendJson(response, 200, {
         ok: true,
         service: "yes-drop-wallet-session",
-        workshopReady: Boolean(yokefellowOrigin && configuredBucketId && networkAppApiKey),
+        workshopReady: Boolean(yokefellowOrigin && configuredBucketId && networkAppApiKey.startsWith("yfk_")),
         machineBuildTarget: workshop.buildTarget,
         nftExecution: "yokefellow_action_paths",
       });
