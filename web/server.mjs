@@ -17,7 +17,7 @@ const gameServerUrl = (process.env.GAME_SERVER_URL || "ws://127.0.0.1:8787").tri
 const sessionSecret = (process.env.SESSION_SECRET || "").trim();
 const yokefellowOrigin = normalizeYokefellowOrigin(process.env.YF_API_BASE_URL || "");
 const configuredBucketId = (process.env.YF_BUCKET_ID || "").trim();
-const appApiKey = (process.env.YF_APP_API_KEY || process.env.YF_APP_KEY || "").trim();
+const networkAppApiKey = (process.env.YF_NETWORK_APP_API_KEY || "").trim();
 const communityBuildStatePath = (process.env.YES_PUSHER_COMMUNITY_BUILD_STATE_PATH || path.join(localDir, "yd4-workshop-state.json")).trim();
 const communityBuildTarget = integerEnv("YES_PUSHER_MACHINE_BUILD_TARGET", 50, 1, 1_000_000);
 
@@ -31,7 +31,7 @@ if (!/^wss?:\/\//i.test(gameServerUrl)) {
 const workshop = createWorkshopService({
   yokefellowOrigin,
   bucketId: configuredBucketId,
-  appApiKey,
+  networkAppApiKey,
   statePath: communityBuildStatePath,
   buildTarget: communityBuildTarget,
 });
@@ -62,7 +62,7 @@ const server = http.createServer(async (request, response) => {
       return sendJson(response, 200, {
         ok: true,
         service: "yes-drop-wallet-session",
-        workshopReady: Boolean(yokefellowOrigin && configuredBucketId && appApiKey),
+        workshopReady: Boolean(yokefellowOrigin && configuredBucketId && networkAppApiKey.startsWith("yfk_")),
         machineBuildTarget: workshop.buildTarget,
         nftExecution: "yokefellow_action_paths",
       });
