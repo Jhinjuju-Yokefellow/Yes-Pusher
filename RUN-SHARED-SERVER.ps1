@@ -38,13 +38,14 @@ Import-DotEnv (Join-Path $ProjectRoot $EnvFile)
 # the authoritative machine fully local/test-mode so repeated turns work.
 $yfUrl = [Environment]::GetEnvironmentVariable("YF_API_BASE_URL", "Process")
 $yfBucket = [Environment]::GetEnvironmentVariable("YF_BUCKET_ID", "Process")
-$yfKey = [Environment]::GetEnvironmentVariable("YF_APP_API_KEY", "Process")
+$yfKey = [Environment]::GetEnvironmentVariable("YF_NETWORK_APP_API_KEY", "Process")
 $missingYokefellow = [string]::IsNullOrWhiteSpace($yfUrl) `
     -or [string]::IsNullOrWhiteSpace($yfBucket) `
     -or [string]::IsNullOrWhiteSpace($yfKey) `
     -or $yfUrl.StartsWith("REPLACE_WITH") `
     -or $yfBucket.StartsWith("REPLACE_WITH") `
-    -or $yfKey.StartsWith("REPLACE_WITH")
+    -or $yfKey.StartsWith("REPLACE_WITH") `
+    -or -not $yfKey.StartsWith("yfk_")
 
 if ($missingYokefellow) {
     [Environment]::SetEnvironmentVariable("YES_PUSHER_TEST_FREE_TURNS", "true", "Process")
