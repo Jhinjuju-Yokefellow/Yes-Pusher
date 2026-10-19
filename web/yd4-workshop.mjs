@@ -102,9 +102,9 @@ async function writeJsonFile(filePath, value) {
   await fs.rename(temp, filePath);
 }
 
-async function jsonRequest(url, { method = "GET", appApiKey = "", idempotencyKey = "", body = null } = {}) {
+async function jsonRequest(url, { method = "GET", networkAppApiKey = "", idempotencyKey = "", body = null } = {}) {
   const headers = { Accept: "application/json" };
-  if (appApiKey) headers["X-YF-App-Key"] = appApiKey;
+  if (networkAppApiKey) headers["Authorization"] = `Bearer ${networkAppApiKey}`;
   if (idempotencyKey) headers["X-Idempotency-Key"] = idempotencyKey;
   if (body !== null) headers["Content-Type"] = "application/json";
   const response = await fetch(url, {
@@ -131,13 +131,13 @@ async function jsonRequest(url, { method = "GET", appApiKey = "", idempotencyKey
 export function createWorkshopService({
   yokefellowOrigin,
   bucketId,
-  appApiKey,
+  networkAppApiKey,
   statePath,
   buildTarget = 50,
 }) {
   const normalizedOrigin = String(yokefellowOrigin || "").replace(/\/+$/, "");
   const normalizedBucketId = String(bucketId || "").trim();
-  const normalizedAppKey = String(appApiKey || "").trim();
+  const normalizedAppKey = String(networkAppApiKey || "").trim();
   const normalizedStatePath = statePath || path.join(process.cwd(), ".local", "yd4-workshop-state.json");
   const target = Math.max(1, safeInteger(buildTarget, 50));
   let cachedBucketSlug = "";
@@ -157,7 +157,7 @@ export function createWorkshopService({
 
   function requireYokefellow() {
     if (!normalizedOrigin || !normalizedBucketId || !normalizedAppKey) {
-      throw new Error("Rainbow's End is not connected to its Yokefellow Bucket/App key.");
+      throw new Error("Rainbow's End is not connected to its Network App credential.");
     }
   }
 
@@ -175,7 +175,7 @@ export function createWorkshopService({
     const encodedWallet = encodeURIComponent(wallet);
     const holdings = await jsonRequest(
       sdkUrl(`/buckets/${encodedBucket}/holdings/${encodedWallet}`),
-      { appApiKey: normalizedAppKey },
+      { networkAppApiKey: normalizedAppKey },
     );
     const bucketSlug = String(holdings?.bucketSlug || "").trim();
     if (bucketSlug) cachedBucketSlug = bucketSlug;
@@ -395,7 +395,7 @@ export function createWorkshopService({
 
     const result = await jsonRequest(actionPathUrl(TOY_UPGRADE_PATH_KEY), {
       method: "POST",
-      appApiKey: normalizedAppKey,
+      networkAppApiKey: normalizedAppKey,
       idempotencyKey: reference,
       body: {
         wallet: normalizedWallet,
@@ -449,7 +449,7 @@ export function createWorkshopService({
 
     const result = await jsonRequest(actionPathUrl(COMMUNITY_MACHINE_PATH_KEY), {
       method: "POST",
-      appApiKey: normalizedAppKey,
+      networkAppApiKey: normalizedAppKey,
       idempotencyKey: reference,
       body: {
         wallet: normalizedWallet,
