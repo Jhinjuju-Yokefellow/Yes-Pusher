@@ -26,6 +26,8 @@ const DEFAULT_MAX_CLIENTS := 128
 const SETTLEMENT_RETRY_SECONDS := 10.0
 const WEBSOCKET_BUFFER_BYTES := 4194304
 const WEBSOCKET_SNAPSHOT_BACKPRESSURE_BYTES := 1048576
+const INITIAL_RESET_WARNING_MS := 15000
+const INITIAL_RESET_TIMEOUT_MS := 120000
 const NFT_AWARD_MESSAGE_PREFIX := "__YES_PUSHER_NFT_AWARD__"
 const PRESENTATION_EVENT_MESSAGE_PREFIX := "__YES_PUSHER_PRESENTATION_EVENT__"
 
@@ -161,10 +163,21 @@ func _start_mode() -> void:
 
 func _start_server() -> void:
 	machine.set_authoritative(true)
-	# Machine startup seeds its physical bed asynchronously. Do not restore the
-	# persistent shared state until that initial reset has fully finished.
+	# Do not open the socket or restore saved state until the initial physical bed
+	# finishes resetting. Fail visibly if physics startup prevents that forever.
+	var reset_started_ms := Time.get_ticks_msec()
+	var reset_warning_logged := false
 	while machine.is_resetting():
+		var wait_ms := Time.get_ticks_msec() - reset_started_ms
+		if not reset_warning_logged and wait_ms >= INITIAL_RESET_WARNING_MS:
+			push_warning("YES DROP machine reset is taking over 15s; WebSocket listener is not bound yet.")
+			reset_warning_logged = true
+		if wait_ms >= INITIAL_RESET_TIMEOUT_MS:
+			push_error("YES DROP machine reset exceeded 120s; exiting so Railway can report and restart the failed service.")
+			get_tree().quit(1)
+			return
 		await get_tree().process_frame
+	print("YES DROP initial machine reset complete after %d ms. Binding %s on %s:%d." % [Time.get_ticks_msec() - reset_started_ms, _transport, _server_bind, _server_port])
 	var error := OK
 	var created_peer: MultiplayerPeer
 	if _transport == "enet":
@@ -180,8 +193,12 @@ func _start_server() -> void:
 		created_peer = websocket_peer
 		_websocket_peer = websocket_peer
 	if error != OK:
-		status_changed.emit("Shared server failed to start: %s" % error_string(error))
+		var bind_error := "YES DROP %s listener failed to bind %s:%d: %s" % [_transport, _server_bind, _server_port, error_string(error)]
+		push_error(bind_error)
+		status_changed.emit(bind_error)
+		get_tree().quit(1)
 		return
+	print("YES DROP %s listener created on %s:%d." % [_transport, _server_bind, _server_port])
 	multiplayer.multiplayer_peer = created_peer
 	multiplayer.peer_connected.connect(_on_peer_connected)
 	multiplayer.peer_disconnected.connect(_on_peer_disconnected)
@@ -473,10 +490,12 @@ func _report_browser_socket_state(state: String) -> void:
 	)
 
 func _on_peer_connected(peer_id: int) -> void:
+	print("YES DROP machine peer %d connected." % peer_id)
 	_players[str(peer_id)] = {"peer_id": peer_id, "wallet": "", "verified": false, "skin_family": "", "lifetime_yes": 0, "lifetime_coins_paid_out": 0}
 	_broadcast_queue_state()
 
 func _on_peer_disconnected(peer_id: int) -> void:
+	print("YES DROP machine peer %d disconnected." % peer_id)
 	var wallet := _wallet_for_peer(peer_id)
 	_remove_peer_from_queue(peer_id)
 	_players.erase(str(peer_id))
