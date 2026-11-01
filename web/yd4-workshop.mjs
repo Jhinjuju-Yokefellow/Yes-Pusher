@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { getAddress } from "ethers";
+import { createOwnershipSessionCache } from "./ownership-session-cache.mjs";
 
 const FAMILIES = [
   { key: "four_leaf_clover", label: "Four Leaf Clover", rarity: 1, points: 1 },
@@ -102,9 +103,10 @@ async function writeJsonFile(filePath, value) {
   await fs.rename(temp, filePath);
 }
 
-async function jsonRequest(url, { method = "GET", appApiKey = "", idempotencyKey = "", body = null } = {}) {
+async function jsonRequest(url, { method = "GET", appApiKey = "", appSessionId = "", idempotencyKey = "", body = null } = {}) {
   const headers = { Accept: "application/json" };
-  if (appApiKey) headers["X-YF-App-Key"] = appApiKey;
+  if (appApiKey) headers.Authorization = "Bearer " + appApiKey;
+  if (appSessionId) headers["X-YF-App-Session-ID"] = appSessionId;
   if (idempotencyKey) headers["X-Idempotency-Key"] = idempotencyKey;
   if (body !== null) headers["Content-Type"] = "application/json";
   const response = await fetch(url, {
@@ -141,6 +143,20 @@ export function createWorkshopService({
   const normalizedStatePath = statePath || path.join(process.cwd(), ".local", "yd4-workshop-state.json");
   const target = Math.max(1, safeInteger(buildTarget, 50));
   let cachedBucketSlug = "";
+  const ownershipSessions = createOwnershipSessionCache({
+    load: (wallet, sessionId) => fetchRemoteOwnership(wallet, sessionId),
+  });
+  function sessionIdentity(wallet, session) {
+    return {
+      wallet,
+      sessionId: session?.sessionId,
+      expiresAtMs: Number(session?.expiresAt) * 1000,
+    };
+  }
+  function primeOwnershipSession(session) {
+    const wallet = getAddress(session.wallet).toLowerCase();
+    return ownershipSessions.begin(sessionIdentity(wallet, session));
+  }
 
   async function readStateFile() {
     const state = await readJsonFile(normalizedStatePath);
@@ -169,17 +185,21 @@ export function createWorkshopService({
     return sdkUrl(`/buckets/${encodeURIComponent(normalizedBucketId)}/action-paths/${encodeURIComponent(pathKey)}/execute`);
   }
 
-  async function loadRemote(wallet) {
+  async function fetchRemoteOwnership(wallet, sessionId) {
     requireYokefellow();
     const encodedBucket = encodeURIComponent(normalizedBucketId);
     const encodedWallet = encodeURIComponent(wallet);
     const holdings = await jsonRequest(
       sdkUrl(`/buckets/${encodedBucket}/holdings/${encodedWallet}`),
-      { appApiKey: normalizedAppKey },
+      { appApiKey: normalizedAppKey, appSessionId: sessionId },
     );
     const bucketSlug = String(holdings?.bucketSlug || "").trim();
     if (bucketSlug) cachedBucketSlug = bucketSlug;
     return holdings;
+  }
+
+  function loadRemote(wallet, session) {
+    return ownershipSessions.read(sessionIdentity(wallet, session));
   }
 
   function buildInventory(remote) {
@@ -294,10 +314,10 @@ export function createWorkshopService({
     };
   }
 
-  async function getState(wallet) {
+  async function getState(wallet, session) {
     const normalizedWallet = getAddress(wallet).toLowerCase();
     const [remote, localState] = await Promise.all([
-      loadRemote(normalizedWallet),
+      loadRemote(normalizedWallet, session),
       readStateFile(),
     ]);
     const inventory = buildInventory(remote);
@@ -349,10 +369,10 @@ export function createWorkshopService({
     };
   }
 
-  async function equipSkin(wallet, familyValue) {
+  async function equipSkin(wallet, familyValue, session) {
     const normalizedWallet = getAddress(wallet).toLowerCase();
     const family = normalizeFamily(familyValue);
-    const state = await getState(normalizedWallet);
+    const state = await getState(normalizedWallet, session);
     if (family && !state.skins.some((skin) => skin.family === family)) {
       throw new Error("That wallet does not own the selected Coin Skin.");
     }
@@ -366,7 +386,7 @@ export function createWorkshopService({
     return { ok: true, equippedSkin: family };
   }
 
-  async function craft(wallet, { family: familyValue, fromTier, referenceId }) {
+  async function craft(wallet, { family: familyValue, fromTier, referenceId }, session) {
     requireYokefellow();
     const normalizedWallet = getAddress(wallet).toLowerCase();
     const family = normalizeFamily(familyValue);
@@ -378,7 +398,7 @@ export function createWorkshopService({
     const reference = validReference(referenceId);
     if (!reference) throw new Error("A stable craft reference is required.");
 
-    const state = await getState(normalizedWallet);
+    const state = await getState(normalizedWallet, session);
     const familyRow = state.toys.find((row) => row.family === family);
     const tierRow = familyRow?.tiers?.[sourceTier];
     if (!tierRow || tierRow.quantity < 3) {
@@ -421,7 +441,7 @@ export function createWorkshopService({
     };
   }
 
-  async function contribute(wallet, { family: familyValue, referenceId }) {
+  async function contribute(wallet, { family: familyValue, referenceId }, session) {
     requireYokefellow();
     const normalizedWallet = getAddress(wallet).toLowerCase();
     const family = normalizeFamily(familyValue);
@@ -441,7 +461,7 @@ export function createWorkshopService({
       }
     }
 
-    const state = await getState(normalizedWallet);
+    const state = await getState(normalizedWallet, session);
     const familyRow = state.toys.find((row) => row.family === family);
     if (!familyRow?.tiers?.large || familyRow.tiers.large.quantity < 1) {
       throw new Error(`You do not currently hold a Large ${descriptor.label} Toy.`);
@@ -483,17 +503,17 @@ export function createWorkshopService({
     return { ok: true, duplicate: Boolean(result?.reused), contribution: entry, community: communityFromState(localState) };
   }
 
-  async function resolveBucketSlug(wallet) {
+  async function resolveBucketSlug(wallet, session) {
     if (cachedBucketSlug) return cachedBucketSlug;
     const normalizedWallet = getAddress(wallet).toLowerCase();
-    const remote = await loadRemote(normalizedWallet);
+    const remote = await loadRemote(normalizedWallet, session);
     const slug = String(remote?.bucketSlug || "").trim();
     if (!slug) throw new Error("Rainbow's End could not resolve its Yokefellow Bucket slug.");
     cachedBucketSlug = slug;
     return slug;
   }
 
-  async function prepareFunding(wallet, { operation, amountYesRaw, referenceId }) {
+  async function prepareFunding(wallet, { operation, amountYesRaw, referenceId }, session) {
     const normalizedWallet = getAddress(wallet).toLowerCase();
     const op = String(operation || "").toLowerCase();
     if (!["deposit", "withdrawal"].includes(op)) {
@@ -503,7 +523,7 @@ export function createWorkshopService({
     if (!/^[1-9]\d*$/.test(amount)) throw new Error("Funding amount must be greater than zero.");
     const reference = validReference(referenceId);
     if (!reference) throw new Error("A stable funding reference is required.");
-    const slug = await resolveBucketSlug(normalizedWallet);
+    const slug = await resolveBucketSlug(normalizedWallet, session);
     const pathname = op === "deposit"
       ? `/api/buckets/${encodeURIComponent(slug)}/deposits`
       : `/api/buckets/${encodeURIComponent(slug)}/credits/withdraw`;
@@ -518,7 +538,7 @@ export function createWorkshopService({
     });
   }
 
-  async function fundingStatus(wallet, { operation, referenceId }) {
+  async function fundingStatus(wallet, { operation, referenceId }, session) {
     const normalizedWallet = getAddress(wallet).toLowerCase();
     const op = String(operation || "").toLowerCase();
     if (!["deposit", "withdrawal"].includes(op)) {
@@ -526,7 +546,7 @@ export function createWorkshopService({
     }
     const reference = validReference(referenceId);
     if (!reference) throw new Error("A stable funding reference is required.");
-    const slug = await resolveBucketSlug(normalizedWallet);
+    const slug = await resolveBucketSlug(normalizedWallet, session);
     const pathname = op === "deposit"
       ? `/api/buckets/${encodeURIComponent(slug)}/deposits`
       : `/api/buckets/${encodeURIComponent(slug)}/credits/withdraw`;
@@ -555,5 +575,6 @@ export function createWorkshopService({
     prepareFunding,
     fundingStatus,
     getCommunity,
+    primeOwnershipSession,
   };
 }
