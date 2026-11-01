@@ -141,6 +141,12 @@ export function createWorkshopService({
   const normalizedStatePath = statePath || path.join(process.cwd(), ".local", "yd4-workshop-state.json");
   const target = Math.max(1, safeInteger(buildTarget, 50));
   let cachedBucketSlug = "";
+  // Ownership is deliberately an hourly read model, not a per-visitor DB query.
+  // Coalesce concurrent requests and cap the number of wallets retained in memory.
+  const ownershipCache = new Map();
+  const OWNERSHIP_CACHE_LIMIT = 256;
+  const HOUR_MS = 60 * 60 * 1000;
+  const RETRY_MS = 60 * 1000;
 
   async function readStateFile() {
     const state = await readJsonFile(normalizedStatePath);
@@ -171,15 +177,36 @@ export function createWorkshopService({
 
   async function loadRemote(wallet) {
     requireYokefellow();
-    const encodedBucket = encodeURIComponent(normalizedBucketId);
-    const encodedWallet = encodeURIComponent(wallet);
-    const holdings = await jsonRequest(
-      sdkUrl(`/buckets/${encodedBucket}/holdings/${encodedWallet}`),
-      { networkAppApiKey: normalizedAppKey },
-    );
-    const bucketSlug = String(holdings?.bucketSlug || "").trim();
-    if (bucketSlug) cachedBucketSlug = bucketSlug;
-    return holdings;
+    const hour = Math.floor(Date.now() / HOUR_MS);
+    const existing = ownershipCache.get(wallet);
+    if (existing && existing.hour === hour && existing.data) return existing.data;
+    if (existing && existing.hour === hour && existing.pending) return existing.pending;
+    if (existing && existing.hour === hour && existing.error && Date.now() < existing.retryAt) throw existing.error;
+
+    const pending = (async () => {
+      const encodedBucket = encodeURIComponent(normalizedBucketId);
+      const encodedWallet = encodeURIComponent(wallet);
+      const holdings = await jsonRequest(
+        sdkUrl(`/buckets/${encodedBucket}/holdings/${encodedWallet}`),
+        { networkAppApiKey: normalizedAppKey },
+      );
+      if (holdings?.complete === false) throw new Error("V3 hourly NFT ownership is not yet available.");
+      const bucketSlug = String(holdings?.bucketSlug || "").trim();
+      if (bucketSlug) cachedBucketSlug = bucketSlug;
+      ownershipCache.set(wallet, { hour, data: holdings });
+      return holdings;
+    })();
+    ownershipCache.set(wallet, { hour, pending });
+    while (ownershipCache.size > OWNERSHIP_CACHE_LIMIT) {
+      ownershipCache.delete(ownershipCache.keys().next().value);
+    }
+    try {
+      return await pending;
+    } catch (error) {
+      // Avoid a failed V3 read becoming a new request storm from active players.
+      ownershipCache.set(wallet, { hour, error, retryAt: Date.now() + RETRY_MS });
+      throw error;
+    }
   }
 
   function buildInventory(remote) {
