@@ -45,4 +45,52 @@ await assert.rejects(broken.begin(failed),/upstream_offline/);
 await assert.rejects(broken.read(failed),/upstream_offline/);
 assert.equal(failures,1,"upstream errors cannot cause repeat database requests");
 
+// Integration: the actual Workshop path must not refetch holdings on views.
+const { createWorkshopService } = await import("../yd4-workshop.mjs");
+const fs = await import("node:fs");
+const os = await import("node:os");
+const path = await import("node:path");
+const folder = fs.mkdtempSync(path.join(os.tmpdir(), "coin-drop-stage3-"));
+let ownershipCalls = 0;
+let creditCalls = 0;
+const originalFetch = globalThis.fetch;
+globalThis.fetch = async (url, options) => {
+  const pathname = new URL(url).pathname;
+  if (pathname.includes("/holdings/")) {
+    ownershipCalls++;
+    assert.equal(options.headers.Authorization,"Bearer yfk_test-only");
+    assert.equal(options.headers["X-YF-App-Session-ID"],sessionA);
+    return { ok:true, status:200, json:async()=>({
+      ok:true,bucketSlug:"rainbows-end",classes:[],holdings:[],source:{ownership:"v3_database"}
+    }) };
+  }
+  if (pathname.endsWith("/credits")) {
+    creditCalls++;
+    return {ok:true,status:200,json:async()=>({ok:true,credit:null})};
+  }
+  throw Error("Unexpected external request " + pathname);
+};
+try {
+  const workshop = createWorkshopService({
+    yokefellowOrigin:"https://v3.example.test",
+    bucketId:"rainbows-end",
+    appApiKey:"yfk_test-only",
+    statePath:path.join(folder,"workshop.json"),
+  });
+  const login = {
+    wallet:walletA,sessionId:sessionA,expiresAt:Math.floor(Date.now()/1000)+3600,
+  };
+  await workshop.primeOwnershipSession(login);
+  await Promise.all([
+    workshop.getState(walletA,login),
+    workshop.getState(walletA,login),
+    workshop.getState(walletA,login),
+  ]);
+  assert.equal(ownershipCalls,1,"Workshop views must reuse the login ownership snapshot");
+  assert.equal(creditCalls,3,"funding remains a separate live read path");
+} finally {
+  globalThis.fetch = originalFetch;
+  fs.rmSync(folder,{recursive:true,force:true});
+}
+
 console.log("Coin Drop per-app login ownership cache: single-flight, scoped, bounded, failure-safe.");
