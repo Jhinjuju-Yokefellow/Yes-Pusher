@@ -38,6 +38,8 @@
   const skinList = document.querySelector("#skin-list");
 
   const reconnectDelaysMs = [1000, 2000, 5000, 10000, 15000];
+  const gameBootTimeoutMs = 120000;
+  const socketConnectionTimeoutMs = 15000;
 
   let config = null;
   let activeWallet = "";
@@ -45,6 +47,7 @@
   let playerState = null;
   let reconnectTimer = null;
   let connectionWatchdog = null;
+  let gameBootWatchdog = null;
   let reconnectAttempt = 0;
   let socketOpen = false;
   let activeLaunchId = "";
@@ -72,6 +75,7 @@
     if (event.origin !== window.location.origin || event.source !== gameFrame.contentWindow) return;
 
     if (event.data?.type === "yes-pusher-ready") {
+      clearGameBootWatchdog();
       updateGameWalletLabel("connecting to shared machine");
       startConnectionWatchdog();
       return;
@@ -82,6 +86,7 @@
 
     const state = String(event.data.state || "");
     if (state === "connecting") {
+      clearGameBootWatchdog();
       socketOpen = false;
       setConnectionButton("CONNECTING…", true);
       updateGameWalletLabel("connecting to shared machine");
@@ -90,6 +95,7 @@
     }
 
     if (state === "open") {
+      clearGameBootWatchdog();
       socketOpen = true;
       reconnectAttempt = 0;
       clearReconnectTimer();
@@ -648,19 +654,23 @@
     if (!activeWallet && !spectatorMode) return;
     clearReconnectTimer();
     clearConnectionWatchdog();
+    clearGameBootWatchdog();
     socketOpen = false;
     gameLoaded = true;
     setConnectionButton("CONNECTING…", true);
     updateGameWalletLabel(stateText);
     activeLaunchId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
     gameFrame.src = `/game/index.html?launch=${encodeURIComponent(activeLaunchId)}&retry=${reconnectAttempt}`;
-    startConnectionWatchdog();
+    // Do not start the socket timer until Godot has initialized and reported ready.
+    // The exported WASM/PCK can take longer than a socket handshake to download.
+    startGameBootWatchdog();
   }
 
   function scheduleGameReconnect(reason) {
     if (!gameLoaded || (!activeWallet && !spectatorMode) || appShell.hidden || reconnectTimer) return;
 
     clearConnectionWatchdog();
+    clearGameBootWatchdog();
     const delay = reconnectDelaysMs[Math.min(reconnectAttempt, reconnectDelaysMs.length - 1)];
     reconnectAttempt += 1;
     const seconds = Math.ceil(delay / 1000);
@@ -683,12 +693,32 @@
     loadGameFrame("retrying shared machine");
   }
 
+  function startGameBootWatchdog() {
+    clearGameBootWatchdog();
+    const launchId = activeLaunchId;
+    gameBootWatchdog = window.setTimeout(() => {
+      gameBootWatchdog = null;
+      if (!gameLoaded || socketOpen || appShell.hidden || launchId !== activeLaunchId) return;
+      // A failed WebGL initialization or slow download must not cause an endless reload loop.
+      setConnectionButton("RETRY NOW", false);
+      updateGameWalletLabel("game did not finish loading — retry available");
+      console.warn("Godot did not report ready within 120 seconds. Use Retry Now after checking browser WebGL support.");
+    }, gameBootTimeoutMs);
+  }
+
+  function clearGameBootWatchdog() {
+    if (gameBootWatchdog !== null) {
+      window.clearTimeout(gameBootWatchdog);
+      gameBootWatchdog = null;
+    }
+  }
+
   function startConnectionWatchdog() {
     clearConnectionWatchdog();
     connectionWatchdog = window.setTimeout(() => {
       connectionWatchdog = null;
       if (!socketOpen) scheduleGameReconnect("Shared machine connection timed out.");
-    }, 15000);
+    }, socketConnectionTimeoutMs);
   }
 
   function clearReconnectTimer() {
@@ -719,6 +749,7 @@
   function resetPlayer() {
     clearReconnectTimer();
     clearConnectionWatchdog();
+    clearGameBootWatchdog();
     reconnectAttempt = 0;
     socketOpen = false;
     activeWallet = "";
