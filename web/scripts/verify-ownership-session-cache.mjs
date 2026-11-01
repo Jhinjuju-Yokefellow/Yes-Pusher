@@ -27,7 +27,7 @@ assert.deepEqual(a,c);
 assert.equal((await cache.read(first)).id,sessionA);
 assert.equal(reads,1,"the whole session must reuse its login snapshot");
 
-await assert.rejects(cache.read({...first,wallet:walletB}),/ownership_session_mismatch/);
+assert.throws(()=>cache.read({...first,wallet:walletB}),/ownership_session_mismatch/);
 assert.equal(reads,1,"a different wallet cannot reuse this app session snapshot");
 const second = {wallet:walletA,sessionId:sessionB,expiresAtMs:time+600_000};
 assert.equal((await cache.read(second)).id,sessionB);
