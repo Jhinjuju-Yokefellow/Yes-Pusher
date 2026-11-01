@@ -193,7 +193,9 @@ export function createWorkshopService({
       if (holdings?.complete === false) throw new Error("V3 hourly NFT ownership is not yet available.");
       const bucketSlug = String(holdings?.bucketSlug || "").trim();
       if (bucketSlug) cachedBucketSlug = bucketSlug;
-      ownershipCache.set(wallet, { hour, data: holdings });
+      if (ownershipCache.get(wallet)?.hour === hour) {
+        ownershipCache.set(wallet, { hour, data: holdings });
+      }
       return holdings;
     })();
     ownershipCache.set(wallet, { hour, pending });
@@ -204,7 +206,9 @@ export function createWorkshopService({
       return await pending;
     } catch (error) {
       // Avoid a failed V3 read becoming a new request storm from active players.
-      ownershipCache.set(wallet, { hour, error, retryAt: Date.now() + RETRY_MS });
+      if (ownershipCache.get(wallet)?.hour === hour) {
+        ownershipCache.set(wallet, { hour, error, retryAt: Date.now() + RETRY_MS });
+      }
       throw error;
     }
   }
