@@ -155,17 +155,7 @@ func load_player_presentation(wallet: String) -> Dictionary:
 
 	var errors: Array[String] = []
 	var profile: Dictionary = {}
-	var profile_result := await _load_profile_card(normalized)
-	if bool(profile_result.get("ok", false)):
-		var card_value: Variant = profile_result.get("card", {})
-		if card_value is Dictionary:
-			profile = (card_value as Dictionary).duplicate(true)
-			if not profile.is_empty():
-				profile["display_name"] = String(profile.get("displayName", ""))
-				profile["avatar_url"] = String(profile.get("avatarUrl", ""))
-				profile["profile_picture_url"] = String(profile.get("avatarUrl", ""))
-	else:
-		errors.append(String(profile_result.get("error", "Profile Card could not be loaded.")))
+	# Yokefellow profile cards are disabled; never request the profile endpoint.
 
 	var toys: Array[Dictionary] = []
 	var holdings_result := await load_wallet_holdings(normalized)
@@ -562,34 +552,6 @@ func _family_display_name(family: String) -> String:
 		"pot_of_gold": return "Pot of Gold"
 		"treasure_chest": return "Treasure Chest"
 	return "Toy"
-
-func _load_profile_card(wallet: String) -> Dictionary:
-	var origin := _platform_origin()
-	if origin.is_empty():
-		return {"ok": false, "error": "Yokefellow Profile Card origin is not configured."}
-	var request := HTTPRequest.new()
-	add_child(request)
-	request.timeout = 20.0
-	var url := "%s/api/profile/card?walletAddress=%s" % [origin, wallet.uri_encode()]
-	var start_error := request.request(url, PackedStringArray(["Accept: application/json"]), HTTPClient.METHOD_GET, "")
-	if start_error != OK:
-		request.queue_free()
-		return {"ok": false, "error": "Profile Card request could not start: %s" % error_string(start_error)}
-	var completed: Array = await request.request_completed
-	request.queue_free()
-	var transport_result := int(completed[0])
-	var response_code := int(completed[1])
-	var response_bytes: PackedByteArray = completed[3]
-	var parsed: Variant = JSON.parse_string(response_bytes.get_string_from_utf8())
-	var parsed_body: Dictionary = parsed if parsed is Dictionary else {}
-	if transport_result != HTTPRequest.RESULT_SUCCESS:
-		return {"ok": false, "error": "Profile Card request failed before receiving a response."}
-	if response_code == 404:
-		return {"ok": true, "card": {}, "missing": true}
-	if response_code < 200 or response_code >= 300 or parsed_body.get("ok", true) == false:
-		return {"ok": false, "error": _error_message(parsed_body, "Profile Card returned HTTP %d." % response_code)}
-	var card_value: Variant = parsed_body.get("card", {})
-	return {"ok": true, "card": (card_value as Dictionary).duplicate(true) if card_value is Dictionary else {}}
 
 func _platform_origin() -> String:
 	var suffix := "/api/sdk/v1"

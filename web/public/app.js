@@ -37,7 +37,8 @@
   const workshopList = document.querySelector("#workshop-list");
   const skinList = document.querySelector("#skin-list");
 
-  const reconnectDelaysMs = [1000, 2000, 5000, 10000, 15000];
+  const reconnectDelaysMs = [2000];
+  const maxAutomaticReconnectAttempts = 1;
   const gameBootTimeoutMs = 120000;
   const socketConnectionTimeoutMs = 15000;
 
@@ -112,16 +113,6 @@
           ? "Shared machine connection closed."
           : "Shared machine connection failed.",
       );
-    }
-  });
-
-  window.addEventListener("online", () => {
-    if (gameLoaded && (activeWallet || spectatorMode) && !socketOpen) retryConnectionNow();
-  });
-
-  document.addEventListener("visibilitychange", () => {
-    if (!document.hidden && gameLoaded && (activeWallet || spectatorMode) && !socketOpen && !reconnectTimer) {
-      retryConnectionNow();
     }
   });
 
@@ -671,6 +662,13 @@
 
     clearConnectionWatchdog();
     clearGameBootWatchdog();
+    // Reloading Godot re-downloads large assets. Retry once, then wait for the player.
+    if (reconnectAttempt >= maxAutomaticReconnectAttempts) {
+      setConnectionButton("RETRY CONNECTION", false);
+      updateGameWalletLabel("connection unavailable — retry manually");
+      console.warn(`${reason} Automatic retries exhausted; use Retry Connection.`);
+      return;
+    }
     const delay = reconnectDelaysMs[Math.min(reconnectAttempt, reconnectDelaysMs.length - 1)];
     reconnectAttempt += 1;
     const seconds = Math.ceil(delay / 1000);
