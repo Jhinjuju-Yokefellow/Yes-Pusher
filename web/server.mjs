@@ -9,7 +9,6 @@ import { createAuthRateLimiter } from "./auth-rate-limit.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.join(__dirname, "public");
-const localDir = path.join(__dirname, ".local");
 const port = integerEnv("PORT", 8080, 1, 65535);
 const chainId = integerEnv("CHAIN_ID", 84532, 1, Number.MAX_SAFE_INTEGER);
 const sessionTtlSeconds = integerEnv("SESSION_TTL_SECONDS", 14_400, 300, 86_400);
@@ -19,7 +18,7 @@ const sessionSecret = (process.env.SESSION_SECRET || "").trim();
 const yokefellowOrigin = normalizeYokefellowOrigin(process.env.YF_API_BASE_URL || "");
 const configuredBucketId = (process.env.YF_BUCKET_ID || "").trim();
 const networkAppApiKey = (process.env.YF_NETWORK_APP_API_KEY || "").trim();
-const communityBuildStatePath = (process.env.YES_PUSHER_COMMUNITY_BUILD_STATE_PATH || path.join(localDir, "yd4-workshop-state.json")).trim();
+const networkOrigin = normalizeYokefellowOrigin(process.env.YF_NETWORK_API_URL || "");
 const communityBuildTarget = integerEnv("YES_PUSHER_MACHINE_BUILD_TARGET", 50, 1, 1_000_000);
 
 if (sessionSecret.length < 32 || sessionSecret === "REPLACE_WITH_A_LONG_RANDOM_SECRET") {
@@ -31,9 +30,9 @@ if (!/^wss?:\/\//i.test(gameServerUrl)) {
 
 const workshop = createWorkshopService({
   yokefellowOrigin,
+  networkOrigin,
   bucketId: configuredBucketId,
   networkAppApiKey,
-  statePath: communityBuildStatePath,
   buildTarget: communityBuildTarget,
 });
 
@@ -69,7 +68,7 @@ const server = http.createServer(async (request, response) => {
       return sendJson(response, 200, {
         ok: true,
         service: "yes-drop-wallet-session",
-        workshopReady: Boolean(yokefellowOrigin && configuredBucketId && networkAppApiKey.startsWith("yfk_")),
+        workshopReady: Boolean(yokefellowOrigin && networkOrigin && configuredBucketId && networkAppApiKey.startsWith("yfk_")),
         machineBuildTarget: workshop.buildTarget,
         nftExecution: "yokefellow_action_paths",
       });
