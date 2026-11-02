@@ -40,3 +40,14 @@ Keep both old and new stores intact until verification. If Coin Drop must roll b
 - Workshop records are App-attested. An authenticated App server reports that an action-path contribution was confirmed; Network fixes the points/rarity values and rejects duplicate reference IDs. A separate cross-check against the actual execution receipt should be completed before community progress triggers an economically meaningful reward.
 - Network's SQLite volume remains a single-writer dependency. It must be backed up and cannot simply be duplicated into independent Railway replicas.
 - Hourly blockchain ownership refresh and per-login ownership caching are separate work. This change neither starts blockchain reads nor modifies the existing V3 holdings projection.
+
+## Signed-session read cache
+
+- `/app/state` now passes the verified YES DROP session ID and expiry into the workshop service.
+- First state request per session fetches that wallet's projected holdings, workshop preference/summary, and account credit. Concurrent first requests coalesce.
+- Further state requests in that same authenticated session read the bounded in-memory snapshot; no hourly App-side refresh timer exists.
+- A new independently signed Coin Drop session gets its own snapshot. A successful craft or contribution invalidates the affected session snapshot because those confirmed actions can change NFT inventory. Equipping a skin updates the existing session cache in place.
+- A separate Network worker updates the authoritative ownership projection hourly. This cache does **not** read Base or write ownership records.
+- Cache entries expire at signed-session expiry and the per-process map is limited to 1,024 entries; server restarts simply cause a new cold read.
+- Account-credit changes initiated outside this service may remain stale until reauthentication or an explicit settlement-triggered invalidation; verify that part before production.
+- Simulated test: 100 users, two `/app/state` requests each -> exactly 100 projected-holdings reads, 100 Network workshop reads and 100 credit reads. Real database and RPC counts must be checked in staging.
