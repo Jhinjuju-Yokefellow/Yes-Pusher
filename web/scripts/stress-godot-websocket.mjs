@@ -24,6 +24,7 @@ function permittedTarget(raw, allowStaging) {
 async function singleSpectator(target, { connectTimeoutMs, holdMs, WebSocketImpl }) {
   const socket = new WebSocketImpl(target);
   const start = performance.now();
+  let intentionallyClosing = false;
   const record = { opened: false, connectionMs: null, messages: 0, unexpectedClose: false };
   await new Promise((resolve, reject) => {
     const deadline = setTimeout(() => reject(Error("websocket_connection_timeout")), connectTimeoutMs);
@@ -41,7 +42,7 @@ async function singleSpectator(target, { connectTimeoutMs, holdMs, WebSocketImpl
       if (!record.opened) {
         clearTimeout(deadline);
         reject(Error("websocket_closed_before_open"));
-      } else if (socket.readyState !== WebSocketImpl.CLOSING) {
+      } else if (!intentionallyClosing) {
         record.unexpectedClose = true;
       }
     });
@@ -52,7 +53,10 @@ async function singleSpectator(target, { connectTimeoutMs, holdMs, WebSocketImpl
   });
   await delay(holdMs);
   if (socket.readyState === WebSocketImpl.CLOSED) record.unexpectedClose = true;
-  if (socket.readyState === WebSocketImpl.OPEN) socket.close(1000, "staging spectator load");
+  if (socket.readyState === WebSocketImpl.OPEN) {
+    intentionallyClosing = true;
+    socket.close(1000, "staging spectator load");
+  }
   return record;
 }
 
