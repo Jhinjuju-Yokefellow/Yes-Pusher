@@ -80,3 +80,68 @@ test("missing Network configuration fails closed", () => {
     networkAppApiKey: key,
   }), /YF_NETWORK_API_URL/);
 });
+
+test("a verified session fetches ownership, workshop and credit once, then reuses its snapshot", async (t) => {
+  const previousFetch = globalThis.fetch;
+  const counts = { holdings: 0, state: 0, credit: 0 };
+  globalThis.fetch = async (url, options = {}) => {
+    const parsed = new URL(url);
+    if (parsed.pathname.includes("/holdings/")) {
+      counts.holdings++;
+      return response({ complete: true, holdings: [], classes: [], bucketSlug: "rainbows-end" });
+    }
+    if (parsed.pathname === "/v1/workshop/state") {
+      assert.equal(options.headers.Authorization, `Bearer ${key}`);
+      counts.state++;
+      return response({ ok: true, preference: { equippedSkin: "" },
+        community: { totalPoints: 0, contributionCount: 0 } });
+    }
+    if (parsed.pathname.endsWith("/credits")) {
+      counts.credit++;
+      return response({ credit: { amountYesRaw: "20" }, source: "network_base" });
+    }
+    throw new Error("unexpected " + parsed.pathname);
+  };
+  t.after(() => { globalThis.fetch = previousFetch; });
+  const workshop = service();
+  const expiry = Math.floor(Date.now() / 1000) + 3600;
+  const one = { sessionId: "session-one", expiresAt: expiry };
+  await Promise.all(Array.from({ length: 40 }, () => workshop.getState(walletA, one)));
+  assert.deepEqual(counts, { holdings: 1, state: 1, credit: 1 });
+  await workshop.getState(walletA, one);
+  assert.deepEqual(counts, { holdings: 1, state: 1, credit: 1 });
+  await workshop.getState(walletA, { sessionId: "session-two", expiresAt: expiry });
+  assert.deepEqual(counts, { holdings: 2, state: 2, credit: 2 });
+});
+
+test("100 independent authenticated sessions make 100 cold reads, not 200 repeated reads", async (t) => {
+  const previousFetch = globalThis.fetch;
+  const counts = { holdings: 0, state: 0, credit: 0 };
+  globalThis.fetch = async (url) => {
+    const pathname = new URL(url).pathname;
+    if (pathname.includes("/holdings/")) {
+      counts.holdings++;
+      return response({ complete: true, holdings: [], classes: [], bucketSlug: "rainbows-end" });
+    }
+    if (pathname === "/v1/workshop/state") {
+      counts.state++;
+      return response({ ok: true, preference: { equippedSkin: "" },
+        community: { totalPoints: 0, contributionCount: 0 } });
+    }
+    if (pathname.endsWith("/credits")) {
+      counts.credit++;
+      return response({ credit: { amountYesRaw: "10" } });
+    }
+    throw new Error("unexpected " + pathname);
+  };
+  t.after(() => { globalThis.fetch = previousFetch; });
+  const workshop = service();
+  const expiry = Math.floor(Date.now() / 1000) + 3600;
+  const sessions = Array.from({ length: 100 }, (_, i) => ({
+    wallet: "0x" + (i + 1).toString(16).padStart(40, "0"),
+    session: { sessionId: "simulated-" + i, expiresAt: expiry },
+  }));
+  await Promise.all(sessions.map(({ wallet, session }) => workshop.getState(wallet, session)));
+  await Promise.all(sessions.map(({ wallet, session }) => workshop.getState(wallet, session)));
+  assert.deepEqual(counts, { holdings: 100, state: 100, credit: 100 });
+});
