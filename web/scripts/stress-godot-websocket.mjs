@@ -1,4 +1,5 @@
 import { fileURLToPath } from "node:url";
+import { resolve } from "node:path";
 
 /**
  * Godot WebSocket spectator transport load harness.
@@ -91,7 +92,7 @@ export async function runWebSocketLoad({
   };
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {
   const args = process.argv.slice(2);
   function option(flag, fallback) {
     const pos = args.indexOf(flag);
