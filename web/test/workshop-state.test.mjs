@@ -1,57 +1,82 @@
 import assert from "node:assert/strict";
-import { promises as fs } from "node:fs";
-import os from "node:os";
-import path from "node:path";
 import test from "node:test";
 import { createWorkshopService } from "../yd4-workshop.mjs";
 
 const walletA = "0x0000000000000000000000000000000000000001";
 const walletB = "0x0000000000000000000000000000000000000002";
-
-function workshop(statePath) {
+const key = "yfk_test";
+function service() {
   return createWorkshopService({
-    yokefellowOrigin: "https://example.test",
+    yokefellowOrigin: "https://v3.example.test",
+    networkOrigin: "https://network.example.test",
     bucketId: "test-bucket",
-    networkAppApiKey: "yfk_test",
-    statePath,
+    networkAppApiKey: key,
   });
 }
+const response = (body, status = 200) => ({ ok: status < 400, status, json: async () => body });
 
-test("simultaneous player updates preserve both preferences", async (t) => {
-  const temp = await fs.mkdtemp(path.join(os.tmpdir(), "yd4-workshop-test-"));
-  const statePath = path.join(temp, "state.json");
+test("two wallets use authenticated Network storage, not local JSON state", async (t) => {
   const previousFetch = globalThis.fetch;
-  globalThis.fetch = async () => ({
-    ok: true,
-    status: 200,
-    json: async () => ({ complete: true, holdings: [], classes: [], bucketSlug: "" }),
-  });
-  t.after(async () => {
-    globalThis.fetch = previousFetch;
-    await fs.rm(temp, { recursive: true, force: true });
-  });
-
-  const service = workshop(statePath);
-  await Promise.all([service.equipSkin(walletA, ""), service.equipSkin(walletB, "")]);
-  const saved = JSON.parse(await fs.readFile(statePath, "utf8"));
-  assert.ok(saved.preferences[walletA.toLowerCase()]);
-  assert.ok(saved.preferences[walletB.toLowerCase()]);
+  const preferences = new Map();
+  let networkReads = 0, networkWrites = 0;
+  globalThis.fetch = async (url, options = {}) => {
+    const requestUrl = new URL(url);
+    if (requestUrl.host === "v3.example.test") {
+      return response({ complete: true, holdings: [], classes: [], bucketSlug: "" });
+    }
+    assert.equal(requestUrl.host, "network.example.test");
+    assert.equal(options.headers.Authorization, `Bearer ${key}`);
+    if (requestUrl.pathname === "/v1/workshop/state") {
+      networkReads++;
+      const owner = requestUrl.searchParams.get("wallet");
+      return response({
+        ok: true,
+        preference: { equippedSkin: preferences.get(owner) || "" },
+        community: { totalPoints: 0, contributionCount: 0 },
+      });
+    }
+    if (requestUrl.pathname === "/v1/workshop/preference") {
+      networkWrites++;
+      const body = JSON.parse(options.body);
+      preferences.set(body.wallet, body.equippedSkin);
+      return response({ ok: true, preference: body });
+    }
+    throw new Error("Unexpected request: " + requestUrl.pathname);
+  };
+  t.after(() => { globalThis.fetch = previousFetch; });
+  const workshop = service();
+  await Promise.all([workshop.equipSkin(walletA, ""), workshop.equipSkin(walletB, "")]);
+  assert.equal(networkReads, 2);
+  assert.equal(networkWrites, 2);
+  assert.equal(preferences.size, 2);
 });
 
-test("corrupt existing state is not silently treated as empty", async (t) => {
-  const temp = await fs.mkdtemp(path.join(os.tmpdir(), "yd4-workshop-test-"));
-  const statePath = path.join(temp, "state.json");
-  await fs.writeFile(statePath, "{invalid-json", "utf8");
+test("public community requests coalesce to one protected Network read", async (t) => {
   const previousFetch = globalThis.fetch;
-  globalThis.fetch = async () => ({
-    ok: true,
-    status: 200,
-    json: async () => ({ complete: true, holdings: [], classes: [], bucketSlug: "" }),
-  });
-  t.after(async () => {
-    globalThis.fetch = previousFetch;
-    await fs.rm(temp, { recursive: true, force: true });
-  });
-  await assert.rejects(workshop(statePath).equipSkin(walletA, ""), SyntaxError);
-  assert.equal(await fs.readFile(statePath, "utf8"), "{invalid-json");
+  let reads = 0;
+  globalThis.fetch = async (url, options = {}) => {
+    assert.equal(new URL(url).pathname, "/v1/workshop/community");
+    assert.equal(options.headers.Authorization, `Bearer ${key}`);
+    reads++;
+    return response({ ok: true, community: { totalPoints: 7, contributionCount: 2 } });
+  };
+  t.after(() => { globalThis.fetch = previousFetch; });
+  const workshop = service();
+  const [one, two, three] = await Promise.all([
+    workshop.getCommunity(), workshop.getCommunity(), workshop.getCommunity(),
+  ]);
+  assert.equal(reads, 1);
+  assert.deepEqual(one, two);
+  assert.deepEqual(two, three);
+  assert.equal(one.totalPoints, 7);
+  await workshop.getCommunity();
+  assert.equal(reads, 1);
+});
+
+test("missing Network configuration fails closed", () => {
+  assert.throws(() => createWorkshopService({
+    yokefellowOrigin: "https://v3.example.test",
+    bucketId: "test-bucket",
+    networkAppApiKey: key,
+  }), /YF_NETWORK_API_URL/);
 });
