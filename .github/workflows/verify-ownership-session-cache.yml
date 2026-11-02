@@ -1,0 +1,37 @@
+name: Verify Coin Drop Ownership Session Cache
+
+on:
+  pull_request:
+    paths:
+      - "web/server.mjs"
+      - "scripts/shared_world.gd"
+      - "web/yd4-workshop.mjs"
+      - "web/ownership-session-cache.mjs"
+      - "web/public/app.js"
+      - "web/public/index.html"
+      - "web/public/game/index.html"
+      - "web/scripts/verify-coin-drop-login-and-connection.mjs"
+      - "web/scripts/verify-ownership-session-cache.mjs"
+      - "web/scripts/stress-godot-websocket.mjs"
+      - "web/scripts/verify-godot-websocket-load-harness.mjs"
+      - "web/package.json"
+      - ".github/workflows/verify-ownership-session-cache.yml"
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - name: Verify ownership cache, login and Godot connection
+        run: npm run check

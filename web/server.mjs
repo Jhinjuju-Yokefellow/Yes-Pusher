@@ -94,32 +94,32 @@ const server = http.createServer(async (request, response) => {
     }
     if (request.method === "GET" && requestUrl.pathname === "/app/state") {
       const session = requirePlayerSession(request);
-      return sendJson(response, 200, await workshop.getState(session.wallet));
+      return sendJson(response, 200, await workshop.getState(session.wallet, session));
     }
     if (request.method === "POST" && requestUrl.pathname === "/app/equip-skin") {
       const session = requirePlayerSession(request);
       const body = await readJson(request);
-      return sendJson(response, 200, await workshop.equipSkin(session.wallet, body.family || ""));
+      return sendJson(response, 200, await workshop.equipSkin(session.wallet, body.family || "", session));
     }
     if (request.method === "POST" && requestUrl.pathname === "/app/funding/prepare") {
       const session = requirePlayerSession(request);
       const body = await readJson(request);
-      return sendJson(response, 200, await workshop.prepareFunding(session.wallet, body));
+      return sendJson(response, 200, await workshop.prepareFunding(session.wallet, body, session));
     }
     if (request.method === "POST" && requestUrl.pathname === "/app/funding/status") {
       const session = requirePlayerSession(request);
       const body = await readJson(request);
-      return sendJson(response, 200, await workshop.fundingStatus(session.wallet, body));
+      return sendJson(response, 200, await workshop.fundingStatus(session.wallet, body, session));
     }
     if (request.method === "POST" && requestUrl.pathname === "/app/craft") {
       const session = requirePlayerSession(request);
       const body = await readJson(request);
-      return sendJson(response, 200, await workshop.craft(session.wallet, body));
+      return sendJson(response, 200, await workshop.craft(session.wallet, body, session));
     }
     if (request.method === "POST" && requestUrl.pathname === "/app/contribute") {
       const session = requirePlayerSession(request);
       const body = await readJson(request);
-      return sendJson(response, 200, await workshop.contribute(session.wallet, body));
+      return sendJson(response, 200, await workshop.contribute(session.wallet, body, session));
     }
     if (request.method !== "GET" && request.method !== "HEAD") {
       return sendJson(response, 405, { ok: false, error: "Method not allowed." });
@@ -232,6 +232,11 @@ async function handleVerify(request, response) {
     sessionId: crypto.randomUUID(),
   };
   const sessionToken = signSession(payload);
+  // One async Yokefellow ownership read for this signed Coin Drop session.
+  // Never delay the wallet login response or request another signature.
+  void workshop.primeOwnershipSession(payload).catch((error) => {
+    console.warn("[ownership-session] snapshot unavailable for this login", String(error?.message || error).slice(0, 130));
+  });
   return sendJson(response, 200, {
     ok: true,
     wallet,
@@ -250,7 +255,7 @@ async function handleSessionVerify(request, response) {
   }
   const token = String(body.sessionToken || "").trim();
   const payload = verifySession(token);
-  if (!payload || !(["yes-drop", "yes-pusher", "rainbows-end"].includes(payload.app)) || payload.wallet !== wallet || payload.expiresAt <= Math.floor(Date.now() / 1000)) {
+  if (!payload || payload.app !== "yes-drop" || payload.wallet !== wallet || payload.expiresAt <= Math.floor(Date.now() / 1000)) {
     return sendJson(response, 401, { ok: false, error: "The wallet session is invalid or expired." });
   }
   return sendJson(response, 200, { ok: true, wallet: payload.wallet, expiresAt: payload.expiresAt });
@@ -261,7 +266,7 @@ function requirePlayerSession(request) {
   const token = authorization.replace(/^Bearer\s+/i, "").trim();
   const payload = verifySession(token);
   const now = Math.floor(Date.now() / 1000);
-  if (!payload || !(["yes-drop", "yes-pusher", "rainbows-end"].includes(payload.app)) || !payload.wallet || payload.expiresAt <= now) {
+  if (!payload || payload.app !== "yes-drop" || !payload.wallet || payload.expiresAt <= now) {
     const error = new Error("The Rainbow's End wallet session is invalid or expired.");
     error.statusCode = 401;
     throw error;

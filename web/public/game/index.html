@@ -160,6 +160,10 @@ const engine = new Engine(GODOT_CONFIG);
 		}
 		setStatusMode('notice');
 		initializing = false;
+		const launch = new URLSearchParams(window.location.search).get('launch') || '';
+		if (window.parent !== window) {
+			window.parent.postMessage({ type: 'yes-pusher-game-load-failed', launch }, window.location.origin);
+		}
 	}
 
 	const missing = Engine.getMissingFeatures({

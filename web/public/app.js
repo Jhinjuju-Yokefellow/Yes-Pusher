@@ -37,15 +37,15 @@
   const workshopList = document.querySelector("#workshop-list");
   const skinList = document.querySelector("#skin-list");
 
-  const reconnectDelaysMs = [1000, 2000, 5000, 10000, 15000];
-
   let config = null;
   let activeWallet = "";
   let sessionToken = "";
   let playerState = null;
-  let reconnectTimer = null;
   let connectionWatchdog = null;
-  let reconnectAttempt = 0;
+  let gameLoadPromise = null;
+  let loginInFlight = false;
+  let loginSequence = 0;
+  let initialStateLoadStarted = false;
   let socketOpen = false;
   let activeLaunchId = "";
   let spectatorMode = false;
@@ -59,7 +59,9 @@
   retryConnectionButton?.addEventListener("click", retryConnectionNow);
   homePlay?.addEventListener("click", () => switchView("play"));
   homeWorkshop?.addEventListener("click", () => switchView("workshop"));
-  fundingRefresh?.addEventListener("click", () => refreshPlayerState({ announce: false }));
+  fundingRefresh?.addEventListener("click", () => refreshPlayerState({ announce: false }).catch((error) => {
+    setAppMessage(error?.message || "Collection refresh failed.", "error");
+  }));
   depositButton?.addEventListener("click", () => performFunding("deposit", depositButton, depositAmount));
   withdrawButton?.addEventListener("click", () => performFunding("withdrawal", withdrawButton, withdrawAmount));
   nav?.addEventListener("click", (event) => {
@@ -77,6 +79,13 @@
       return;
     }
 
+    if (event.data?.type === "yes-pusher-game-load-failed") {
+      if (String(event.data.launch || "") === activeLaunchId) {
+        showConnectionFailure("Godot failed to load.");
+      }
+      return;
+    }
+
     if (event.data?.type !== "yes-pusher-socket-state") return;
     if (String(event.data.launch || "") !== activeLaunchId) return;
 
@@ -91,8 +100,6 @@
 
     if (state === "open") {
       socketOpen = true;
-      reconnectAttempt = 0;
-      clearReconnectTimer();
       clearConnectionWatchdog();
       setConnectionButton("CONNECTED", true);
       updateGameWalletLabel("shared machine connected");
@@ -101,21 +108,11 @@
 
     if (state === "error" || state === "closed") {
       socketOpen = false;
-      scheduleGameReconnect(
+      showConnectionFailure(
         state === "closed"
           ? "Shared machine connection closed."
           : "Shared machine connection failed.",
       );
-    }
-  });
-
-  window.addEventListener("online", () => {
-    if (gameLoaded && (activeWallet || spectatorMode) && !socketOpen) retryConnectionNow();
-  });
-
-  document.addEventListener("visibilitychange", () => {
-    if (!document.hidden && gameLoaded && (activeWallet || spectatorMode) && !socketOpen && !reconnectTimer) {
-      retryConnectionNow();
     }
   });
 
@@ -125,12 +122,13 @@
       const next = String(accounts?.[0] || "").toLowerCase();
       if (!next || next !== activeWallet.toLowerCase()) resetPlayer();
     });
-    window.ethereum.on("chainChanged", () => {
-      if (activeWallet) resetPlayer();
-    });
   }
 
   async function connectWallet() {
+    // A pending MetaMask prompt must never trigger a second sign-in attempt.
+    if (loginInFlight) return;
+    loginInFlight = true;
+    const sequence = ++loginSequence;
     spectatorMode = false;
     setBusy(true, "Opening your wallet…");
     try {
@@ -143,8 +141,8 @@
       const wallet = String(accounts?.[0] || "").toLowerCase();
       if (!/^0x[a-f0-9]{40}$/.test(wallet)) throw new Error("The wallet did not return a valid address.");
 
-      await ensureChain(config.chainId);
-      setStatus("Sign the login message in your wallet. This is not a transaction.");
+      // Off-chain login does not require switching chains. On-chain actions still do.
+      setStatus("Sign one YES DROP login message. This is not a transaction.");
       const challenge = await postJson("/auth/challenge", { wallet });
       const signature = await window.ethereum.request({
         method: "personal_sign",
@@ -155,10 +153,16 @@
         challengeId: challenge.challengeId,
         signature,
       });
+      if (sequence !== loginSequence) return;
+      const currentAccounts = await window.ethereum.request({ method: "eth_accounts" });
+      if (String(currentAccounts?.[0] || "").toLowerCase() !== wallet) {
+        throw new Error("The wallet account changed during sign-in. Connect again.");
+      }
+      if (sequence !== loginSequence) return;
 
       activeWallet = verified.wallet;
       sessionToken = verified.sessionToken;
-      reconnectAttempt = 0;
+      initialStateLoadStarted = false;
       socketOpen = false;
       gameLoaded = false;
       login.hidden = true;
@@ -167,30 +171,34 @@
       setBusy(false, "");
       await switchView("home");
     } catch (error) {
+      if (sequence !== loginSequence) return;
       if (activeWallet && sessionToken && !appShell.hidden) {
         setAppMessage("Unavailable", "");
       } else {
         setBusy(false, error?.message || "Wallet login failed.");
       }
+    } finally {
+      if (sequence === loginSequence) loginInFlight = false;
     }
   }
 
   async function watchSharedMachine() {
+    if (loginInFlight) return;
     try {
       config = await getJson("/config");
       if (!config.gameReady) throw new Error("The Godot web client has not been exported yet.");
       activeWallet = "";
       sessionToken = "";
       playerState = null;
+      initialStateLoadStarted = false;
       spectatorMode = true;
-      reconnectAttempt = 0;
       socketOpen = false;
       gameLoaded = false;
       login.hidden = true;
       appShell.hidden = false;
       walletLabel.textContent = "Spectator";
       setAppMessage("", "");
-      switchView("play");
+      await switchView("play");
     } catch (error) {
       setBusy(false, error?.message || "Shared machine could not be opened.");
     }
@@ -213,7 +221,10 @@
       await ensureGameLoaded();
       return;
     }
-    if (!spectatorMode && ["home", "workshop", "skins"].includes(next)) {
+    // A view change is local UI, not a reason to read Network again.
+    // Failed initial loads are also one-shot until an explicit refresh.
+    if (!spectatorMode && !initialStateLoadStarted && ["home", "workshop", "skins"].includes(next)) {
+      initialStateLoadStarted = true;
       await refreshPlayerState({ announce: false }).catch(() => {
         setAppMessage("Unavailable", "");
       });
@@ -520,7 +531,6 @@
     const family = button.dataset.family || "";
     const fromTier = button.dataset.tier || "";
     const targetTier = fromTier === "small" ? "medium" : "large";
-    const before = toyCounts(playerState, family);
     const operationKey = `craft:${activeWallet}:${family}:${fromTier}`;
     const referenceId = operationReference(operationKey, "craft");
     setActionBusy(button, true, "CRAFTING…");
@@ -528,16 +538,11 @@
     try {
       await appPost("/app/craft", { family, fromTier, referenceId });
       clearOperationReference(operationKey);
-      const indexed = await waitForOwnershipChange((state) => {
-        const after = toyCounts(state, family);
-        return after[fromTier] <= Math.max(0, before[fromTier] - 3)
-          && after[targetTier] >= before[targetTier] + 1;
-      });
+      // Ownership is frozen to this app login: no repeated SDK reads or chain polling.
+      await refreshPlayerState().catch(() => null);
       setAppMessage(
-        indexed
-          ? `${targetTier.toUpperCase()} ${familyLabel(family)} crafted. Three ${fromTier.toUpperCase()} Toys were consumed and Yokefellow now shows the new Toy.`
-          : `Craft confirmed. Yokefellow ownership indexing is still catching up; the Workshop will refresh again when reopened.`,
-        indexed ? "success" : "",
+        `Craft action returned for ${targetTier.toUpperCase()} ${familyLabel(family)}. Your ownership snapshot updates on a new sign-in after Yokefellow's database synchronization.`,
+        "success",
       );
     } catch (error) {
       setAppMessage(`${error?.message || "Craft failed."} Retry uses the same craft reference.`, "error");
@@ -550,7 +555,6 @@
     const family = button.dataset.family || "";
     const toy = playerState?.toys?.find((item) => item.family === family);
     const points = toy?.buildPoints || 0;
-    const before = toyCounts(playerState, family);
     if (!window.confirm(`Permanently consume one Large ${familyLabel(family)} Toy for +${points} community build point${points === 1 ? "" : "s"}? This cannot be undone.`)) return;
 
     const operationKey = `contribute:${activeWallet}:${family}`;
@@ -560,13 +564,10 @@
     try {
       const result = await appPost("/app/contribute", { family, referenceId });
       clearOperationReference(operationKey);
-      const indexed = await waitForOwnershipChange((state) => {
-        const after = toyCounts(state, family);
-        return after.large <= Math.max(0, before.large - 1);
-      });
+      await refreshPlayerState().catch(() => null);
       const community = result.community;
       setAppMessage(
-        `Large ${familyLabel(family)} contributed for +${points}. Community build is ${community.progressPoints} / ${community.target} toward Machine #${community.nextMachineNumber}.${indexed ? " Yokefellow ownership now reflects the burn." : " Ownership indexing is still catching up."}`,
+        `Large ${familyLabel(family)} contribution recorded for +${points}. Community build is ${community.progressPoints} / ${community.target} toward Machine #${community.nextMachineNumber}. Your ownership snapshot updates on your next sign-in.`,
         "success",
       );
     } catch (error) {
@@ -576,34 +577,20 @@
     }
   }
 
-  async function waitForOwnershipChange(predicate) {
-    for (let attempt = 0; attempt < 15; attempt += 1) {
-      await wait(attempt === 0 ? 900 : 2000);
-      try {
-        const state = await refreshPlayerState();
-        if (state && predicate(state)) return true;
-      } catch {
-        // Keep polling: the onchain action may be confirmed before the ownership index catches up.
-      }
-    }
-    await refreshPlayerState().catch(() => null);
-    return false;
-  }
-
-  function toyCounts(state, family) {
-    const toy = state?.toys?.find((item) => item.family === family);
-    return {
-      small: safeQuantity(toy?.tiers?.small?.quantity),
-      medium: safeQuantity(toy?.tiers?.medium?.quantity),
-      large: safeQuantity(toy?.tiers?.large?.quantity),
-    };
-  }
-
   async function ensureGameLoaded() {
-    if (gameLoaded && gameFrame.src && !gameFrame.src.endsWith("about:blank")) return;
-    if (!config) config = await getJson("/config");
-    updateBootstrap();
-    loadGameFrame("loading shared machine");
+    if (gameLoaded) return;
+    if (gameLoadPromise) return gameLoadPromise;
+    gameLoadPromise = (async () => {
+      if (!config) config = await getJson("/config");
+      if (gameLoaded || (!activeWallet && !spectatorMode)) return;
+      updateBootstrap();
+      loadGameFrame("loading game");
+    })();
+    try {
+      await gameLoadPromise;
+    } finally {
+      gameLoadPromise = null;
+    }
   }
 
   function updateBootstrap() {
@@ -619,7 +606,6 @@
   function reloadGameForLoadout() {
     if (!gameLoaded) return;
     updateBootstrap();
-    reconnectAttempt = 0;
     loadGameFrame("applying equipped Coin Skin");
   }
 
@@ -646,56 +632,37 @@
 
   function loadGameFrame(stateText) {
     if (!activeWallet && !spectatorMode) return;
-    clearReconnectTimer();
     clearConnectionWatchdog();
     socketOpen = false;
     gameLoaded = true;
     setConnectionButton("CONNECTING…", true);
     updateGameWalletLabel(stateText);
     activeLaunchId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    gameFrame.src = `/game/index.html?launch=${encodeURIComponent(activeLaunchId)}&retry=${reconnectAttempt}`;
-    startConnectionWatchdog();
-  }
-
-  function scheduleGameReconnect(reason) {
-    if (!gameLoaded || (!activeWallet && !spectatorMode) || appShell.hidden || reconnectTimer) return;
-
-    clearConnectionWatchdog();
-    const delay = reconnectDelaysMs[Math.min(reconnectAttempt, reconnectDelaysMs.length - 1)];
-    reconnectAttempt += 1;
-    const seconds = Math.ceil(delay / 1000);
-
-    setConnectionButton("RETRY NOW", false);
-    updateGameWalletLabel(`reconnecting in ${seconds}s`);
-
-    reconnectTimer = window.setTimeout(() => {
-      reconnectTimer = null;
-      loadGameFrame("retrying shared machine");
-    }, delay);
-
-    console.warn(`${reason} Retrying in ${seconds} second${seconds === 1 ? "" : "s"}.`);
+    gameFrame.src = `/game/index.html?launch=${encodeURIComponent(activeLaunchId)}`;
+    // Godot must download and compile its WASM game before opening a socket.
+    // An automatic iframe reload here aborts that work and loops forever.
+    startConnectionWatchdog(180000, "Game loading timed out.");
   }
 
   function retryConnectionNow() {
-    if (!activeWallet && !spectatorMode) return;
-    clearReconnectTimer();
-    reconnectAttempt = 0;
-    loadGameFrame("retrying shared machine");
+    if ((!activeWallet && !spectatorMode) || !gameLoaded || socketOpen) return;
+    loadGameFrame("reloading game at your request");
   }
 
-  function startConnectionWatchdog() {
+  function startConnectionWatchdog(timeoutMs = 30000, reason = "Shared machine did not connect.") {
     clearConnectionWatchdog();
     connectionWatchdog = window.setTimeout(() => {
       connectionWatchdog = null;
-      if (!socketOpen) scheduleGameReconnect("Shared machine connection timed out.");
-    }, 15000);
+      if (!socketOpen) showConnectionFailure(reason);
+    }, timeoutMs);
   }
 
-  function clearReconnectTimer() {
-    if (reconnectTimer !== null) {
-      window.clearTimeout(reconnectTimer);
-      reconnectTimer = null;
-    }
+  function showConnectionFailure(reason) {
+    if (!gameLoaded || socketOpen) return;
+    clearConnectionWatchdog();
+    setConnectionButton("RETRY CONNECTION", false);
+    updateGameWalletLabel(`${reason} Retry when ready.`);
+    console.warn(reason);
   }
 
   function clearConnectionWatchdog() {
@@ -717,9 +684,9 @@
   }
 
   function resetPlayer() {
-    clearReconnectTimer();
+    ++loginSequence;
+    loginInFlight = false;
     clearConnectionWatchdog();
-    reconnectAttempt = 0;
     socketOpen = false;
     activeWallet = "";
     sessionToken = "";
@@ -727,6 +694,7 @@
     spectatorMode = false;
     gameLoaded = false;
     playerState = null;
+    initialStateLoadStarted = false;
     window.YES_PUSHER_BOOTSTRAP = null;
     gameFrame.src = "about:blank";
     appShell.hidden = true;
@@ -825,6 +793,7 @@
 
   function setBusy(busy, message) {
     connectButton.disabled = busy;
+    if (watchButton) watchButton.disabled = busy;
     connectButton.textContent = busy ? "CONNECTING…" : "CONNECT WALLET";
     setStatus(message);
   }
