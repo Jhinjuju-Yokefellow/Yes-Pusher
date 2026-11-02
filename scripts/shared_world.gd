@@ -473,6 +473,11 @@ func _report_browser_socket_state(state: String) -> void:
 	)
 
 func _on_peer_connected(peer_id: int) -> void:
+	# WebSocketMultiplayerPeer.create_server() has no max-client argument.
+	# Enforce the same spectator/participant ceiling as the ENet server.
+	if multiplayer.get_peers().size() > DEFAULT_MAX_CLIENTS:
+		multiplayer.multiplayer_peer.disconnect_peer(peer_id)
+		return
 	_players[str(peer_id)] = {"peer_id": peer_id, "wallet": "", "verified": false, "skin_family": "", "lifetime_yes": 0, "lifetime_coins_paid_out": 0}
 	_broadcast_queue_state()
 
