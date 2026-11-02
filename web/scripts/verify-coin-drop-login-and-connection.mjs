@@ -147,6 +147,7 @@ assert.equal(login.element("#app-shell").hidden,false);
 assert.equal(login.element("#login").hidden,true);
 assert.equal(login.requests.filter((method)=>method==="personal_sign").length,1);
 assert.equal(login.element("#watch").disabled,false);
+assert.equal(login.listeners.has("ethereum:chainChanged"),false,"Chain changes must not invalidate a signed app session");
 await login.click("home-workshop");
 assert.equal(login.routes.filter((path)=>path==="/app/state").length,1,"View changes must not retry even failed Network state reads");
 login.click("funding-refresh");

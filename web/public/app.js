@@ -122,9 +122,6 @@
       const next = String(accounts?.[0] || "").toLowerCase();
       if (!next || next !== activeWallet.toLowerCase()) resetPlayer();
     });
-    window.ethereum.on("chainChanged", () => {
-      if (activeWallet) resetPlayer();
-    });
   }
 
   async function connectWallet() {
