@@ -255,7 +255,7 @@ async function handleSessionVerify(request, response) {
   }
   const token = String(body.sessionToken || "").trim();
   const payload = verifySession(token);
-  if (!payload || !(["yes-drop", "yes-pusher", "rainbows-end"].includes(payload.app)) || payload.wallet !== wallet || payload.expiresAt <= Math.floor(Date.now() / 1000)) {
+  if (!payload || payload.app !== "yes-drop" || payload.wallet !== wallet || payload.expiresAt <= Math.floor(Date.now() / 1000)) {
     return sendJson(response, 401, { ok: false, error: "The wallet session is invalid or expired." });
   }
   return sendJson(response, 200, { ok: true, wallet: payload.wallet, expiresAt: payload.expiresAt });
@@ -266,7 +266,7 @@ function requirePlayerSession(request) {
   const token = authorization.replace(/^Bearer\s+/i, "").trim();
   const payload = verifySession(token);
   const now = Math.floor(Date.now() / 1000);
-  if (!payload || !(["yes-drop", "yes-pusher", "rainbows-end"].includes(payload.app)) || !payload.wallet || payload.expiresAt <= now) {
+  if (!payload || payload.app !== "yes-drop" || !payload.wallet || payload.expiresAt <= now) {
     const error = new Error("The Rainbow's End wallet session is invalid or expired.");
     error.statusCode = 401;
     throw error;
