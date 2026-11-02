@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - "web/server.mjs"
+      - "scripts/shared_world.gd"
       - "web/yd4-workshop.mjs"
       - "web/ownership-session-cache.mjs"
       - "web/public/app.js"
