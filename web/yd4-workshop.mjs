@@ -1,6 +1,3 @@
-import crypto from "node:crypto";
-import fs from "node:fs/promises";
-import path from "node:path";
 import { getAddress } from "ethers";
 
 const FAMILIES = [
@@ -87,32 +84,6 @@ function presentationForHolding(holding) {
   return holding?.presentation && typeof holding.presentation === "object" ? holding.presentation : {};
 }
 
-async function readJsonFile(filePath) {
-  let text;
-  try {
-    text = await fs.readFile(filePath, "utf8");
-  } catch (error) {
-    if (error?.code === "ENOENT") return {};
-    throw error; // Never overwrite an existing state file after a read failure.
-  }
-  const parsed = JSON.parse(text); // Corruption must fail visibly, not reset all progress.
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error("Workshop state file has an invalid format.");
-  }
-  return parsed;
-}
-
-async function writeJsonFile(filePath, value) {
-  await fs.mkdir(path.dirname(filePath), { recursive: true });
-  const temp = `${filePath}.${crypto.randomUUID()}.tmp`;
-  try {
-    await fs.writeFile(temp, `${JSON.stringify(value, null, 2)}\n`, "utf8");
-    await fs.rename(temp, filePath);
-  } finally {
-    await fs.rm(temp, { force: true }).catch(() => {});
-  }
-}
-
 async function jsonRequest(url, { method = "GET", networkAppApiKey = "", idempotencyKey = "", body = null } = {}) {
   const headers = { Accept: "application/json" };
   if (networkAppApiKey) headers["Authorization"] = `Bearer ${networkAppApiKey}`;
@@ -141,15 +112,18 @@ async function jsonRequest(url, { method = "GET", networkAppApiKey = "", idempot
 
 export function createWorkshopService({
   yokefellowOrigin,
+  networkOrigin,
   bucketId,
   networkAppApiKey,
-  statePath,
   buildTarget = 50,
 }) {
   const normalizedOrigin = String(yokefellowOrigin || "").replace(/\/+$/, "");
+  const normalizedNetworkOrigin = String(networkOrigin || "").replace(/\/+$/, "");
   const normalizedBucketId = String(bucketId || "").trim();
   const normalizedAppKey = String(networkAppApiKey || "").trim();
-  const normalizedStatePath = statePath || path.join(process.cwd(), ".local", "yd4-workshop-state.json");
+  if (!/^https?:\/\//.test(normalizedNetworkOrigin) || !normalizedAppKey.startsWith("yfk_")) {
+    throw new Error("YF_NETWORK_API_URL and the Network App key are required for durable workshop state.");
+  }
   const target = Math.max(1, safeInteger(buildTarget, 50));
   let cachedBucketSlug = "";
   // Ownership is deliberately an hourly read model, not a per-visitor DB query.
@@ -159,31 +133,26 @@ export function createWorkshopService({
   const HOUR_MS = 60 * 60 * 1000;
   const RETRY_MS = 60 * 1000;
 
-  async function readStateFile() {
-    const state = await readJsonFile(normalizedStatePath);
-    return {
-      version: 2,
-      preferences: state.preferences && typeof state.preferences === "object" ? state.preferences : {},
-      contributions: state.contributions && typeof state.contributions === "object" ? state.contributions : {},
-    };
-  }
-
-  async function saveStateFile(state) {
-    await writeJsonFile(normalizedStatePath, state);
-  }
-
-  // Serialize read/modify/write operations on this web instance. Durable shared
-  // storage is still required before scaling the web service to >1 instance.
-  let stateWriteTail = Promise.resolve();
-  function mutateState(updater) {
-    const operation = stateWriteTail.then(async () => {
-      const state = await readStateFile();
-      const { changed, result } = await updater(state);
-      if (changed) await saveStateFile(state);
-      return result;
+  function workshopRequest(pathname, options = {}) {
+    return jsonRequest(`${normalizedNetworkOrigin}/v1/workshop${pathname}`, {
+      networkAppApiKey: normalizedAppKey,
+      ...options,
     });
-    stateWriteTail = operation.catch(() => {});
-    return operation;
+  }
+  let communityCache = null;
+  let communityPending = null;
+  const COMMUNITY_CACHE_MS = 30_000;
+  function cacheCommunity(summary) {
+    const value = communityFromSummary(summary);
+    // Concurrent state reads must not roll back an already observed contribution.
+    if (communityCache && value.contributionCount < communityCache.value.contributionCount) {
+      return communityCache.value;
+    }
+    communityCache = { value, expiresAt: Date.now() + COMMUNITY_CACHE_MS };
+    return value;
+  }
+  async function getNetworkWorkshopState(wallet) {
+    return workshopRequest(`/state?wallet=${encodeURIComponent(wallet)}`);
   }
 
   function requireYokefellow() {
@@ -332,9 +301,9 @@ export function createWorkshopService({
     }));
   }
 
-  function communityFromState(state) {
-    const confirmed = Object.values(state.contributions).filter((entry) => entry?.status === "confirmed");
-    const totalPoints = confirmed.reduce((sum, entry) => sum + Math.max(0, safeInteger(entry?.points, 0)), 0);
+  function communityFromSummary(summary) {
+    const totalPoints = Math.max(0, safeInteger(summary?.totalPoints, 0));
+    const contributionCount = Math.max(0, safeInteger(summary?.contributionCount, 0));
     const unlockedMachines = 1 + Math.floor(totalPoints / target);
     const progressPoints = totalPoints % target;
     return {
@@ -346,18 +315,18 @@ export function createWorkshopService({
       nextMachineNumber: unlockedMachines + 1,
       justUnlockedAtExactTarget: totalPoints > 0 && progressPoints === 0,
       pointsByFamily: Object.fromEntries(FAMILIES.map((item) => [item.key, item.points])),
-      contributionCount: confirmed.length,
+      contributionCount,
     };
   }
 
   async function getState(wallet) {
     const normalizedWallet = getAddress(wallet).toLowerCase();
-    const [remote, localState] = await Promise.all([
+    const [remote, workshopState] = await Promise.all([
       loadRemote(normalizedWallet),
-      readStateFile(),
+      getNetworkWorkshopState(normalizedWallet),
     ]);
     const inventory = buildInventory(remote);
-    const preferred = normalizeFamily(localState.preferences?.[normalizedWallet]?.equippedSkin || "");
+    const preferred = normalizeFamily(workshopState.preference?.equippedSkin || "");
     const equippedSkin = preferred && inventory.skins.some((skin) => skin.family === preferred) ? preferred : "";
 
     let funding = {
@@ -398,7 +367,7 @@ export function createWorkshopService({
       equippedSkin,
       skins: inventory.skins,
       toys: attachUpgradePaths(inventory.toys),
-      community: communityFromState(localState),
+      community: cacheCommunity(workshopState.community),
       craftCatalogReady: true,
       contributionReady: true,
       source: remote?.source || { ownership: "yokefellow_network_v1_projection" },
@@ -412,14 +381,10 @@ export function createWorkshopService({
     if (family && !state.skins.some((skin) => skin.family === family)) {
       throw new Error("That wallet does not own the selected Coin Skin.");
     }
-    return mutateState((localState) => {
-      localState.preferences[normalizedWallet] = {
-        ...(localState.preferences[normalizedWallet] || {}),
-        equippedSkin: family,
-        updatedAt: new Date().toISOString(),
-      };
-      return { changed: true, result: { ok: true, equippedSkin: family } };
+    const saved = await workshopRequest("/preference", {
+      method: "PUT", body: { wallet: normalizedWallet, equippedSkin: family },
     });
+    return { ok: true, equippedSkin: saved.preference.equippedSkin };
   }
 
   async function craft(wallet, { family: familyValue, fromTier, referenceId }) {
@@ -486,14 +451,14 @@ export function createWorkshopService({
     const reference = validReference(referenceId);
     if (!reference) throw new Error("A stable contribution reference is required.");
 
-    const localState = await readStateFile();
-    const existing = localState.contributions[reference];
+    const existingResponse = await workshopRequest(`/contributions?referenceId=${encodeURIComponent(reference)}`);
+    const existing = existingResponse.contribution;
     if (existing) {
       if (existing.wallet !== normalizedWallet || existing.family !== family) {
         throw new Error("That contribution reference was already used for different details.");
       }
       if (existing.status === "confirmed") {
-        return { ok: true, duplicate: true, contribution: existing, community: communityFromState(localState) };
+        return { ok: true, duplicate: true, contribution: existing, community: await getCommunity() };
       }
     }
 
@@ -520,37 +485,23 @@ export function createWorkshopService({
       },
     });
 
-    const now = new Date().toISOString();
-    return mutateState((latestState) => {
-      const latestExisting = latestState.contributions[reference];
-      if (latestExisting && (latestExisting.wallet !== normalizedWallet || latestExisting.family !== family)) {
-        throw new Error("That contribution reference was already used for different details.");
-      }
-      if (latestExisting?.status === "confirmed") {
-        return {
-          changed: false,
-          result: { ok: true, duplicate: true, contribution: latestExisting, community: communityFromState(latestState) },
-        };
-      }
-      const entry = {
+    const saved = await workshopRequest("/contributions", {
+      method: "POST",
+      body: {
         referenceId: reference,
         wallet: normalizedWallet,
         family,
-        points: descriptor.points,
-        rarity: descriptor.rarity,
         actionPathKey: COMMUNITY_MACHINE_PATH_KEY,
         executionId: String(result?.execution?.id || result?.execution?.executionId || ""),
         reused: Boolean(result?.reused),
-        status: "confirmed",
-        createdAt: latestExisting?.createdAt || now,
-        updatedAt: now,
-      };
-      latestState.contributions[reference] = entry;
-      return {
-        changed: true,
-        result: { ok: true, duplicate: Boolean(result?.reused), contribution: entry, community: communityFromState(latestState) },
-      };
+      },
     });
+    return {
+      ok: true,
+      duplicate: Boolean(saved.duplicate || result?.reused),
+      contribution: saved.contribution,
+      community: cacheCommunity(saved.community),
+    };
   }
 
   async function resolveBucketSlug(wallet) {
@@ -611,7 +562,11 @@ export function createWorkshopService({
   }
 
   async function getCommunity() {
-    return communityFromState(await readStateFile());
+    if (communityCache && Date.now() < communityCache.expiresAt) return communityCache.value;
+    if (communityPending) return communityPending;
+    communityPending = workshopRequest("/community").then((body) => cacheCommunity(body.community));
+    try { return await communityPending; }
+    finally { communityPending = null; }
   }
 
   return {
