@@ -12,6 +12,8 @@ on:
       - "web/public/game/index.html"
       - "web/scripts/verify-coin-drop-login-and-connection.mjs"
       - "web/scripts/verify-ownership-session-cache.mjs"
+      - "web/scripts/stress-godot-websocket.mjs"
+      - "web/scripts/verify-godot-websocket-load-harness.mjs"
       - "web/package.json"
       - ".github/workflows/verify-ownership-session-cache.yml"
   workflow_dispatch:
