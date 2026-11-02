@@ -45,6 +45,7 @@
   let gameLoadPromise = null;
   let loginInFlight = false;
   let loginSequence = 0;
+  let initialStateLoadStarted = false;
   let socketOpen = false;
   let activeLaunchId = "";
   let spectatorMode = false;
@@ -58,7 +59,9 @@
   retryConnectionButton?.addEventListener("click", retryConnectionNow);
   homePlay?.addEventListener("click", () => switchView("play"));
   homeWorkshop?.addEventListener("click", () => switchView("workshop"));
-  fundingRefresh?.addEventListener("click", () => refreshPlayerState({ announce: false }));
+  fundingRefresh?.addEventListener("click", () => refreshPlayerState({ announce: false }).catch((error) => {
+    setAppMessage(error?.message || "Collection refresh failed.", "error");
+  }));
   depositButton?.addEventListener("click", () => performFunding("deposit", depositButton, depositAmount));
   withdrawButton?.addEventListener("click", () => performFunding("withdrawal", withdrawButton, withdrawAmount));
   nav?.addEventListener("click", (event) => {
@@ -162,6 +165,7 @@
 
       activeWallet = verified.wallet;
       sessionToken = verified.sessionToken;
+      initialStateLoadStarted = false;
       socketOpen = false;
       gameLoaded = false;
       login.hidden = true;
@@ -189,6 +193,7 @@
       activeWallet = "";
       sessionToken = "";
       playerState = null;
+      initialStateLoadStarted = false;
       spectatorMode = true;
       socketOpen = false;
       gameLoaded = false;
@@ -219,7 +224,10 @@
       await ensureGameLoaded();
       return;
     }
-    if (!spectatorMode && ["home", "workshop", "skins"].includes(next)) {
+    // A view change is local UI, not a reason to read Network again.
+    // Failed initial loads are also one-shot until an explicit refresh.
+    if (!spectatorMode && !initialStateLoadStarted && ["home", "workshop", "skins"].includes(next)) {
+      initialStateLoadStarted = true;
       await refreshPlayerState({ announce: false }).catch(() => {
         setAppMessage("Unavailable", "");
       });
@@ -689,6 +697,7 @@
     spectatorMode = false;
     gameLoaded = false;
     playerState = null;
+    initialStateLoadStarted = false;
     window.YES_PUSHER_BOOTSTRAP = null;
     gameFrame.src = "about:blank";
     appShell.hidden = true;

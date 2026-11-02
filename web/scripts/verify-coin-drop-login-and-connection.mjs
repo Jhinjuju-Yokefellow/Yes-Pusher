@@ -147,6 +147,11 @@ assert.equal(login.element("#app-shell").hidden,false);
 assert.equal(login.element("#login").hidden,true);
 assert.equal(login.requests.filter((method)=>method==="personal_sign").length,1);
 assert.equal(login.element("#watch").disabled,false);
+await login.click("home-workshop");
+assert.equal(login.routes.filter((path)=>path==="/app/state").length,1,"View changes must not retry even failed Network state reads");
+login.click("funding-refresh");
+await until(()=>login.routes.filter((path)=>path==="/app/state").length===2);
+assert.equal(login.routes.filter((path)=>path==="/app/state").length,2,"Only an explicit refresh may re-read state");
 
 const rejected = createBrowser({sign:async()=>{throw new Error("user_rejected");}});
 await rejected.click("connect");
