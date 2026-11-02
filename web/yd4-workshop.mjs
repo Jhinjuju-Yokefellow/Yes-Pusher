@@ -126,12 +126,23 @@ export function createWorkshopService({
   }
   const target = Math.max(1, safeInteger(buildTarget, 50));
   let cachedBucketSlug = "";
-  // Ownership is deliberately an hourly read model, not a per-visitor DB query.
-  // Coalesce concurrent requests and cap the number of wallets retained in memory.
-  const ownershipCache = new Map();
-  const OWNERSHIP_CACHE_LIMIT = 256;
-  const HOUR_MS = 60 * 60 * 1000;
-  const RETRY_MS = 60 * 1000;
+  // An App session reads its holdings, workshop state and credit once.
+  // Network's hourly blockchain-to-database updater is entirely separate.
+  const sessionStateCache = new Map();
+  const SESSION_CACHE_LIMIT = 1024;
+  const SESSION_RETRY_MS = 60_000;
+  function sessionCacheKey(wallet, session) {
+    if (!session?.sessionId || !Number.isSafeInteger(session.expiresAt) || session.expiresAt * 1000 <= Date.now()) return "";
+    return `${wallet}:${session.sessionId}`;
+  }
+  function invalidateSessionState(wallet, session) {
+    const key = sessionCacheKey(wallet, session);
+    if (key) sessionStateCache.delete(key);
+  }
+  function updateSessionSkin(wallet, session, family) {
+    const cached = sessionStateCache.get(sessionCacheKey(wallet, session));
+    if (cached?.data) cached.data.equippedSkin = family;
+  }
 
   function workshopRequest(pathname, options = {}) {
     return jsonRequest(`${normalizedNetworkOrigin}/v1/workshop${pathname}`, {
@@ -171,40 +182,14 @@ export function createWorkshopService({
 
   async function loadRemote(wallet) {
     requireYokefellow();
-    const hour = Math.floor(Date.now() / HOUR_MS);
-    const existing = ownershipCache.get(wallet);
-    if (existing && existing.hour === hour && existing.data) return existing.data;
-    if (existing && existing.hour === hour && existing.pending) return existing.pending;
-    if (existing && existing.hour === hour && existing.error && Date.now() < existing.retryAt) throw existing.error;
-
-    const pending = (async () => {
-      const encodedBucket = encodeURIComponent(normalizedBucketId);
-      const encodedWallet = encodeURIComponent(wallet);
-      const holdings = await jsonRequest(
-        sdkUrl(`/buckets/${encodedBucket}/holdings/${encodedWallet}`),
-        { networkAppApiKey: normalizedAppKey },
-      );
-      if (holdings?.complete === false) throw new Error("V3 hourly NFT ownership is not yet available.");
-      const bucketSlug = String(holdings?.bucketSlug || "").trim();
-      if (bucketSlug) cachedBucketSlug = bucketSlug;
-      if (ownershipCache.get(wallet)?.hour === hour) {
-        ownershipCache.set(wallet, { hour, data: holdings });
-      }
-      return holdings;
-    })();
-    ownershipCache.set(wallet, { hour, pending });
-    while (ownershipCache.size > OWNERSHIP_CACHE_LIMIT) {
-      ownershipCache.delete(ownershipCache.keys().next().value);
-    }
-    try {
-      return await pending;
-    } catch (error) {
-      // Avoid a failed V3 read becoming a new request storm from active players.
-      if (ownershipCache.get(wallet)?.hour === hour) {
-        ownershipCache.set(wallet, { hour, error, retryAt: Date.now() + RETRY_MS });
-      }
-      throw error;
-    }
+    const holdings = await jsonRequest(
+      sdkUrl(`/buckets/${encodeURIComponent(normalizedBucketId)}/holdings/${encodeURIComponent(wallet)}`),
+      { networkAppApiKey: normalizedAppKey },
+    );
+    if (holdings?.complete === false) throw new Error("V3 NFT ownership projection is not ready.");
+    const slug = String(holdings?.bucketSlug || "").trim();
+    if (slug) cachedBucketSlug = slug;
+    return holdings;
   }
 
   function buildInventory(remote) {
@@ -319,8 +304,7 @@ export function createWorkshopService({
     };
   }
 
-  async function getState(wallet) {
-    const normalizedWallet = getAddress(wallet).toLowerCase();
+  async function buildState(normalizedWallet) {
     const [remote, workshopState] = await Promise.all([
       loadRemote(normalizedWallet),
       getNetworkWorkshopState(normalizedWallet),
@@ -374,20 +358,53 @@ export function createWorkshopService({
     };
   }
 
-  async function equipSkin(wallet, familyValue) {
+  async function getState(wallet, session = null) {
+    const normalizedWallet = getAddress(wallet).toLowerCase();
+    const key = sessionCacheKey(normalizedWallet, session);
+    if (!key) return buildState(normalizedWallet);
+    const current = sessionStateCache.get(key);
+    if (current?.data) return structuredClone(current.data);
+    if (current?.pending) return structuredClone(await current.pending);
+    if (current?.error && current.retryAt > Date.now()) throw current.error;
+    const pending = buildState(normalizedWallet);
+    const expiresAt = session.expiresAt * 1000;
+    sessionStateCache.set(key, { pending, expiresAt });
+    try {
+      const state = await pending;
+      if (sessionStateCache.get(key)?.pending === pending) {
+        sessionStateCache.set(key, { data: state, expiresAt });
+      }
+      // Bounded memory regardless of login volume.
+      for (const [oldKey, record] of sessionStateCache) {
+        if (record.expiresAt <= Date.now()) sessionStateCache.delete(oldKey);
+      }
+      while (sessionStateCache.size > SESSION_CACHE_LIMIT) {
+        sessionStateCache.delete(sessionStateCache.keys().next().value);
+      }
+      return structuredClone(state);
+    } catch (error) {
+      if (sessionStateCache.get(key)?.pending === pending) {
+        sessionStateCache.set(key, { error, retryAt: Date.now() + SESSION_RETRY_MS, expiresAt });
+      }
+      throw error;
+    }
+  }
+
+  async function equipSkin(wallet, familyValue, session = null) {
     const normalizedWallet = getAddress(wallet).toLowerCase();
     const family = normalizeFamily(familyValue);
-    const state = await getState(normalizedWallet);
+    const state = await getState(normalizedWallet, session);
     if (family && !state.skins.some((skin) => skin.family === family)) {
       throw new Error("That wallet does not own the selected Coin Skin.");
     }
     const saved = await workshopRequest("/preference", {
       method: "PUT", body: { wallet: normalizedWallet, equippedSkin: family },
     });
+    updateSessionSkin(normalizedWallet, session, saved.preference.equippedSkin);
     return { ok: true, equippedSkin: saved.preference.equippedSkin };
   }
 
-  async function craft(wallet, { family: familyValue, fromTier, referenceId }) {
+  async function craft(wallet, { family: familyValue, fromTier, referenceId }, session = null) {
     requireYokefellow();
     const normalizedWallet = getAddress(wallet).toLowerCase();
     const family = normalizeFamily(familyValue);
@@ -399,7 +416,7 @@ export function createWorkshopService({
     const reference = validReference(referenceId);
     if (!reference) throw new Error("A stable craft reference is required.");
 
-    const state = await getState(normalizedWallet);
+    const state = await getState(normalizedWallet, session);
     const familyRow = state.toys.find((row) => row.family === family);
     const tierRow = familyRow?.tiers?.[sourceTier];
     if (!tierRow || tierRow.quantity < 3) {
@@ -432,6 +449,8 @@ export function createWorkshopService({
       },
     });
 
+    // Confirmed execution changes NFT inventory; refresh only on this action event.
+    invalidateSessionState(normalizedWallet, session);
     return {
       ok: true,
       family,
@@ -442,7 +461,7 @@ export function createWorkshopService({
     };
   }
 
-  async function contribute(wallet, { family: familyValue, referenceId }) {
+  async function contribute(wallet, { family: familyValue, referenceId }, session = null) {
     requireYokefellow();
     const normalizedWallet = getAddress(wallet).toLowerCase();
     const family = normalizeFamily(familyValue);
@@ -462,7 +481,7 @@ export function createWorkshopService({
       }
     }
 
-    const state = await getState(normalizedWallet);
+    const state = await getState(normalizedWallet, session);
     const familyRow = state.toys.find((row) => row.family === family);
     if (!familyRow?.tiers?.large || familyRow.tiers.large.quantity < 1) {
       throw new Error(`You do not currently hold a Large ${descriptor.label} Toy.`);
@@ -496,6 +515,7 @@ export function createWorkshopService({
         reused: Boolean(result?.reused),
       },
     });
+    invalidateSessionState(normalizedWallet, session);
     return {
       ok: true,
       duplicate: Boolean(saved.duplicate || result?.reused),
