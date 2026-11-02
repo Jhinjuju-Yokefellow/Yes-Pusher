@@ -100,12 +100,12 @@ const server = http.createServer(async (request, response) => {
     }
     if (request.method === "GET" && requestUrl.pathname === "/app/state") {
       const session = requirePlayerSession(request);
-      return sendJson(response, 200, await workshop.getState(session.wallet));
+      return sendJson(response, 200, await workshop.getState(session.wallet, session));
     }
     if (request.method === "POST" && requestUrl.pathname === "/app/equip-skin") {
       const session = requirePlayerSession(request);
       const body = await readJson(request);
-      return sendJson(response, 200, await workshop.equipSkin(session.wallet, body.family || ""));
+      return sendJson(response, 200, await workshop.equipSkin(session.wallet, body.family || "", session));
     }
     if (request.method === "POST" && requestUrl.pathname === "/app/funding/prepare") {
       const session = requirePlayerSession(request);
@@ -120,12 +120,12 @@ const server = http.createServer(async (request, response) => {
     if (request.method === "POST" && requestUrl.pathname === "/app/craft") {
       const session = requirePlayerSession(request);
       const body = await readJson(request);
-      return sendJson(response, 200, await workshop.craft(session.wallet, body));
+      return sendJson(response, 200, await workshop.craft(session.wallet, body, session));
     }
     if (request.method === "POST" && requestUrl.pathname === "/app/contribute") {
       const session = requirePlayerSession(request);
       const body = await readJson(request);
-      return sendJson(response, 200, await workshop.contribute(session.wallet, body));
+      return sendJson(response, 200, await workshop.contribute(session.wallet, body, session));
     }
     if (request.method !== "GET" && request.method !== "HEAD") {
       return sendJson(response, 405, { ok: false, error: "Method not allowed." });
