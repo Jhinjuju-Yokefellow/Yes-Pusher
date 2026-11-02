@@ -5,6 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { getAddress, verifyMessage } from "ethers";
 import { createWorkshopService } from "./yd4-workshop.mjs";
+import { createAuthRateLimiter } from "./auth-rate-limit.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.join(__dirname, "public");
@@ -39,6 +40,12 @@ const workshop = createWorkshopService({
 const challenges = new Map();
 const challengeTtlMs = 5 * 60 * 1000;
 const maxBodyBytes = 64 * 1024;
+// Local safety limits; shared limits are a separate Network/Redis deployment step.
+const authRateLimiter = createAuthRateLimiter();
+const challengeGlobalPerMinute = integerEnv("YES_DROP_CHALLENGES_PER_MINUTE", 180, 1, 100_000);
+const verifyGlobalPerMinute = integerEnv("YES_DROP_VERIFICATIONS_PER_MINUTE", 360, 1, 100_000);
+const authWalletPerMinute = integerEnv("YES_DROP_AUTH_PER_WALLET_PER_MINUTE", 6, 1, 1000);
+const maxPendingChallenges = integerEnv("YES_DROP_MAX_PENDING_CHALLENGES", 900, 1, 100_000);
 
 const contentTypes = new Map([
   [".html", "text/html; charset=utf-8"],
@@ -147,16 +154,42 @@ server.listen(port, "0.0.0.0", () => {
   console.log("NFT execution: Yokefellow Action Paths only.");
 });
 
-setInterval(() => {
-  const now = Date.now();
+function pruneChallenges(now = Date.now()) {
   for (const [id, challenge] of challenges.entries()) {
     if (challenge.expiresAtMs <= now || challenge.used) challenges.delete(id);
   }
+}
+
+setInterval(() => {
+  pruneChallenges();
+  authRateLimiter.sweep();
 }, 60_000).unref();
 
+function requireAuthCapacity(response, key, limit) {
+  const attempt = authRateLimiter.consume(key, limit);
+  if (attempt.allowed) return true;
+  response.setHeader("Retry-After", String(attempt.retryAfterSeconds));
+  sendJson(response, 429, {
+    ok: false,
+    error: "Too many login requests. Please wait before trying again.",
+  });
+  return false;
+}
+
 async function handleChallenge(request, response) {
+  // Reject bursts before JSON parsing or allocating challenge records.
+  if (!requireAuthCapacity(response, "challenge:global", challengeGlobalPerMinute)) return;
   const body = await readJson(request);
   const wallet = normalizeWallet(body.wallet);
+  if (!requireAuthCapacity(response, `challenge:wallet:${wallet}`, authWalletPerMinute)) return;
+  pruneChallenges();
+  if (challenges.size >= maxPendingChallenges) {
+    response.setHeader("Retry-After", "60");
+    return sendJson(response, 429, {
+      ok: false,
+      error: "Login is busy. Please try again shortly.",
+    });
+  }
   const now = new Date();
   const expiration = new Date(now.getTime() + challengeTtlMs);
   const challengeId = crypto.randomUUID();
@@ -194,8 +227,11 @@ async function handleChallenge(request, response) {
 }
 
 async function handleVerify(request, response) {
+  // Signature recovery is CPU work: bound it before accepting arbitrary input.
+  if (!requireAuthCapacity(response, "verify:global", verifyGlobalPerMinute)) return;
   const body = await readJson(request);
   const wallet = normalizeWallet(body.wallet);
+  if (!requireAuthCapacity(response, `verify:wallet:${wallet}`, authWalletPerMinute * 2)) return;
   const challengeId = String(body.challengeId || "").trim();
   const signature = String(body.signature || "").trim();
   const challenge = challenges.get(challengeId);
