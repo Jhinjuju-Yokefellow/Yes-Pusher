@@ -6,6 +6,7 @@ const appScript = readFileSync(new URL("../public/app.js", import.meta.url), "ut
 const serverScript = readFileSync(new URL("../server.mjs", import.meta.url), "utf8");
 const gameHtml = readFileSync(new URL("../public/game/index.html", import.meta.url), "utf8");
 const pageHtml = readFileSync(new URL("../public/index.html", import.meta.url), "utf8");
+const sharedWorldScript = readFileSync(new URL("../../scripts/shared_world.gd", import.meta.url), "utf8");
 const wallet = "0x" + "a".repeat(40);
 
 function createBrowser({ sign = async () => "0xsignature" } = {}) {
@@ -198,6 +199,10 @@ spectator.socket("open",secondLaunch);
 assert.equal(spectator.element("#retry-connection").textContent,"CONNECTED");
 assert.equal(spectator.timers.size,0);
 
+// A 100-client live WebSocket load test remains a separate staging gate.
+// The Godot WebSocket path must at least have a hard connection ceiling.
+assert.match(sharedWorldScript,/const DEFAULT_MAX_CLIENTS := 128/);
+assert.match(sharedWorldScript,/if multiplayer\.get_peers\(\)\.size\(\) > DEFAULT_MAX_CLIENTS:[\s\S]*?disconnect_peer\(peer_id\)/);
 assert.match(serverScript,/payload\.app !== "yes-drop"/);
 assert.equal((serverScript.match(/payload\.app !== "yes-drop"/g)||[]).length,2,"Coin Drop accepts only its own sessions");
 assert.match(gameHtml,/yes-pusher-game-load-failed/,"Godot engine errors must surface to parent");
