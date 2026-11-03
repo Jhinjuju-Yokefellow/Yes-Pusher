@@ -137,8 +137,10 @@ const fundingClientAfter = `      if (operation === "deposit") {
         await sendPreparedWalletTransaction(prepared.transaction);
       }`;
 
-const patchedApp = replaceExactlyOnce(appSource, fundingClientBefore, fundingClientAfter, "browser funding execution block");
-await fs.writeFile(appPath, patchedApp, "utf8");
+const patchedApp = appSource.includes(fundingClientAfter)
+  ? appSource // An in-place patch may already exist after a process restart.
+  : replaceExactlyOnce(appSource, fundingClientBefore, fundingClientAfter, "browser funding execution block");
+if (patchedApp !== appSource) await fs.writeFile(appPath, patchedApp, "utf8");
 
 console.log("YES DROP funding authorization patch applied: signed deposits + Network submission.");
 await import(`./server.runtime.mjs?funding-auth=${Date.now()}`);
