@@ -476,9 +476,12 @@ export function createWorkshopService({
       if (existing.wallet !== normalizedWallet || existing.family !== family) {
         throw new Error("That contribution reference was already used for different details.");
       }
-      if (existing.status === "confirmed") {
+      // Network stores a contribution only after validating its confirmed action receipt.
+      // The consumed Large Toy may no longer appear in the session ownership snapshot.
+      if (typeof existing.transactionHash === "string" && /^0x[0-9a-f]{64}$/i.test(existing.transactionHash)) {
         return { ok: true, duplicate: true, contribution: existing, community: await getCommunity() };
       }
+      throw new Error("Network returned a contribution without a verified transaction.");
     }
 
     const state = await getState(normalizedWallet, session);
