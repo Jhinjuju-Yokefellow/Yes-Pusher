@@ -71,14 +71,7 @@ const fundingRoutesAfter = `    if (request.method === "POST" && requestUrl.path
       return sendJson(response, 200, await workshop.fundingStatus(session.wallet, body));
     }`;
 
-const cacheBefore = `  const isGameAsset = relative === "game" || relative.startsWith("game/");
-  response.setHeader("Cache-Control", extension === ".html" || isGameAsset ? "no-store" : "public, max-age=300");`;
-const cacheAfter = `  const isGameAsset = relative === "game" || relative.startsWith("game/");
-  const noStore = extension === ".html" || isGameAsset || relative === "app.js";
-  response.setHeader("Cache-Control", noStore ? "no-store" : "public, max-age=300");`;
-
-let patchedServer = replaceExactlyOnce(serverSource, fundingRoutesBefore, fundingRoutesAfter, "funding route block");
-patchedServer = replaceExactlyOnce(patchedServer, cacheBefore, cacheAfter, "static cache block");
+const patchedServer = replaceExactlyOnce(serverSource, fundingRoutesBefore, fundingRoutesAfter, "funding route block");
 await fs.writeFile(new URL("./server.runtime.mjs", import.meta.url), patchedServer, "utf8");
 
 const fundingClientBefore = `      if (prepared.approval) {
