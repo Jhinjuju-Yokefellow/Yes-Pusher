@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { getAddress } from "ethers";
@@ -87,19 +88,29 @@ function presentationForHolding(holding) {
 }
 
 async function readJsonFile(filePath) {
+  let text;
   try {
-    const parsed = JSON.parse(await fs.readFile(filePath, "utf8"));
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
-  } catch {
-    return {};
+    text = await fs.readFile(filePath, "utf8");
+  } catch (error) {
+    if (error?.code === "ENOENT") return {};
+    throw error; // Never overwrite an existing state file after a read failure.
   }
+  const parsed = JSON.parse(text); // Corruption must fail visibly, not reset all progress.
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("Workshop state file has an invalid format.");
+  }
+  return parsed;
 }
 
 async function writeJsonFile(filePath, value) {
   await fs.mkdir(path.dirname(filePath), { recursive: true });
-  const temp = `${filePath}.tmp`;
-  await fs.writeFile(temp, `${JSON.stringify(value, null, 2)}\n`, "utf8");
-  await fs.rename(temp, filePath);
+  const temp = `${filePath}.${crypto.randomUUID()}.tmp`;
+  try {
+    await fs.writeFile(temp, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+    await fs.rename(temp, filePath);
+  } finally {
+    await fs.rm(temp, { force: true }).catch(() => {});
+  }
 }
 
 async function jsonRequest(url, { method = "GET", networkAppApiKey = "", idempotencyKey = "", body = null } = {}) {
@@ -159,6 +170,20 @@ export function createWorkshopService({
 
   async function saveStateFile(state) {
     await writeJsonFile(normalizedStatePath, state);
+  }
+
+  // Serialize read/modify/write operations on this web instance. Durable shared
+  // storage is still required before scaling the web service to >1 instance.
+  let stateWriteTail = Promise.resolve();
+  function mutateState(updater) {
+    const operation = stateWriteTail.then(async () => {
+      const state = await readStateFile();
+      const { changed, result } = await updater(state);
+      if (changed) await saveStateFile(state);
+      return result;
+    });
+    stateWriteTail = operation.catch(() => {});
+    return operation;
   }
 
   function requireYokefellow() {
@@ -387,14 +412,14 @@ export function createWorkshopService({
     if (family && !state.skins.some((skin) => skin.family === family)) {
       throw new Error("That wallet does not own the selected Coin Skin.");
     }
-    const localState = await readStateFile();
-    localState.preferences[normalizedWallet] = {
-      ...(localState.preferences[normalizedWallet] || {}),
-      equippedSkin: family,
-      updatedAt: new Date().toISOString(),
-    };
-    await saveStateFile(localState);
-    return { ok: true, equippedSkin: family };
+    return mutateState((localState) => {
+      localState.preferences[normalizedWallet] = {
+        ...(localState.preferences[normalizedWallet] || {}),
+        equippedSkin: family,
+        updatedAt: new Date().toISOString(),
+      };
+      return { changed: true, result: { ok: true, equippedSkin: family } };
+    });
   }
 
   async function craft(wallet, { family: familyValue, fromTier, referenceId }) {
@@ -496,22 +521,36 @@ export function createWorkshopService({
     });
 
     const now = new Date().toISOString();
-    const entry = {
-      referenceId: reference,
-      wallet: normalizedWallet,
-      family,
-      points: descriptor.points,
-      rarity: descriptor.rarity,
-      actionPathKey: COMMUNITY_MACHINE_PATH_KEY,
-      executionId: String(result?.execution?.id || result?.execution?.executionId || ""),
-      reused: Boolean(result?.reused),
-      status: "confirmed",
-      createdAt: existing?.createdAt || now,
-      updatedAt: now,
-    };
-    localState.contributions[reference] = entry;
-    await saveStateFile(localState);
-    return { ok: true, duplicate: Boolean(result?.reused), contribution: entry, community: communityFromState(localState) };
+    return mutateState((latestState) => {
+      const latestExisting = latestState.contributions[reference];
+      if (latestExisting && (latestExisting.wallet !== normalizedWallet || latestExisting.family !== family)) {
+        throw new Error("That contribution reference was already used for different details.");
+      }
+      if (latestExisting?.status === "confirmed") {
+        return {
+          changed: false,
+          result: { ok: true, duplicate: true, contribution: latestExisting, community: communityFromState(latestState) },
+        };
+      }
+      const entry = {
+        referenceId: reference,
+        wallet: normalizedWallet,
+        family,
+        points: descriptor.points,
+        rarity: descriptor.rarity,
+        actionPathKey: COMMUNITY_MACHINE_PATH_KEY,
+        executionId: String(result?.execution?.id || result?.execution?.executionId || ""),
+        reused: Boolean(result?.reused),
+        status: "confirmed",
+        createdAt: latestExisting?.createdAt || now,
+        updatedAt: now,
+      };
+      latestState.contributions[reference] = entry;
+      return {
+        changed: true,
+        result: { ok: true, duplicate: Boolean(result?.reused), contribution: entry, community: communityFromState(latestState) },
+      };
+    });
   }
 
   async function resolveBucketSlug(wallet) {
