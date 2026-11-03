@@ -180,3 +180,102 @@ test("confirmed contribution retries succeed after the Large Toy has been consum
   assert.equal(contributionReads, 1);
   assert.equal(communityReads, 1);
 });
+
+
+test("confirmed community contribution passes V3 proof to Network and does not replay a consumed Toy", async (t) => {
+  const previousFetch = globalThis.fetch;
+  const referenceId = "coin-drop:proof:complete-01";
+  const transactionHash = "0x" + "a".repeat(64);
+  const workshopProof = "wpr1.verified.sig";
+  const counters = { actions: 0, recoveries: 0, contributions: 0 };
+  let stored = null;
+  globalThis.fetch = async (url, options = {}) => {
+    const parsed = new URL(url);
+    if (parsed.pathname === "/v1/workshop/contributions") {
+      if (options.method === "POST") {
+        counters.contributions++;
+        const body = JSON.parse(options.body);
+        assert.equal(body.referenceId, referenceId);
+        assert.equal(body.executionId, "v3-exec-1");
+        assert.equal(body.workshopProof, workshopProof);
+        stored = { ...body, status: "confirmed", transactionHash };
+        return response({ ok: true, duplicate: false, contribution: stored,
+          community: { totalPoints: 1, contributionCount: 1 } });
+      }
+      return response({ ok: true, contribution: stored });
+    }
+    if (parsed.pathname === "/v1/workshop/state") return response({
+      ok: true, preference: { equippedSkin: "" },
+      community: { totalPoints: 0, contributionCount: 0 },
+    });
+    if (parsed.pathname.endsWith("/holdings/" + walletA)) return response({
+      complete: true, bucketSlug: "rainbows-end", classes: [],
+      holdings: [{ standard: "ERC1155", quantity: 1,
+        presentation: { slug: "four_leaf_clover_toy_large", name: "Large Toy" } }],
+    });
+    if (parsed.pathname.endsWith("/credits")) return response({ credit: null });
+    if (parsed.pathname.endsWith("/execute")) {
+      counters.actions++;
+      return response({ ok: true, reused: false, execution: { id: "v3-exec-1" } });
+    }
+    if (parsed.pathname.includes("/executions/")) {
+      counters.recoveries++;
+      return response({ ok: true, found: true, workshopProof,
+        path: { key: "yes_drop.community_machine" },
+        execution: { id: "v3-exec-1", participantWallet: walletA } });
+    }
+    throw new Error("unexpected " + parsed.pathname);
+  };
+  t.after(() => { globalThis.fetch = previousFetch; });
+  const workshop = service();
+  const first = await workshop.contribute(walletA, { family: "four_leaf_clover", referenceId });
+  assert.equal(first.ok, true);
+  assert.equal(first.duplicate, false);
+  const replay = await workshop.contribute(walletA, { family: "four_leaf_clover", referenceId });
+  assert.equal(replay.duplicate, true);
+  assert.deepEqual(counters, { actions: 1, recoveries: 1, contributions: 1 });
+});
+
+test("a confirmed V3 receipt recovers contribution when Large Toy is already consumed", async (t) => {
+  const previousFetch = globalThis.fetch;
+  const referenceId = "coin-drop:proof:recovery-01";
+  let actions = 0, writes = 0;
+  globalThis.fetch = async (url, options = {}) => {
+    const parsed = new URL(url);
+    if (parsed.pathname === "/v1/workshop/contributions" && options.method !== "POST") {
+      return response({ ok: true, contribution: null });
+    }
+    if (parsed.pathname === "/v1/workshop/state") return response({
+      ok: true, preference: { equippedSkin: "" },
+      community: { totalPoints: 0, contributionCount: 0 },
+    });
+    if (parsed.pathname.includes("/holdings/")) return response({
+      complete: true, bucketSlug: "rainbows-end", holdings: [], classes: [],
+    });
+    if (parsed.pathname.endsWith("/credits")) return response({ credit: null });
+    if (parsed.pathname.endsWith("/execute")) {
+      actions++;
+      throw new Error("already consumed; must never execute again");
+    }
+    if (parsed.pathname.includes("/executions/")) return response({
+      ok: true, found: true, workshopProof: "wpr1.recovered.sig",
+      path: { key: "yes_drop.community_machine" },
+      execution: { id: "v3-exec-previous", participantWallet: walletA },
+    });
+    if (parsed.pathname === "/v1/workshop/contributions" && options.method === "POST") {
+      writes++;
+      const body = JSON.parse(options.body);
+      assert.equal(body.executionId, "v3-exec-previous");
+      assert.equal(body.workshopProof, "wpr1.recovered.sig");
+      return response({ ok: true, duplicate: false,
+        contribution: { ...body, transactionHash: "0x" + "b".repeat(64) },
+        community: { totalPoints: 1, contributionCount: 1 } });
+    }
+    throw new Error("unexpected " + parsed.pathname);
+  };
+  t.after(() => { globalThis.fetch = previousFetch; });
+  const result = await service().contribute(walletA, { family: "four_leaf_clover", referenceId });
+  assert.equal(result.ok, true);
+  assert.equal(actions, 0);
+  assert.equal(writes, 1);
+});
