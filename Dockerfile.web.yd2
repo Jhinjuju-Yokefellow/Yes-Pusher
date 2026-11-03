@@ -57,6 +57,7 @@ RUN npm ci --omit=dev --no-audit --no-fund \
     && npm cache clean --force
 
 COPY web/server.mjs ./server.mjs
+COPY web/auth-rate-limit.mjs ./auth-rate-limit.mjs
 COPY web/start-recovery-web.mjs ./start-recovery-web.mjs
 COPY web/yd4-workshop.mjs ./yd4-workshop.mjs
 COPY web/public ./public
