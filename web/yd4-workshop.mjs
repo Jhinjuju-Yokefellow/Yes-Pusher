@@ -476,37 +476,73 @@ export function createWorkshopService({
       if (existing.wallet !== normalizedWallet || existing.family !== family) {
         throw new Error("That contribution reference was already used for different details.");
       }
-      // Network stores a contribution only after validating its confirmed action receipt.
-      // The consumed Large Toy may no longer appear in the session ownership snapshot.
+      // Existing records were written only after Network verified V3's proof.
       if (typeof existing.transactionHash === "string" && /^0x[0-9a-f]{64}$/i.test(existing.transactionHash)) {
         return { ok: true, duplicate: true, contribution: existing, community: await getCommunity() };
       }
       throw new Error("Network returned a contribution without a verified transaction.");
     }
 
-    const state = await getState(normalizedWallet, session);
-    const familyRow = state.toys.find((row) => row.family === family);
-    if (!familyRow?.tiers?.large || familyRow.tiers.large.quantity < 1) {
-      throw new Error(`You do not currently hold a Large ${descriptor.label} Toy.`);
+    // V3 can recover the original completed action without re-executing it.
+    // This read happens only for an actual contribution or recovery, never login.
+    async function recoverConfirmedProof() {
+      const recovered = await jsonRequest(
+        sdkUrl(`/buckets/${encodeURIComponent(normalizedBucketId)}/action-paths/${encodeURIComponent(COMMUNITY_MACHINE_PATH_KEY)}/executions/${encodeURIComponent(reference)}?wallet=${encodeURIComponent(normalizedWallet)}`),
+        { networkAppApiKey: normalizedAppKey },
+      );
+      if (!recovered?.found || !recovered?.workshopProof) return null;
+      if (recovered.path?.key !== COMMUNITY_MACHINE_PATH_KEY ||
+          String(recovered.execution?.participantWallet || "").toLowerCase() !== normalizedWallet) {
+        throw new Error("Yokefellow returned an execution outside this wallet or Action Path.");
+      }
+      return recovered;
     }
 
-    const result = await jsonRequest(actionPathUrl(COMMUNITY_MACHINE_PATH_KEY), {
-      method: "POST",
-      networkAppApiKey: normalizedAppKey,
-      idempotencyKey: reference,
-      body: {
-        wallet: normalizedWallet,
-        requestId: reference,
-        choice: contributionChoice(family),
-        meta: {
-          source: "rainbows-end-community-build",
-          toyFamily: family,
-          points: descriptor.points,
-          rarity: descriptor.rarity,
-        },
-      },
-    });
+    const state = await getState(normalizedWallet, session);
+    const familyRow = state.toys.find((row) => row.family === family);
+    const hasLargeToy = Boolean(familyRow?.tiers?.large?.quantity >= 1);
+    let result = null;
+    let recovered = null;
+    if (!hasLargeToy) {
+      // An earlier request may already have consumed the Large Toy while its
+      // confirmation write failed. Never require a consumed NFT to be held
+      // again merely to recover the original action.
+      recovered = await recoverConfirmedProof();
+      if (!recovered) {
+        throw new Error(`You do not currently hold a Large ${descriptor.label} Toy.`);
+      }
+    } else {
+      try {
+        result = await jsonRequest(actionPathUrl(COMMUNITY_MACHINE_PATH_KEY), {
+          method: "POST",
+          networkAppApiKey: normalizedAppKey,
+          idempotencyKey: reference,
+          body: {
+            wallet: normalizedWallet,
+            requestId: reference,
+            choice: contributionChoice(family),
+            meta: {
+              source: "rainbows-end-community-build",
+              toyFamily: family,
+              points: descriptor.points,
+              rarity: descriptor.rarity,
+            },
+          },
+        });
+      } catch (error) {
+        // Only the same-reference V3 recovered receipt can rescue an
+        // uncertain response; no second NFT action or new reference is used.
+        recovered = await recoverConfirmedProof().catch(() => null);
+        if (!recovered) throw error;
+      } finally {
+        invalidateSessionState(normalizedWallet, session);
+      }
+    }
 
+    if (!recovered) recovered = await recoverConfirmedProof();
+    if (!recovered) {
+      throw new Error("Contribution execution is not yet confirmed. Retry using the same reference.");
+    }
     const saved = await workshopRequest("/contributions", {
       method: "POST",
       body: {
@@ -514,14 +550,15 @@ export function createWorkshopService({
         wallet: normalizedWallet,
         family,
         actionPathKey: COMMUNITY_MACHINE_PATH_KEY,
-        executionId: String(result?.execution?.id || result?.execution?.executionId || ""),
-        reused: Boolean(result?.reused),
+        executionId: String(recovered.execution.id),
+        workshopProof: recovered.workshopProof,
+        reused: Boolean(result?.reused || !result),
       },
     });
     invalidateSessionState(normalizedWallet, session);
     return {
       ok: true,
-      duplicate: Boolean(saved.duplicate || result?.reused),
+      duplicate: Boolean(saved.duplicate || result?.reused || !result),
       contribution: saved.contribution,
       community: cacheCommunity(saved.community),
     };
