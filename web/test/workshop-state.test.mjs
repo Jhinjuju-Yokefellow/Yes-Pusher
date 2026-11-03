@@ -145,3 +145,38 @@ test("100 independent authenticated sessions make 100 cold reads, not 200 repeat
   await Promise.all(sessions.map(({ wallet, session }) => workshop.getState(wallet, session)));
   assert.deepEqual(counts, { holdings: 100, state: 100, credit: 100 });
 });
+
+
+test("confirmed contribution retries succeed after the Large Toy has been consumed", async (t) => {
+  const previousFetch = globalThis.fetch;
+  const referenceId = "coin-drop:confirmed:001";
+  const transactionHash = "0x" + "a".repeat(64);
+  let contributionReads = 0;
+  let communityReads = 0;
+  globalThis.fetch = async (url, options = {}) => {
+    const parsed = new URL(url);
+    assert.equal(parsed.host, "network.example.test", "no V3 ownership or action replay on confirmed retry");
+    assert.equal(options.headers.Authorization, `Bearer ${key}`);
+    if (parsed.pathname === "/v1/workshop/contributions") {
+      contributionReads++;
+      assert.equal(parsed.searchParams.get("referenceId"), referenceId);
+      return response({ ok: true, contribution: {
+        referenceId, wallet: walletA, family: "four_leaf_clover",
+        transactionHash, points: 1,
+      } });
+    }
+    if (parsed.pathname === "/v1/workshop/community") {
+      communityReads++;
+      return response({ ok: true, community: { totalPoints: 1, contributionCount: 1 } });
+    }
+    throw new Error("unexpected request: " + parsed.pathname);
+  };
+  t.after(() => { globalThis.fetch = previousFetch; });
+  const result = await service().contribute(walletA, { family: "four_leaf_clover", referenceId });
+  assert.equal(result.ok, true);
+  assert.equal(result.duplicate, true);
+  assert.equal(result.contribution.transactionHash, transactionHash);
+  assert.equal(result.community.totalPoints, 1);
+  assert.equal(contributionReads, 1);
+  assert.equal(communityReads, 1);
+});
