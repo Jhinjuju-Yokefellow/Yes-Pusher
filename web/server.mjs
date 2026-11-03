@@ -131,7 +131,7 @@ const server = http.createServer(async (request, response) => {
     if (request.method !== "GET" && request.method !== "HEAD") {
       return sendJson(response, 405, { ok: false, error: "Method not allowed." });
     }
-    return serveStatic(requestUrl.pathname, request.method === "HEAD", response);
+    return serveStatic(requestUrl.pathname, request.method === "HEAD", response, request.headers);
   } catch (error) {
     console.error(error);
     const status = Number.isInteger(error?.statusCode)
@@ -326,7 +326,7 @@ function verifySession(token) {
   }
 }
 
-async function serveStatic(pathname, headOnly, response) {
+async function serveStatic(pathname, headOnly, response, requestHeaders) {
   const decoded = decodeURIComponent(pathname);
   const requested = decoded.endsWith("/") ? `${decoded}index.html` : decoded;
   const relative = requested.replace(/^\/+/, "");
@@ -346,8 +346,26 @@ async function serveStatic(pathname, headOnly, response) {
   const extension = path.extname(filePath).toLowerCase();
   response.statusCode = 200;
   response.setHeader("Content-Type", contentTypes.get(extension) || "application/octet-stream");
-  const isGameAsset = relative === "game" || relative.startsWith("game/");
-  response.setHeader("Cache-Control", extension === ".html" || isGameAsset ? "no-store" : "public, max-age=300");
+  const isGameAsset = relative.startsWith("game/");
+  const cacheableGameAsset = isGameAsset && extension !== ".html";
+  const noStore = extension === ".html" || relative === "app.js";
+  response.setHeader("Cache-Control", cacheableGameAsset
+    ? "public, max-age=0, must-revalidate"
+    : noStore ? "no-store" : "public, max-age=300");
+
+  if (cacheableGameAsset) {
+    // Validate the exported file on every load, but never resend unchanged
+    // multi-megabyte Godot binaries during account changes or reconnects.
+    // The timestamp and size change when a new deployment exports a file.
+    const etag = `W/"${stat.size.toString(16)}-${Math.trunc(stat.mtimeMs).toString(16)}"`;
+    response.setHeader("ETag", etag);
+    const match = String(requestHeaders?.["if-none-match"] || "")
+      .split(",").some((value) => value.trim() === etag || value.trim() === "*");
+    if (match) {
+      response.statusCode = 304;
+      return response.end();
+    }
+  }
   response.setHeader("Content-Length", stat.size);
   if (headOnly) return response.end();
   const data = await fs.readFile(filePath);
