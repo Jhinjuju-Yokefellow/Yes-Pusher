@@ -11,6 +11,9 @@ const TURN_SPEND_PATH := "yes_drop.turn_spend"
 const PAYOUT_PATH := "yes_drop.payout"
 const SKIN_DROP_PATH := "yes_drop.skin_drop"
 const TOY_DROP_PATH := "yes_drop.toy_drop"
+const PROFILE_CARD_CACHE_OK_SECONDS: int = 3600
+const PROFILE_CARD_CACHE_RETRY_SECONDS: int = 300
+const PROFILE_CARD_CACHE_MAX_WALLETS: int = 128
 
 var sdk_base_url: String = ""
 var bucket_id: String = ""
@@ -36,6 +39,7 @@ var toy_class_id_by_family: Dictionary = {}
 var toy_class_key_by_family: Dictionary = {}
 var toy_title_by_family: Dictionary = {}
 var toy_image_url_by_family: Dictionary = {}
+var _profile_card_cache: Dictionary = {}
 
 func _ready() -> void:
 	load_from_environment()
@@ -142,6 +146,66 @@ func load_wallet_holdings(wallet: String) -> Dictionary:
 	catalog_loaded.emit(catalog)
 	return response
 
+# The active dropper uses Yokefellow's canonical profile_card.v1. A public
+# profile lookup is independent of this App's wallet session and never carries
+# its Network App credential. Cache by wallet so repeated turns and spectators
+# cannot repeatedly query the V3 profile database.
+func load_profile_card(wallet: String) -> Dictionary:
+	var normalized := wallet.strip_edges().to_lower()
+	if not _is_wallet(normalized):
+		return {"ok": false, "status": 400, "error": "Invalid wallet."}
+	var now := int(Time.get_unix_time_from_system())
+	var cached_value: Variant = _profile_card_cache.get(normalized, {})
+	if cached_value is Dictionary:
+		var cached := cached_value as Dictionary
+		if now - int(cached.get("checked_at", 0)) < int(cached.get("ttl_seconds", 0)):
+			var cached_result: Dictionary = cached.get("result", {}) as Dictionary
+			return cached_result.duplicate(true)
+
+	var origin := _profile_api_origin()
+	if origin.is_empty():
+		return {"ok": false, "status": 0, "error": "Profile Card API is not configured."}
+	var response := await _request_json(
+		HTTPClient.METHOD_GET,
+		"%s/api/profile/card?walletAddress=%s" % [origin, normalized.uri_encode()],
+		{},
+		"",
+		{},
+		8.0
+	)
+	var result: Dictionary = {"ok": false, "status": int(response.get("status", 0)),
+		"error": String(response.get("error", "Profile Card unavailable."))}
+	if bool(response.get("ok", false)):
+		var body: Dictionary = response.get("body", {}) as Dictionary
+		var card_value: Variant = body.get("card", {})
+		if card_value is Dictionary:
+			var card := card_value as Dictionary
+			if String(card.get("version", "")) == "profile_card.v1":
+				result = {"ok": true, "card": card.duplicate(true)}
+	_cache_profile_card(normalized, result, now)
+	return result
+
+func _profile_api_origin() -> String:
+	var base := sdk_base_url.strip_edges().trim_suffix("/")
+	return base.trim_suffix("/api/sdk/v1") if base.ends_with("/api/sdk/v1") else base
+
+func _cache_profile_card(wallet: String, result: Dictionary, checked_at: int) -> void:
+	if not _profile_card_cache.has(wallet) and _profile_card_cache.size() >= PROFILE_CARD_CACHE_MAX_WALLETS:
+		var oldest_wallet := ""
+		var oldest_checked_at := 9223372036854775807
+		for key in _profile_card_cache.keys():
+			var record: Dictionary = _profile_card_cache.get(key, {}) as Dictionary
+			if int(record.get("checked_at", 0)) < oldest_checked_at:
+				oldest_checked_at = int(record.get("checked_at", 0))
+				oldest_wallet = String(key)
+		if not oldest_wallet.is_empty():
+			_profile_card_cache.erase(oldest_wallet)
+	_profile_card_cache[wallet] = {
+		"checked_at": checked_at,
+		"ttl_seconds": PROFILE_CARD_CACHE_OK_SECONDS if bool(result.get("ok", false)) else PROFILE_CARD_CACHE_RETRY_SECONDS,
+		"result": result.duplicate(true),
+	}
+
 func load_player_presentation(wallet: String) -> Dictionary:
 	var normalized := wallet.strip_edges().to_lower()
 	if not _is_wallet(normalized):
@@ -155,7 +219,11 @@ func load_player_presentation(wallet: String) -> Dictionary:
 
 	var errors: Array[String] = []
 	var profile: Dictionary = {}
-	# Yokefellow profile cards are disabled; never request the profile endpoint.
+	var profile_result := await load_profile_card(normalized)
+	if bool(profile_result.get("ok", false)):
+		profile = (profile_result.get("card", {}) as Dictionary).duplicate(true)
+	elif int(profile_result.get("status", 0)) != 404 and int(profile_result.get("status", 0)) != 410:
+		errors.append(String(profile_result.get("error", "Profile Card unavailable.")))
 
 	var toys: Array[Dictionary] = []
 	var holdings_result := await load_wallet_holdings(normalized)
