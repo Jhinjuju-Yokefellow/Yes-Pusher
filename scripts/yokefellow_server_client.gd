@@ -222,7 +222,7 @@ func load_player_presentation(wallet: String) -> Dictionary:
 	var profile_result := await load_profile_card(normalized)
 	if bool(profile_result.get("ok", false)):
 		profile = (profile_result.get("card", {}) as Dictionary).duplicate(true)
-	elif int(profile_result.get("status", 0)) not in [404, 410]:
+	elif int(profile_result.get("status", 0)) != 404 and int(profile_result.get("status", 0)) != 410:
 		errors.append(String(profile_result.get("error", "Profile Card unavailable.")))
 
 	var toys: Array[Dictionary] = []
