@@ -63,7 +63,7 @@
   retryConnectionButton?.addEventListener("click", retryConnectionNow);
   homePlay?.addEventListener("click", () => switchView("play"));
   homeWorkshop?.addEventListener("click", () => switchView("workshop"));
-  fundingRefresh?.addEventListener("click", () => refreshPlayerState({ announce: false }));
+  fundingRefresh?.addEventListener("click", () => refreshPlayerState({ announce: false }).catch(() => {}));
   depositButton?.addEventListener("click", () => performFunding("deposit", depositButton, depositAmount));
   withdrawButton?.addEventListener("click", () => performFunding("withdrawal", withdrawButton, withdrawAmount));
   nav?.addEventListener("click", (event) => {
@@ -211,16 +211,43 @@
       return;
     }
     if (!spectatorMode && ["home", "workshop", "skins"].includes(next)) {
-      await refreshPlayerState({ announce: false }).catch(() => {
-        setAppMessage("Unavailable", "");
-      });
+      await refreshPlayerState({ announce: false }).catch(() => {});
     }
+  }
+
+  function showStateUnavailable() {
+    // An ownership outage is not proof that the wallet owns zero NFTs.
+    // Clear stale/loading placeholders, and leave write actions disabled.
+    playerState = null;
+    homeEquipped.textContent = "Coin Skin ownership temporarily unavailable.";
+    homeToys.textContent = "Toy collection temporarily unavailable.";
+    fundingBalance.textContent = "Unavailable";
+    fundingStatus.textContent = "Bucket balance temporarily unavailable.";
+    for (const field of [depositAmount, withdrawAmount, depositButton, withdrawButton]) {
+      if (field) field.disabled = true;
+    }
+    if (fundingRefresh) fundingRefresh.disabled = false;
+    homeBuildCount.textContent = "Unavailable";
+    homeBuildProgress.style.width = "0%";
+    homeBuildDetail.textContent = "Machine build progress temporarily unavailable.";
+    workshopBuildCount.textContent = "Unavailable";
+    workshopBuildProgress.style.width = "0%";
+    workshopBuildDetail.textContent = "Machine build progress temporarily unavailable.";
+    workshopList.textContent = "Toy collection temporarily unavailable.";
+    skinList.textContent = "Coin Skin ownership temporarily unavailable.";
+    setAppMessage("NFT ownership is temporarily unavailable. Refresh to retry.", "error");
   }
 
   async function refreshPlayerState({ announce = false } = {}) {
     if (!activeWallet || !sessionToken) return null;
     const generation = ++stateRefreshGeneration;
-    const state = await appGet("/app/state");
+    let state;
+    try {
+      state = await appGet("/app/state");
+    } catch (error) {
+      if (generation === stateRefreshGeneration) showStateUnavailable();
+      throw error;
+    }
     if (generation !== stateRefreshGeneration) return playerState;
     playerState = state;
     renderPlayerState();
