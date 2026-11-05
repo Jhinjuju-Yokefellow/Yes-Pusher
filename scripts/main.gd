@@ -1231,12 +1231,7 @@ func _show_next_nft_award() -> void:
 	tween.set_trans(Tween.TRANS_BACK)
 	tween.set_ease(Tween.EASE_OUT)
 	tween.tween_property(_nft_award_panel, "modulate:a", 1.0, 0.32)
-	_hide_nft_award_later(generation)
-
-func _hide_nft_award_later(generation: int) -> void:
-	await get_tree().create_timer(8.0).timeout
-	if generation == _nft_award_generation and _nft_award_showing:
-		_dismiss_nft_award()
+	# Keep the minted NFT showcase visible until its owner dismisses it.
 
 func _on_nft_award_action_pressed() -> void:
 	var kind := String(_active_nft_award.get("kind", "")).strip_edges().to_lower()
