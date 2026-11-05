@@ -58,6 +58,7 @@ var _nft_award_type: Label
 var _nft_award_name: Label
 var _nft_award_detail: Label
 var _nft_award_action: Button
+var _nft_award_receipt: Button
 var _nft_image_rect: TextureRect
 var _nft_preview_container: SubViewportContainer
 var _nft_preview_viewport: SubViewport
@@ -1221,6 +1222,8 @@ func _show_next_nft_award() -> void:
 		detail_lines.append("Token #%s" % token_id)
 	_nft_award_detail.text = "\n".join(detail_lines)
 	_nft_award_action.text = "EQUIP THIS SKIN" if kind == "skin" and not family.is_empty() else "CONTINUE"
+	var tx_hash := String(_active_nft_award.get("tx_hash", "")).strip_edges()
+	_nft_award_receipt.visible = tx_hash.begins_with("0x") and tx_hash.length() == 66
 	_build_nft_preview(kind, family)
 	if not image_url.is_empty():
 		call_deferred("_load_nft_award_image", image_url, generation)
@@ -1231,12 +1234,12 @@ func _show_next_nft_award() -> void:
 	tween.set_trans(Tween.TRANS_BACK)
 	tween.set_ease(Tween.EASE_OUT)
 	tween.tween_property(_nft_award_panel, "modulate:a", 1.0, 0.32)
-	_hide_nft_award_later(generation)
+	# Keep the minted NFT showcase visible until its owner dismisses it.
 
-func _hide_nft_award_later(generation: int) -> void:
-	await get_tree().create_timer(8.0).timeout
-	if generation == _nft_award_generation and _nft_award_showing:
-		_dismiss_nft_award()
+func _on_nft_award_receipt_pressed() -> void:
+	var tx_hash := String(_active_nft_award.get("tx_hash", "")).strip_edges()
+	if tx_hash.begins_with("0x") and tx_hash.length() == 66:
+		OS.shell_open("https://sepolia.basescan.org/tx/%s" % tx_hash)
 
 func _on_nft_award_action_pressed() -> void:
 	var kind := String(_active_nft_award.get("kind", "")).strip_edges().to_lower()
@@ -1365,12 +1368,24 @@ func _build_nft_award_panel() -> void:
 	_nft_award_detail.add_theme_font_size_override("font_size", 17)
 	layout.add_child(_nft_award_detail)
 
+	var actions := HBoxContainer.new()
+	actions.alignment = BoxContainer.ALIGNMENT_CENTER
+	actions.add_theme_constant_override("separation", 12)
+	layout.add_child(actions)
+
+	_nft_award_receipt = Button.new()
+	_nft_award_receipt.text = "VIEW MINT TX"
+	_nft_award_receipt.custom_minimum_size = Vector2(180.0, 52.0)
+	_nft_award_receipt.visible = false
+	_nft_award_receipt.pressed.connect(_on_nft_award_receipt_pressed)
+	actions.add_child(_nft_award_receipt)
+
 	_nft_award_action = Button.new()
 	_nft_award_action.text = "CONTINUE"
-	_nft_award_action.custom_minimum_size = Vector2(280.0, 52.0)
+	_nft_award_action.custom_minimum_size = Vector2(260.0, 52.0)
 	_nft_award_action.add_theme_font_size_override("font_size", 19)
 	_nft_award_action.pressed.connect(_on_nft_award_action_pressed)
-	layout.add_child(_nft_award_action)
+	actions.add_child(_nft_award_action)
 
 func _load_nft_award_image(raw_url: String, generation: int) -> void:
 	var url := _nft_image_request_url(raw_url)
