@@ -247,24 +247,24 @@ func submit_skin_milestone(wallet: String, turn_id: String, milestone_number: in
 	if not bool(response.get("ok", false)):
 		return response
 	var body := response.get("body", {}) as Dictionary
+	var mint_action := _confirmed_nft_action(body)
+	if mint_action.is_empty():
+		if _action_path_mint_pending(body):
+			response["pending"] = true
+			return response
+		return _failure("Coin Skin mint could not be verified; the original milestone needs review.", int(response.get("status", 0)), body)
+	var selected_class_id := String(mint_action.get("classId", "")).strip_edges()
+	if selected_class_id.is_empty():
+		return _failure("Coin Skin mint succeeded but did not return its NFT class; review the original transaction.", int(response.get("status", 0)), body)
 	var family := _selected_family_from_action_path_body(body)
-	if family.is_empty():
-		# The mint itself is authoritative even when the Action Path response does
-		# not expose a locally recognized presentation family. Never retry it.
-		response["skinResult"] = {
-			"resultType": "minted",
-			"mintStatus": "completed",
-			"txHash": _first_action_tx_hash(body),
-		}
-		return response
-	var selected_class_id := String(class_id_by_family.get(family, ""))
 	response["skinResult"] = {
 		"selectedClassId": selected_class_id,
 		"classId": selected_class_id,
+		"family": family,
 		"resultType": "minted",
-		"mintStatus": "completed",
+		"mintStatus": "confirmed",
 		"imageUrl": String(skin_image_url_by_family.get(family, "")),
-		"txHash": _first_action_tx_hash(body),
+		"txHash": String(mint_action.get("txHash", "")),
 	}
 	return response
 
@@ -296,7 +296,15 @@ func submit_toy_caught(wallet: String, turn_id: String, toy_instance_id: String,
 	if not bool(response.get("ok", false)):
 		return response
 	var body := response.get("body", {}) as Dictionary
-	var selected_class_id := String(toy_class_id_by_family.get(family, ""))
+	var mint_action := _confirmed_nft_action(body)
+	if mint_action.is_empty():
+		if _action_path_mint_pending(body):
+			response["pending"] = true
+			return response
+		return _failure("Toy NFT mint could not be verified; the original capture needs review.", int(response.get("status", 0)), body)
+	var selected_class_id := String(mint_action.get("classId", "")).strip_edges()
+	if selected_class_id.is_empty():
+		return _failure("Toy NFT mint succeeded but did not return its NFT class; review the original transaction.", int(response.get("status", 0)), body)
 	response["toyResult"] = {
 		"selectedClassId": selected_class_id,
 		"classId": selected_class_id,
@@ -305,8 +313,8 @@ func submit_toy_caught(wallet: String, turn_id: String, toy_instance_id: String,
 		"classTitle": String(toy_title_by_family.get(family, "%s Toy" % _family_display_name(family))),
 		"imageUrl": String(toy_image_url_by_family.get(family, "")),
 		"resultType": "minted",
-		"mintStatus": "completed",
-		"txHash": _first_action_tx_hash(body),
+		"mintStatus": "confirmed",
+		"txHash": String(mint_action.get("txHash", "")),
 	}
 	return response
 
@@ -348,12 +356,49 @@ func _execute_action_path(path_key: String, wallet: String, request_id: String, 
 			)
 	return response
 
+func _action_path_mint_pending(body: Dictionary) -> bool:
+	var execution_value: Variant = body.get("execution", {})
+	if not (execution_value is Dictionary):
+		return true
+	var status := String((execution_value as Dictionary).get("status", "")).strip_edges().to_lower()
+	return status in ["pending", "running", "pending_app", "pending_operator", "queued", "in_progress"]
+
+func _confirmed_nft_action(body: Dictionary) -> Dictionary:
+	var execution_value: Variant = body.get("execution", {})
+	if not (execution_value is Dictionary):
+		return {}
+	if String((execution_value as Dictionary).get("status", "")).strip_edges().to_lower() != "succeeded":
+		return {}
+	var actions_value: Variant = body.get("actions", [])
+	if not (actions_value is Array):
+		return {}
+	for item in actions_value:
+		if not (item is Dictionary):
+			continue
+		var action := item as Dictionary
+		if String(action.get("primitive", "")).strip_edges().to_lower() != "nft_mint":
+			continue
+		if String(action.get("status", "")).strip_edges().to_lower() == "succeeded":
+			return action
+	return {}
+
 func _selected_family_from_action_path_body(body: Dictionary) -> String:
+	var branches_value: Variant = body.get("selectedBranches", [])
+	if branches_value is Array:
+		for branch_value in branches_value:
+			if not (branch_value is Dictionary):
+				continue
+			var branch := branch_value as Dictionary
+			var family := _family_from_loose_text(String(branch.get("selectionValue", "")))
+			if family.is_empty():
+				family = _family_from_loose_text(String(branch.get("branchLabel", "")))
+			if not family.is_empty():
+				return family
+	# Older SDK responses exposed the trace inside detail.
 	var detail_value: Variant = body.get("detail", {})
 	if not (detail_value is Dictionary):
 		return ""
-	var detail := detail_value as Dictionary
-	var trace_value: Variant = detail.get("trace", [])
+	var trace_value: Variant = (detail_value as Dictionary).get("trace", [])
 	if not (trace_value is Array):
 		return ""
 	for trace_value_item in trace_value:
@@ -371,20 +416,6 @@ func _selected_family_from_action_path_body(body: Dictionary) -> String:
 			family = _family_from_loose_text(String(trace_detail.get("branchLabel", "")))
 		if not family.is_empty():
 			return family
-	return ""
-
-func _first_action_tx_hash(body: Dictionary) -> String:
-	var detail_value: Variant = body.get("detail", {})
-	if not (detail_value is Dictionary):
-		return ""
-	var actions_value: Variant = (detail_value as Dictionary).get("actions", [])
-	if not (actions_value is Array):
-		return ""
-	for action_value in actions_value:
-		if action_value is Dictionary:
-			var tx_hash := String((action_value as Dictionary).get("txHash", (action_value as Dictionary).get("tx_hash", ""))).strip_edges()
-			if not tx_hash.is_empty():
-				return tx_hash
 	return ""
 
 func _resolve_catalog(value: Dictionary) -> void:
