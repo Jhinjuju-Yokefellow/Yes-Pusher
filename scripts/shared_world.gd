@@ -929,6 +929,8 @@ func _process_settlement_outbox() -> void:
 		var current_status := String(settlement.get("status", ""))
 		if current_status in ["confirmed", "skin_review_required", "toy_review_required"]:
 			continue
+		if current_status in ["skin_pending", "toy_pending"] and int(Time.get_unix_time_from_system()) < int(settlement.get("next_mint_check_at_unix", 0)):
+			continue
 		var wallet := String(settlement.get("wallet", ""))
 		var turn_id := String(settlement.get("turn_id", ""))
 		var payout := int(settlement.get("payout_yes", 0))
@@ -956,6 +958,14 @@ func _process_settlement_outbox() -> void:
 				milestone_number,
 				int(_player(wallet).get("lifetime_coins_paid_out", 0))
 			)
+			if bool(skin_result.get("pending", false)):
+				milestone_failed = true
+				var skin_checks := int(settlement.get("skin_mint_checks", 0)) + 1
+				settlement["skin_mint_checks"] = skin_checks
+				settlement["status"] = "skin_review_required" if skin_checks >= 10 else "skin_pending"
+				settlement["next_mint_check_at_unix"] = int(Time.get_unix_time_from_system()) + 60
+				settlement["last_error"] = "Skin mint is pending in Network; no NFT has been confirmed."
+				break
 			if not bool(skin_result.get("ok", false)):
 				milestone_failed = true
 				# A mint may have reached the chain before a later response failed.
@@ -969,40 +979,45 @@ func _process_settlement_outbox() -> void:
 			if awarded_result_value is Dictionary:
 				awarded_result = awarded_result_value as Dictionary
 			var awarded_class_id := String(awarded_result.get("selectedClassId", awarded_result.get("classId", "")))
-			var awarded_family := yf.family_for_class_id(awarded_class_id)
+			var awarded_family := String(awarded_result.get("family", "")).strip_edges().to_lower()
+			if awarded_family.is_empty():
+				awarded_family = yf.family_for_class_id(awarded_class_id)
+			var awarded_player := _player(wallet)
+			var awarded_peer_id := int(awarded_player.get("peer_id", 0))
+			var awarded_owned: Array[String] = _normalized_family_array(awarded_player.get("owned_skin_families", []))
 			if not awarded_family.is_empty():
-				var awarded_player := _player(wallet)
-				var awarded_owned: Array[String] = _normalized_family_array(awarded_player.get("owned_skin_families", []))
 				if not awarded_owned.has(awarded_family):
 					awarded_owned.append(awarded_family)
 				awarded_player["owned_skin_families"] = awarded_owned
 				_players[wallet] = awarded_player
-				var awarded_peer_id := int(awarded_player.get("peer_id", 0))
-				var award := {
-					"kind": "skin",
-					"family": awarded_family,
-					"title": "%s Coin Skin" % _skin_display_name(awarded_family),
-					"source": yf.skin_offering_name,
-					"detail": "Minted and ready to equip.",
-					"mint_status": String(awarded_result.get("mintStatus", awarded_result.get("resultType", "earned"))),
-					"image_url": String(awarded_result.get("imageUrl", yf.skin_image_url_for_class_id(awarded_class_id))),
-					"class_id": awarded_class_id,
-					"token_id": String(awarded_result.get("tokenId", "")),
-					"tx_hash": String(awarded_result.get("txHash", "")),
-				}
-				_broadcast_presentation_event({
-					"kind": "skin_nft",
-					"wallet": wallet,
-					"turn_id": turn_id,
-					"family": awarded_family,
-					"title": String(award.get("title", "Coin Skin NFT")),
-					"mint_status": String(award.get("mint_status", "")),
-				})
-				if awarded_peer_id > 1:
+			# Deliver a verified NFT reveal even if the local holdings index has not
+			# learned the newly minted class yet. Never invent a skin family.
+			var award := {
+				"kind": "skin",
+				"family": awarded_family,
+				"title": "%s Coin Skin" % _skin_display_name(awarded_family) if not awarded_family.is_empty() else "Coin Skin NFT",
+				"source": yf.skin_offering_name,
+				"detail": "Mint confirmed for your wallet.",
+				"mint_status": "confirmed",
+				"image_url": String(awarded_result.get("imageUrl", yf.skin_image_url_for_class_id(awarded_class_id))),
+				"class_id": awarded_class_id,
+				"token_id": String(awarded_result.get("tokenId", "")),
+				"tx_hash": String(awarded_result.get("txHash", "")),
+			}
+			_broadcast_presentation_event({
+				"kind": "skin_nft",
+				"wallet": wallet,
+				"turn_id": turn_id,
+				"family": awarded_family,
+				"title": String(award.get("title", "Coin Skin NFT")),
+				"mint_status": "confirmed",
+			})
+			if awarded_peer_id > 1:
+				if not awarded_family.is_empty():
 					_client_skin_entitlements.rpc_id(awarded_peer_id, true, awarded_owned, "%s coin skin is ready to equip." % _skin_display_name(awarded_family))
-					_send_nft_award_to_peer(awarded_peer_id, award)
-				elif awarded_peer_id == 1:
-					nft_awarded.emit(award.duplicate(true))
+				_send_nft_award_to_peer(awarded_peer_id, award)
+			elif awarded_peer_id == 1:
+				nft_awarded.emit(award.duplicate(true))
 			confirmed_milestones.append(milestone_number)
 			settlement["skin_milestones_confirmed"] = confirmed_milestones
 			_settlements[index] = settlement
@@ -1029,6 +1044,14 @@ func _process_settlement_outbox() -> void:
 			if power_result_value is Dictionary:
 				power_result = power_result_value as Dictionary
 			var toy_result := await yf.submit_toy_caught(wallet, turn_id, toy_instance_id, toy_family, power_result)
+			if bool(toy_result.get("pending", false)):
+				toy_failed = true
+				var toy_checks := int(settlement.get("toy_mint_checks", 0)) + 1
+				settlement["toy_mint_checks"] = toy_checks
+				settlement["status"] = "toy_review_required" if toy_checks >= 10 else "toy_pending"
+				settlement["next_mint_check_at_unix"] = int(Time.get_unix_time_from_system()) + 60
+				settlement["last_error"] = "Toy mint is pending in Network; no NFT has been confirmed."
+				break
 			if not bool(toy_result.get("ok", false)):
 				toy_failed = true
 				# The event may have queued or minted before a later response failed.
